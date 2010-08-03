@@ -28,7 +28,7 @@ class ParticleNumberCollector:
 		Na = self.stats.countParticles(cloud.a)
 		Nb = self.stats.countParticles(cloud.b)
 		if self.verbose:
-			print "Particle counter: " + str((t, Na, Nb))
+			print "Particle counter: " + str((t, int(Na), int(Nb), int(Na + Nb)))
 
 		self.times.append(t)
 		self.Na.append(Na)
