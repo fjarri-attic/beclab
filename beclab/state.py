@@ -280,15 +280,6 @@ class ParticleStatistics(PairedCalculation):
 				res[index] = (squared_abs(state[index]) + statistics_term) / ensembles;
 			}
 
-			__kernel void calculateDensity2(__global ${c.scalar.name} *a_res,
-				__global ${c.scalar.name} *b_res, __global ${c.complex.name} *a_state,
-				__global ${c.complex.name} *b_state, ${c.scalar.name} statistics_term)
-			{
-				DEFINE_INDEXES;
-				a_res[index] = squared_abs(a_state[index]) + statistics_term;
-				b_res[index] = squared_abs(b_state[index]) + statistics_term;
-			}
-
 			__kernel void calculateInteraction(__global ${c.complex.name} *interaction,
 				__global ${c.complex.name} *a_state, __global ${c.complex.name} *b_state)
 			{
@@ -354,7 +345,6 @@ class ParticleStatistics(PairedCalculation):
 		self._calculateMu = self._program.calculateMu
 		self._calculateEnergy = self._program.calculateEnergy
 		self._calculateDensity = self._program.calculateDensity
-		self._calculateDensity2 = self._program.calculateDensity2
 		self._calculateInteraction = self._program.calculateInteraction
 
 		self._calculateMu2 = self._program.calculateMu2
