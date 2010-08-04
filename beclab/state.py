@@ -22,6 +22,9 @@ class State(PairedCalculation):
 		self.dtype = constants.complex.dtype
 		self.comp = comp
 
+		self._projector_mask = getProjectorMask(self._env, self._constants)
+		self._plan = createPlan(env, constants, constants.nvx, constants.nvy, constants.nvz)
+
 		self._prepare()
 		self._initializeMemory()
 
@@ -87,6 +90,34 @@ class State(PairedCalculation):
 
 		self._initializeEnsembles(self._constants.ens_shape, new_data, self.data, randoms_gpu)
 
+	def _cpu__addNoiseInKSpace(self, data, randoms):
+
+		N = self._constants.nvx * self._constants.nvy * self._constants.nvz
+
+		# TODO: explain this formula (why not *N, but /sqrt(N)?)
+		coeff = 1.0 / math.sqrt(self._constants.dV * N)
+
+		shape = data.shape
+		dtype = data.dtype
+		batch = data.size / self._constants.cells
+		nvz = self._constants.nvz
+
+		kdata = self._env.allocate(shape, dtype=dtype)
+
+		for e in xrange(batch):
+			start = e * nvz
+			stop = (e + 1) * nvz
+			data[start:stop,:,:] = self.data
+
+		self._plan.execute(data, kdata, inverse=True, batch=batch)
+
+		for e in xrange(batch):
+			start = e * nvz
+			stop = (e + 1) * nvz
+			kdata[start:stop,:,:] += self._projector_mask * coeff * randoms[start:stop,:,:]
+
+		self._plan.execute(kdata, data, batch=batch)
+
 	def _cpu__toWigner(self, new_data, randoms):
 		coeff = 1.0 / math.sqrt(self._constants.dV)
 		size = self._constants.cells * self._constants.ensembles
@@ -106,7 +137,9 @@ class State(PairedCalculation):
 		randoms = (numpy.random.normal(scale=0.5, size=self._constants.ens_shape) +
 			1j * numpy.random.normal(scale=0.5, size=self._constants.ens_shape)).astype(self._constants.complex.dtype)
 
-		self._toWigner(new_data, randoms)
+		#self._toWigner(new_data, randoms)
+		self._addNoiseInKSpace(new_data, randoms)
+
 		self.data = new_data
 		self.shape = self._constants.ens_shape
 		self.size = self._constants.cells * self._constants.ensembles
