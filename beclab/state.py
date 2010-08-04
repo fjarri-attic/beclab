@@ -90,7 +90,7 @@ class State(PairedCalculation):
 
 		self._initializeEnsembles(self._constants.ens_shape, new_data, self.data, randoms_gpu)
 
-	def _cpu__addNoiseInKSpace(self, data, randoms):
+	def _cpu__addVacuumParticles(self, data, randoms):
 
 		N = self._constants.nvx * self._constants.nvy * self._constants.nvz
 
@@ -126,8 +126,7 @@ class State(PairedCalculation):
 		randoms = (numpy.random.normal(scale=0.5, size=self._constants.ens_shape) +
 			1j * numpy.random.normal(scale=0.5, size=self._constants.ens_shape)).astype(self._constants.complex.dtype)
 
-		#self._toWigner(new_data, randoms)
-		self._addNoiseInKSpace(new_data, randoms)
+		self._addVacuumParticles(new_data, randoms)
 
 		self.data = new_data
 		self.shape = self._constants.ens_shape
