@@ -22,7 +22,7 @@ class State(PairedCalculation):
 		self.dtype = constants.complex.dtype
 		self.comp = comp
 
-		self._projector_mask = getProjectorMask(self._env, self._constants)
+		self._projector_mask, _ = getProjectorMask(self._env, self._constants)
 		self._plan = createPlan(env, constants, constants.nvx, constants.nvy, constants.nvz)
 
 		self._prepare()
@@ -60,15 +60,23 @@ class State(PairedCalculation):
 				res[index] = ${c.complex.ctr}(1, 0);
 			}
 
-			// Initialize ensembles with steady state + noise for Wigner quasiprobability function
+			// Initialize ensembles with steady state
 			__kernel void initializeEnsembles(__global ${c.complex.name} *wigner_func,
-				__global ${c.complex.name} *psi_func, __global ${c.complex.name} *randoms)
+				__global ${c.complex.name} *psi_func)
 			{
 				DEFINE_INDEXES;
 				${c.complex.name} psi_val = psi_func[index % ${c.cells}];
-				${c.scalar.name} coeff = (${c.scalar.name})${1.0 / sqrt(c.dV)};
+				wigner_func[index] = psi_val;
+			}
 
-				wigner_func[index] = psi_val + complex_mul_scalar(randoms[index], coeff);
+			__kernel void addPlaneWaves(__global ${c.complex.name} *kdata,
+				__global ${c.complex.name} *randoms,
+				read_only image3d_t projector_mask)
+			{
+				DEFINE_INDEXES;
+				${c.scalar.name} prj = get_float_from_image(projector_mask, i, j, k);
+				${c.scalar.name} coeff = ${1.0 / sqrt(c.dV * c.cells)};
+				kdata[index] += complex_mul_scalar(randoms[index], prj * coeff);
 			}
 		"""
 
@@ -76,6 +84,7 @@ class State(PairedCalculation):
 		self._fillWithZeroes = self._program.fillWithZeroes
 		self._fillWithOnes = self._program.fillWithOnes
 		self._initializeEnsembles = self._program.initializeEnsembles
+		self._addPlaneWaves = self._program.addPlaneWaves
 
 	def _gpu__initializeMemory(self):
 		self.data = self._env.allocate(self.shape, self.dtype)
@@ -84,11 +93,18 @@ class State(PairedCalculation):
 	def _gpu_fillWithOnes(self):
 		self._fillWithOnes(self.shape, self.data)
 
-	def _gpu__toWigner(self, new_data, randoms):
-		randoms_gpu = self._env.allocate(randoms.shape, randoms.dtype)
-		cl.enqueue_write_buffer(self._env.queue, randoms_gpu, randoms)
+	def _gpu__addVacuumParticles(self, data, randoms):
+		shape = data.shape
+		dtype = data.dtype
+		batch = data.size / self._constants.cells
 
-		self._initializeEnsembles(self._constants.ens_shape, new_data, self.data, randoms_gpu)
+		randoms = self._env.toGPU(randoms)
+
+		self._initializeEnsembles(shape, data, self.data)
+		kdata = self._env.allocate(shape, dtype=dtype)
+		self._plan.execute(data, kdata, inverse=True, batch=batch)
+		self._addPlaneWaves(shape, kdata, randoms, self._projector_mask)
+		self._plan.execute(kdata, data, batch=batch)
 
 	def _cpu__addVacuumParticles(self, data, randoms):
 
@@ -186,8 +202,7 @@ class ParticleStatistics(PairedCalculation):
 		self._potentials = getPotentials(env, constants)
 		self._kvectors = getKVectors(env, constants)
 
-		self._projector_mask = getProjectorMask(self._env, self._constants)
-		self._projector_modes = numpy.sum(self._projector_mask)
+		self._projector_mask, self._projector_modes = getProjectorMask(self._env, self._constants)
 
 		self._prepare()
 
@@ -273,11 +288,10 @@ class ParticleStatistics(PairedCalculation):
 	def _gpu__prepare(self):
 		kernel_template = """
 			__kernel void calculateDensity(__global ${c.scalar.name} *res,
-				__global ${c.complex.name} *state, int ensembles,
-				${c.scalar.name} statistics_term)
+				__global ${c.complex.name} *state, int ensembles)
 			{
 				DEFINE_INDEXES;
-				res[index] = (squared_abs(state[index]) + statistics_term) / ensembles;
+				res[index] = squared_abs(state[index]) / ensembles;
 			}
 
 			__kernel void calculateInteraction(__global ${c.complex.name} *interaction,
@@ -354,9 +368,9 @@ class ParticleStatistics(PairedCalculation):
 		density = self._env.allocate(state.shape, self._constants.scalar.dtype)
 		ensembles = state.size / self._constants.cells
 
-		statistics_term = 0 if state.type == PSI_FUNC else -0.5 / self._constants.dV
-		self._calculateDensity(state.shape, density, state.data,
-			numpy.int32(ensembles), self._constants.scalar.cast(statistics_term))
+		# This function does not return "real" density for Wigner case.
+		# See comment for CPU version for details.
+		self._calculateDensity(state.shape, density, state.data, numpy.int32(ensembles))
 		density = self._reduce.sparse(density, final_length=self._constants.cells)
 		return density.reshape(self._constants.shape)
 

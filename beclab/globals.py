@@ -336,5 +336,11 @@ def getProjectorMask(env, constants):
 
 				mask[k, j, i] = 0.0 if kk > kcut else 1.0
 
+	modes = numpy.sum(mask)
+
 	if not env.gpu:
-		return mask
+		return mask, modes
+
+	return cl.Image(env.context, cl.mem_flags.READ_ONLY | cl.mem_flags.USE_HOST_PTR,
+		cl.ImageFormat(cl.channel_order.R, cl.channel_type.UNSIGNED_INT32),
+		shape=tuple(reversed(constants.shape)), hostbuf=mask), modes
