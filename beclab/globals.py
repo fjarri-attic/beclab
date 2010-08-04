@@ -221,7 +221,8 @@ class _ProgramWrapper:
 				return *((float*)&image_data);
 			}
 
-			#define DEFINE_INDEXES int i = get_global_id(0), j = get_global_id(1), k_full = get_global_id(2), index = (k_full << ${c.nvx_pow + c.nvy_pow}) + (j << ${c.nvx_pow}) + i, k = k_full % ${c.nvz}
+			#define DEFINE_INDEXES int i = get_global_id(0), j = get_global_id(1), k_full = get_global_id(2), \\
+				index = (k_full << ${c.nvx_pow + c.nvy_pow}) + (j << ${c.nvx_pow}) + i, k = k_full % ${c.nvz}
 		""")
 
 		defines = kernel_defines.render(c=constants)
