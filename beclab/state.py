@@ -117,16 +117,6 @@ class State(PairedCalculation):
 
 		self._plan.execute(kdata, data, batch=batch)
 
-	def _cpu__toWigner(self, new_data, randoms):
-		coeff = 1.0 / math.sqrt(self._constants.dV)
-		size = self._constants.cells * self._constants.ensembles
-
-		for e in range(self._constants.ensembles):
-			start = e * self._constants.nvz
-			stop = (e + 1) * self._constants.nvz
-
-			new_data[start:stop,:,:] = self.data + randoms[start:stop,:,:] * coeff
-
 	def toWigner(self):
 
 		assert self.type == PSI_FUNC
