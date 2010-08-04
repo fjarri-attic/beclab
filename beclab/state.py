@@ -352,13 +352,13 @@ class ParticleStatistics(PairedCalculation):
 		self._program = self._env.compile(kernel_template, self._constants)
 
 		self._calculateMu = self._program.calculateMu
-		self._caclculateEnergy = self._program.calculateEnergy
+		self._calculateEnergy = self._program.calculateEnergy
 		self._calculateDensity = self._program.calculateDensity
 		self._calculateDensity2 = self._program.calculateDensity2
 		self._calculateInteraction = self._program.calculateInteraction
 
 		self._calculateMu2 = self._program.calculateMu2
-		self._caclculateEnergy2 = self._program.calculateEnergy2
+		self._calculateEnergy2 = self._program.calculateEnergy2
 
 	def _gpu_getAverageDensity(self, state):
 		density = self._env.allocate(state.shape, self._constants.scalar.dtype)
@@ -374,7 +374,7 @@ class ParticleStatistics(PairedCalculation):
 		if coeff == 1:
 			func = self._calculateMu
 		else:
-			func = self._caclculateEnergy
+			func = self._calculateEnergy
 
 		kstate = self._env.allocate(state.shape, dtype=state.dtype)
 		res = self._env.allocate(state.shape, dtype=self._constants.scalar.dtype)
@@ -399,7 +399,7 @@ class ParticleStatistics(PairedCalculation):
 		if coeff == 1:
 			func = self._calculateMu2
 		else:
-			func = self._caclculateEnergy2
+			func = self._calculateEnergy2
 
 		func(state1.shape, res, state1.data, kstate1,
 			state2.data, kstate2, self._potentials, self._kvectors, g11, g22, g12)
