@@ -11,6 +11,8 @@ except:
 
 from mako.template import Template
 import numpy
+import math
+
 
 class _Buffer(clBuffer):
 	"""
@@ -306,3 +308,32 @@ def getKVectors(env, constants):
 	return cl.Image(env.context, cl.mem_flags.READ_ONLY | cl.mem_flags.USE_HOST_PTR,
 		cl.ImageFormat(cl.channel_order.R, cl.channel_type.UNSIGNED_INT32),
 		shape=tuple(reversed(constants.shape)), hostbuf=kvectors)
+
+def getProjectorMask(env, constants):
+
+	def kvalue(i, dk, N):
+		if 2 * i > N:
+			return dk * (i - N)
+		else:
+			return dk * i
+
+	mask = numpy.empty(constants.shape, dtype=constants.scalar.dtype)
+
+	kcut = min((constants.dkx * constants.nvx) / 4,
+		(constants.dky * constants.nvy) / 4,
+		(constants.dkz * constants.nvz) / 4)
+
+	for i in xrange(constants.nvx):
+		for j in xrange(constants.nvy):
+			for k in xrange(constants.nvz):
+
+				kx = kvalue(i, constants.dkx, constants.nvx)
+				ky = kvalue(j, constants.dky, constants.nvy)
+				kz = kvalue(k, constants.dkz, constants.nvz)
+
+				kk = math.sqrt(kx * kx + ky * ky + kz * kz)
+
+				mask[k, j, i] = 0.0 if kk > kcut else 1.0
+
+	if not env.gpu:
+		return mask
