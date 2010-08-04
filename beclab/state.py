@@ -94,7 +94,6 @@ class State(PairedCalculation):
 
 		N = self._constants.nvx * self._constants.nvy * self._constants.nvz
 
-		# TODO: explain this formula (why not *N, but /sqrt(N)?)
 		coeff = 1.0 / math.sqrt(self._constants.dV * N)
 
 		shape = data.shape
