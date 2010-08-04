@@ -198,19 +198,27 @@ class ParticleStatistics(PairedCalculation):
 		self._potentials = getPotentials(env, constants)
 		self._kvectors = getKVectors(env, constants)
 
+		self._projector_mask = getProjectorMask(self._env, self._constants)
+		self._projector_modes = numpy.sum(self._projector_mask)
+
 		self._prepare()
 
 	def _cpu__prepare(self):
 		pass
 
 	def _cpu_getAverageDensity(self, state):
-		abs_values = numpy.abs(state.data)
-		normalized_values = abs_values * abs_values
+		normalized_values = numpy.abs(state.data) ** 2
 
 		if state.type == WIGNER:
+			# What we are returning here is not in fact the measurable density.
+			# In order to return density, we would have to calculate integral
+			# of \delta_P for each cell, which is not that simple in general case
+			# (although, it is simple for plane wave basis).
+			# So, we are just returning reduced data for countParticles(),
+			# which will subtract vacuum particles (which is a lot simpler)
+
 			density = self._reduce.sparse(normalized_values, self._constants.cells)
-			density /= self._constants.ensembles
-			return density.reshape(self._constants.shape) - 0.5 / self._constants.dV
+			return density.reshape(self._constants.shape) / self._constants.ensembles
 		else:
 			return normalized_values
 
@@ -426,7 +434,14 @@ class ParticleStatistics(PairedCalculation):
 		return 2 * abs(interaction) / (N1 + N2)
 
 	def countParticles(self, state):
-		return self._reduce(self.getAverageDensity(state)) * self._constants.dV
+		N = self._reduce(self.getAverageDensity(state)) * self._constants.dV
+		if state.type == WIGNER:
+			# Since returned density is not "real" density for Wigner case,
+			# we have to subtract vacuum particles. See comment in
+			# getAverageDensity() for details.
+			return N - self._projector_modes / 2
+		else:
+			return N
 
 	def _countStateGeneric(self, state, coeff, N):
 		# TODO: work out the correct formula for Wigner function's E/mu
