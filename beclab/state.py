@@ -77,6 +77,7 @@ class State(PairedCalculation):
 				${c.scalar.name} prj = get_float_from_image(projector_mask, i, j, k);
 				${c.scalar.name} coeff = ${1.0 / sqrt(c.dV * c.cells)};
 				kdata[index] += complex_mul_scalar(randoms[index], prj * coeff);
+				kdata[index] *= prj; // remove high-energy components
 			}
 		"""
 
@@ -130,6 +131,7 @@ class State(PairedCalculation):
 			start = e * nvz
 			stop = (e + 1) * nvz
 			kdata[start:stop,:,:] += self._projector_mask * coeff * randoms[start:stop,:,:]
+			kdata[start:stop,:,:] *= self._projector_mask # remove high-energy components
 
 		self._plan.execute(kdata, data, batch=batch)
 
