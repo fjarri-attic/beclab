@@ -144,9 +144,8 @@ class SurfaceProjectionCollector:
 
 		self.times.append(t)
 
-		# cast density to SI ($mu$m^2 instead of m^2, for better readability)
-		coeff_xy = self._constants.dz / (self._constants.l_rho ** 2) / 1e12
-		coeff_yz = self._constants.dx / (self._constants.l_rho ** 2) / 1e12
+		coeff_xy = self._constants.dz
+		coeff_yz = self._constants.dx
 
 		self.a_xy.append(self._projection.getXY(cloud.a) * coeff_xy)
 		self.a_yz.append(self._projection.getYZ(cloud.a) * coeff_yz)
@@ -181,9 +180,8 @@ class SliceCollector:
 
 		self.times.append(t)
 
-		# cast density to SI ($mu$m^2 instead of m^2, for better readability)
-		coeff_xy = 1.0 / (self._constants.l_rho ** 2) / 1e12
-		coeff_yz = 1.0 / (self._constants.l_rho ** 2) / 1e12
+		coeff_xy = 1.0
+		coeff_yz = 1.0
 
 		self.a_xy.append(self._slice.getXY(cloud.a) * coeff_xy)
 		self.a_yz.append(self._slice.getYZ(cloud.a) * coeff_yz)

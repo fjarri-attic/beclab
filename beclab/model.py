@@ -8,9 +8,6 @@ class Model:
 	in SI units, unless explicitly specified otherwise
 	"""
 
-	hbar = 1.054571628e-34 # Planck constant
-	a0 = 5.2917720859e-11 # Bohr radius
-
 	N = 150000 # number of particles
 	m = 1.443160648e-25 # mass of one particle (rubidium-87)
 
@@ -27,6 +24,9 @@ class Model:
 	fx = 97.6
 	fy = 97.6
 	fz = 11.96
+
+	# cutoff energy for vacuum noise, in mu_TF(|1,-1>)
+	e_cut = 1
 
 	# coupling field properties
 	detuning = -41 # detuning from hyperfine frequency

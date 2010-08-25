@@ -52,18 +52,15 @@ class Constants:
 	"""Calculation constants, in natural units"""
 
 	def __init__(self, model, double_precision=False):
+
+		self.hbar = 1.054571628e-34 # Planck constant
+		self.m = model.m
+		a0 = 5.2917720859e-11 # Bohr radius
+
 		model = copy.deepcopy(model)
 		precision = _double_precision if double_precision else _single_precision
 		self.scalar = precision.scalar
 		self.complex = precision.complex
-
-		w_rho = 2.0 * math.pi * model.fx # radial oscillator frequency
-		l_rho = math.sqrt(model.hbar / (model.m * w_rho)) # natural length
-		self.l_rho = l_rho
-		self.lambda_ = model.fx / model.fz
-		self.w_rho = w_rho
-
-		self.t_rho = 1.0 / w_rho # natural time unit
 
 		self.nvx = model.nvx
 		self.nvy = model.nvy
@@ -71,17 +68,25 @@ class Constants:
 		self.cells = self.nvx * self.nvy * self.nvz
 		self.shape = (self.nvz, self.nvy, self.nvx)
 
-		self.detuning = 2 * math.pi * model.detuning / w_rho
-		self.rabi_freq = 2 * math.pi * model.rabi_freq / w_rho
-		self.rabi_period = 1.0 / self.rabi_freq
+		# prefix "w_" stands for radial frequency, "f_" for common frequency
 
-		self.l111 = model.gamma111 / (pow(l_rho, 6) * w_rho)
-		self.l12 = model.gamma12 / (pow(l_rho, 3) * w_rho)
-		self.l22 = model.gamma22 / (pow(l_rho, 3) * w_rho)
+		self.w_detuning = 2.0 * math.pi * model.detuning
+		self.w_rabi = 2.0 * math.pi * model.rabi_freq
+		self.t_rabi = 1.0 / model.rabi_freq
 
-		self.g11 = 4 * math.pi * model.a11 * model.a0 / l_rho
-		self.g12 = 4 * math.pi * model.a12 * model.a0 / l_rho
-		self.g22 = 4 * math.pi * model.a22 * model.a0 / l_rho
+		# trap frequencies
+		self.w_x = 2.0 * math.pi * model.fx
+		self.w_y = 2.0 * math.pi * model.fy
+		self.w_z = 2.0 * math.pi * model.fz
+
+		self.gamma111 = model.gamma111
+		self.gamma12 = model.gamma12
+		self.gamma22 = model.gamma22
+
+		# warning: here g = (actual g) / hbar
+		self.g11 = 4.0 * math.pi * (self.hbar ** 2) * model.a11 * a0 / self.m
+		self.g12 = 4.0 * math.pi * (self.hbar ** 2) * model.a12 * a0 / self.m
+		self.g22 = 4.0 * math.pi * (self.hbar ** 2) * model.a22 * a0 / self.m
 
 		self.g = {
 			(COMP_1_minus1, COMP_1_minus1): self.g11,
@@ -90,17 +95,25 @@ class Constants:
 			(COMP_2_1, COMP_2_1): self.g22
 		}
 
+		# g itself is too small for single precision
+		self.g_by_hbar = dict((key, self.g[key] / self.hbar) for key in self.g)
+
 		self.N = model.N
 
-		self.xmax = model.border * math.sqrt(2.0 * self.muTF(comp=COMP_1_minus1))
-		self.ymax = self.xmax
-		self.zmax = self.xmax * self.lambda_
+		mu1 = self.muTF(comp=COMP_1_minus1)
+
+		self.e_cut = model.e_cut * mu1
+
+		self.xmax = model.border * math.sqrt(2.0 * mu1 / (self.m * self.w_x ** 2))
+		self.ymax = model.border * math.sqrt(2.0 * mu1 / (self.m * self.w_y ** 2))
+		self.zmax = model.border * math.sqrt(2.0 * mu1 / (self.m * self.w_z ** 2))
 
 		# space step
 		self.dx = 2.0 * self.xmax / (self.nvx - 1)
 		self.dy = 2.0 * self.ymax / (self.nvy - 1)
 		self.dz = 2.0 * self.zmax / (self.nvz - 1)
 		self.dV = self.dx * self.dy * self.dz
+		self.V = self.dV * self.cells
 
 		self.nvx_pow = log2(self.nvx)
 		self.nvy_pow = log2(self.nvy)
@@ -112,10 +125,12 @@ class Constants:
 		self.dkz = math.pi / self.zmax
 
 		self.itmax = model.itmax
-		self.dt_steady = model.dt_steady / self.t_rho
-		self.dt_evo = model.dt_evo / self.t_rho
+		self.dt_steady = model.dt_steady
+		self.dt_evo = model.dt_evo
 		self.ensembles = model.ensembles
 		self.ens_shape = (self.ensembles * self.nvz, self.nvy, self.nvx)
+
+		# cast all floating point values to current precision
 
 		def recursiveCast(cast, obj):
 			if isinstance(obj, dict):
@@ -127,7 +142,17 @@ class Constants:
 			else:
 				return obj
 
-		self.__dict__ = recursiveCast(self.scalar.cast, self.__dict__)
+		# natural units
+		self.t_rho = 1.0 / self.w_x
+		self.e_rho = self.hbar * self.w_x
+		self.l_rho = math.sqrt(self.hbar / (self.m * self.w_x))
+
+		# By doing this, we can lose some small constants (they are turned into 0s)
+		# So I decided to transform them in-place, only if it is necessary to pass
+		# them in "real world" (opposed to using inside a template)
+		# As a result, no more single precision for CPU (it worked even slower
+		# than double precision anyway)
+		#self.__dict__ = recursiveCast(self.scalar.cast, self.__dict__)
 
 	def muTF(self, comp=COMP_1_minus1, N=None):
 		"""get TF-approximated chemical potential"""
@@ -136,4 +161,7 @@ class Constants:
 
 		g = self.g[(comp, comp)]
 
-		return self.scalar.cast((15.0 * N * g / (16.0 * math.pi * self.lambda_ * math.sqrt(2.0))) ** 0.4)
+		w = (self.w_x * self.w_y * self.w_z) ** (1.0 / 3)
+		return ((15 * N / (8.0 * math.pi)) ** 0.4) * \
+			((self.m * w * w / 2) ** 0.6) * \
+			(g ** 0.4)

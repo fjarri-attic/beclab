@@ -75,7 +75,7 @@ class State(PairedCalculation):
 			{
 				DEFINE_INDEXES;
 				${c.scalar.name} prj = get_float_from_image(projector_mask, i, j, k);
-				${c.scalar.name} coeff = ${1.0 / sqrt(c.dV * c.cells)};
+				${c.scalar.name} coeff = ${1.0 / sqrt(c.V)};
 				kdata[index] += complex_mul_scalar(randoms[index], prj * coeff);
 				kdata[index] *= prj; // remove high-energy components
 			}
@@ -109,9 +109,7 @@ class State(PairedCalculation):
 
 	def _cpu__addVacuumParticles(self, data, randoms):
 
-		N = self._constants.nvx * self._constants.nvy * self._constants.nvz
-
-		coeff = 1.0 / math.sqrt(self._constants.dV * N)
+		coeff = 1.0 / math.sqrt(self._constants.V)
 
 		shape = data.shape
 		dtype = data.dtype
@@ -239,23 +237,22 @@ class ParticleStatistics(PairedCalculation):
 		n = numpy.abs(data) ** 2
 		xk = data * kdata
 
-		g = self._constants.g[(state.comp, state.comp)]
-
+		g_by_hbar = self._constants.g_by_hbar[(state.comp, state.comp)]
 		for e in xrange(batch):
 			start = e * self._constants.cells
 			stop = (e + 1) * self._constants.cells
 			res[start:stop,:,:] = numpy.abs(n[start:stop,:,:] * (self._potentials +
-				n[start:stop,:,:] * (g / coeff)) +
+				n[start:stop,:,:] * (g_by_hbar / coeff)) +
 				xk[start:stop,:,:] * self._kvectors)
 
-		return self._reduce(res) / batch * self._constants.dV / N
+		return self._reduce(res) / batch * self._constants.dV / N * self._constants.hbar
 
 	def _cpu__countStateTwoComponent(self, state, second_state, coeff, N):
 		n = numpy.abs(state.data) ** 2
 		second_n = numpy.abs(second_state.data) ** 2
 
-		g = self._constants.g[(state.comp, state.comp)]
-		interaction_g = self._constants.g[(state.comp, second_state.comp)]
+		g_by_hbar = self._constants.g_by_hbar[(state.comp, state.comp)]
+		interaction_g_by_hbar = self._constants.g_by_hbar[(state.comp, second_state.comp)]
 
 		batch = state.size / self._constants.cells
 
@@ -271,11 +268,11 @@ class ParticleStatistics(PairedCalculation):
 			start = e * self._constants.cells
 			stop = (e + 1) * self._constants.cells
 			res[start:stop,:,:] = numpy.abs(n[start:stop,:,:] * (self._potentials +
-				n[start:stop,:,:] * (g / coeff) +
-				second_n[start:stop,:,:] * (interaction_g / coeff)) +
+				n[start:stop,:,:] * (g_by_hbar / coeff) +
+				second_n[start:stop,:,:] * (interaction_g_by_hbar / coeff)) +
 				xk[start:stop,:,:] * self._kvectors)
 
-		return self._reduce(res) / batch * self._constants.dV / N
+		return self._reduce(res) / batch * self._constants.dV / N * self._constants.hbar
 
 	def _cpu_getVisibility(self, state1, state2):
 		ensembles = state1.size / self._constants.cells
@@ -307,7 +304,7 @@ class ParticleStatistics(PairedCalculation):
 				__kernel void calculate${name}(__global ${c.scalar.name} *res,
 					__global ${c.complex.name} *xstate, __global ${c.complex.name} *kstate,
 					read_only image3d_t potentials, read_only image3d_t kvectors,
-					${c.scalar.name} g)
+					${c.scalar.name} g_by_hbar)
 				{
 					DEFINE_INDEXES;
 
@@ -317,7 +314,7 @@ class ParticleStatistics(PairedCalculation):
 					${c.scalar.name} n = squared_abs(xstate[index]);
 					${c.complex.name} differential =
 						complex_mul(complex_mul(xstate[index], kstate[index]), kvector);
-					${c.scalar.name} nonlinear = n * (potential + g * n / ${coeff});
+					${c.scalar.name} nonlinear = n * (potential + g_by_hbar * n / ${coeff});
 
 					// differential.y will be equal to 0, because \psi * D \psi is a real number
 					res[index] = nonlinear + differential.x;
@@ -327,7 +324,8 @@ class ParticleStatistics(PairedCalculation):
 					__global ${c.complex.name} *xstate1, __global ${c.complex.name} *kstate1,
 					__global ${c.complex.name} *xstate2, __global ${c.complex.name} *kstate2,
 					read_only image3d_t potentials, read_only image3d_t kvectors,
-					${c.scalar.name} g11, ${c.scalar.name} g22, ${c.scalar.name} g12)
+					${c.scalar.name} g11_by_hbar, ${c.scalar.name} g22_by_hbar,
+					${c.scalar.name} g12_by_hbar)
 				{
 					DEFINE_INDEXES;
 
@@ -343,11 +341,11 @@ class ParticleStatistics(PairedCalculation):
 						complex_mul(complex_mul(xstate2[index], kstate2[index]), kvector);
 
 					${c.scalar.name} nonlinear1 = n1 * (potential +
-						(${c.scalar.name})${c.g11} * n1 / ${coeff} +
-						(${c.scalar.name})${c.g12} * n2 / ${coeff});
+						g11_by_hbar * n1 / ${coeff} +
+						g12_by_hbar * n2 / ${coeff});
 					${c.scalar.name} nonlinear2 = n2 * (potential +
-						(${c.scalar.name})${c.g12} * n1 / ${coeff} +
-						(${c.scalar.name})${c.g22} * n2 / ${coeff});
+						g12_by_hbar * n1 / ${coeff} +
+						g22_by_hbar * n2 / ${coeff});
 
 					// differential.y will be equal to 0, because \psi * D \psi is a real number
 					res[index] = nonlinear1 + differential1.x +
@@ -386,8 +384,9 @@ class ParticleStatistics(PairedCalculation):
 		res = self._env.allocate(state.shape, dtype=self._constants.scalar.dtype)
 		self._plan.execute(state.data, kstate, inverse=True, batch=state.size / self._constants.cells)
 		func(state.shape, res, state.data, kstate, self._potentials, self._kvectors,
-			self._constants.g[(state.comp, state.comp)])
-		return self._reduce(res) / (state.size / self._constants.cells) * self._constants.dV / N
+			self._constants.scalar.cast(self._constants.g_by_hbar[(state.comp, state.comp)]))
+		return self._reduce(res) / (state.size / self._constants.cells) * \
+			self._constants.dV / N * self._constants.hbar
 
 	def _gpu__countStateTwoComponent(self, state1, state2, coeff, N):
 		kstate1 = self._env.allocate(state1.shape, dtype=self._constants.complex.dtype)
@@ -397,10 +396,11 @@ class ParticleStatistics(PairedCalculation):
 		self._plan.execute(state1.data, kstate1, inverse=True, batch=state1.size / self._constants.cells)
 		self._plan.execute(state2.data, kstate2, inverse=True, batch=state2.size / self._constants.cells)
 
-		g = self._constants.g
-		g11 = g[(state1.comp, state1.comp)]
-		g22 = g[(state2.comp, state2.comp)]
-		g12 = g[(state1.comp, state2.comp)]
+		g_by_hbar = self._constants.g_by_hbar
+		cast = self._constants.scalar.cast
+		g11_by_hbar = cast(g_by_hbar[(state1.comp, state1.comp)])
+		g22_by_hbar = cast(g_by_hbar[(state2.comp, state2.comp)])
+		g12_by_hbar = cast(g_by_hbar[(state1.comp, state2.comp)])
 
 		if coeff == 1:
 			func = self._calculateMu2
@@ -408,8 +408,11 @@ class ParticleStatistics(PairedCalculation):
 			func = self._calculateEnergy2
 
 		func(state1.shape, res, state1.data, kstate1,
-			state2.data, kstate2, self._potentials, self._kvectors, g11, g22, g12)
-		return self._reduce(res) / (state1.size / self._constants.cells) * self._constants.dV / N
+			state2.data, kstate2, self._potentials, self._kvectors,
+				g11_by_hbar, g22_by_hbar, g12_by_hbar)
+
+		return self._reduce(res) / (state1.size / self._constants.cells) * \
+			self._constants.dV / N * self._constants.hbar
 
 	def _gpu_getVisibility(self, state1, state2):
 		density1 = self._env.allocate(state1.shape, self._constants.scalar.dtype)
@@ -462,8 +465,11 @@ class ParticleStatistics(PairedCalculation):
 		if N is None:
 			N = self.countParticles(state1) + self.countParticles(state2)
 
-		return self._countStateTwoComponent(state1, state2, coeff, N) + \
-			self._countStateTwoComponent(state2, state1, coeff, N)
+		if self._env.gpu:
+			return self._countStateTwoComponent(state1, state2, coeff, N)
+		else:
+			return self._countStateTwoComponent(state1, state2, coeff, N) + \
+				self._countStateTwoComponent(state2, state1, coeff, N)
 
 	def countEnergyTwoComponent(self, state1, state2, N=None):
 		return self._countTwoComponentGeneric(state1, state2, 2, N)

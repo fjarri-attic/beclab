@@ -261,7 +261,7 @@ def log2(x):
 	return res
 
 def getPotentials(env, constants):
-	"""Returns array with values of external potential energy."""
+	"""Returns array with values of external potential energy (in hbar units)."""
 
 	potentials = numpy.empty(constants.shape, dtype=constants.scalar.dtype)
 
@@ -272,8 +272,10 @@ def getPotentials(env, constants):
 				y = -constants.ymax + j * constants.dy
 				z = -constants.zmax + k * constants.dz
 
-				potentials[k, j, i] = (x * x + y * y + z * z /
-					(constants.lambda_ * constants.lambda_)) / 2
+				potentials[k, j, i] = constants.m * (
+					(constants.w_x * x) ** 2 +
+					(constants.w_y * y) ** 2 +
+					(constants.w_z * z) ** 2) / (2.0 * constants.hbar)
 
 	if not env.gpu:
 		return potentials
@@ -283,7 +285,10 @@ def getPotentials(env, constants):
 		shape=tuple(reversed(constants.shape)), hostbuf=potentials)
 
 def getKVectors(env, constants):
-	"""Returns array with values of k-space vectors."""
+	"""
+	Returns array with values of k-space vectors
+	(coefficients for kinetic term) in hbar units
+	"""
 
 	def kvalue(i, dk, N):
 		if 2 * i > N:
@@ -301,7 +306,8 @@ def getKVectors(env, constants):
 				ky = kvalue(j, constants.dky, constants.nvy)
 				kz = kvalue(k, constants.dkz, constants.nvz)
 
-				kvectors[k, j, i] = (kx * kx + ky * ky + kz * kz) / 2
+				kvectors[k, j, i] = constants.hbar * \
+					(kx * kx + ky * ky + kz * kz) / (2.0 * constants.m)
 
 	if not env.gpu:
 		return kvectors
@@ -320,9 +326,7 @@ def getProjectorMask(env, constants):
 
 	mask = numpy.empty(constants.shape, dtype=constants.scalar.dtype)
 
-	kcut = min((constants.dkx * constants.nvx) / 4,
-		(constants.dky * constants.nvy) / 4,
-		(constants.dkz * constants.nvz) / 4)
+	kcut = math.sqrt(2 * constants.m * constants.e_cut) / constants.hbar
 
 	for i in xrange(constants.nvx):
 		for j in xrange(constants.nvy):
@@ -332,11 +336,13 @@ def getProjectorMask(env, constants):
 				ky = kvalue(j, constants.dky, constants.nvy)
 				kz = kvalue(k, constants.dkz, constants.nvz)
 
-				kk = math.sqrt(kx * kx + ky * ky + kz * kz)
+				kk = (constants.hbar ** 2) * \
+					(kx * kx + ky * ky + kz * kz) / (2.0 * constants.m)
 
 				mask[k, j, i] = 0.0 if kk > kcut else 1.0
 
 	modes = numpy.sum(mask)
+	#print "Projector modes: " + str(modes) + " out of " + str(constants.cells)
 
 	if not env.gpu:
 		return mask, modes
