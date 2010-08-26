@@ -278,7 +278,8 @@ class GPEGroundState(PairedCalculation):
 		cast = self._constants.scalar.cast
 		if state2 is None:
 			g_by_hbar = self._constants.g_by_hbar[(state1.comp, state1.comp)]
-			self._propagateXSpace(state1.shape, state1.data, self._potentials, g_by_hbar)
+			self._propagateXSpace(state1.shape, state1.data, self._potentials,
+				cast(g_by_hbar))
 		else:
 			comp1 = state1.comp
 			comp2 = state2.comp
