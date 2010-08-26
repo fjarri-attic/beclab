@@ -240,11 +240,11 @@ class GPEGroundState(PairedCalculation):
 
 		if state2 is None:
 			a0 = state1.data.copy()
-			g = self._constants.g[(state1.comp, state1.comp)]
+			g_by_hbar = self._constants.g_by_hbar[(state1.comp, state1.comp)]
 
 			for iter in xrange(self._constants.itmax):
 				n = numpy.abs(state1.data) ** 2
-				da = numpy.exp((p + n * g) * dt)
+				da = numpy.exp((p + n * g_by_hbar) * dt)
 				state1.data = a0 * da
 			state1.data *= da
 		else:
