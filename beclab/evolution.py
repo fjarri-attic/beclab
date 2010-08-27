@@ -16,7 +16,7 @@ from .globals import *
 from .fft import createPlan
 from .reduce import getReduce
 from .ground_state import GPEGroundState
-from .constants import PSI_FUNC, WIGNER
+from .constants import PSI_FUNC, WIGNER, COMP_1_minus1, COMP_2_1
 
 
 class TerminateEvolution(Exception):
@@ -31,9 +31,9 @@ class Pulse(PairedCalculation):
 		self._constants = constants
 
 		if detuning is None:
-			self._detuning = self._constants.detuning
+			self._detuning = self._constants.w_detuning
 		else:
-			self._detuning = 2 * math.pi * detuning / self._constants.w_rho
+			self._detuning = 2 * math.pi * detuning
 
 		self._starting_phase = starting_phase
 
@@ -93,19 +93,30 @@ class Pulse(PairedCalculation):
 				${c.complex.name} tb = complex_mul_scalar(kb, kvector) - complex_mul_scalar(b, potential);
 
 				${c.scalar.name} phase = t * (${c.scalar.name})${detuning} + phi;
-				${c.scalar.name} sin_phase = ${c.rabi_freq / 2} * sin(phase);
-				${c.scalar.name} cos_phase = ${c.rabi_freq / 2} * cos(phase);
+				${c.scalar.name} sin_phase = ${c.w_rabi / 2} * sin(phase);
+				${c.scalar.name} cos_phase = ${c.w_rabi / 2} * cos(phase);
+
+				<%
+					# FIXME: remove component hardcoding
+					g11 = c.g_by_hbar[(COMP_1_minus1, COMP_1_minus1)]
+					g12 = c.g_by_hbar[(COMP_1_minus1, COMP_2_1)]
+					g22 = c.g_by_hbar[(COMP_2_1, COMP_2_1)]
+				%>
+
+				// FIXME: Some magic here. l111 ~ 10^-42, while single precision float
+				// can only handle 10^-38.
+				${c.scalar.name} temp = n_a * ${1.0e-10};
 
 				*a_res = ${c.complex.ctr}(-ta.y, ta.x) +
 					complex_mul(${c.complex.ctr}(
-						- n_a * n_a * ${c.l111 / 2} - n_b * ${c.l12 / 2},
-						- n_a * ${c.g11} - n_b * ${c.g12}), a) -
+						- temp * temp * ${c.l111 * 1.0e20} - n_b * ${c.l12 / 2},
+						- n_a * ${g11} - n_b * ${g12}), a) -
 					complex_mul(${c.complex.ctr}(sin_phase, cos_phase), b);
 
 				*b_res = ${c.complex.ctr}(-tb.y, tb.x) +
 					complex_mul(${c.complex.ctr}(
 						- n_a * ${c.l12 / 2} - n_b * ${c.l22 / 2},
-						- n_a * ${c.g12} - n_b * ${c.g22}), b) -
+						- n_a * ${g12} - n_b * ${g22}), b) -
 					complex_mul(${c.complex.ctr}(-sin_phase, cos_phase), a);
 			}
 
@@ -157,7 +168,8 @@ class Pulse(PairedCalculation):
 			}
 		"""
 
-		self._program = self._env.compile(kernels, self._constants, detuning=self._detuning)
+		self._program = self._env.compile(kernels, self._constants,
+			detuning=self._detuning, COMP_1_minus1=COMP_1_minus1, COMP_2_1=COMP_2_1)
 		self._calculateMatrix = self._program.calculateMatrix
 		self._calculateRK = self._program.calculateRK
 
@@ -258,10 +270,11 @@ class Pulse(PairedCalculation):
 		batch = a_data.size / self._constants.cells
 		nvz = self._constants.nvz
 
-		# TODO: remove hardcoding (g must depend on cloud.a.comp and cloud.b.comp)
-		g11 = self._constants.g11
-		g12 = self._constants.g12
-		g22 = self._constants.g22
+		# FIXME: remove hardcoding (g must depend on cloud.a.comp and cloud.b.comp)
+		g_by_hbar = self._constants.g_by_hbar
+		g11_by_hbar = g_by_hbar[(COMP_1_minus1, COMP_1_minus1)]
+		g12_by_hbar = g_by_hbar[(COMP_1_minus1, COMP_2_1)]
+		g22_by_hbar = g_by_hbar[(COMP_2_1, COMP_2_1)]
 
 		l111 = self._constants.l111
 		l12 = self._constants.l12
@@ -279,18 +292,18 @@ class Pulse(PairedCalculation):
 				b_data[start:stop,:,:] * self._potentials)
 
 		a_res += (n_a * n_a * (-l111 / 2) + n_b * (-l12 / 2) -
-			1j * (n_a * g11 + n_b * g12)) * a_data - \
-			0.5j * self._constants.rabi_freq * \
+			1j * (n_a * g11_by_hbar + n_b * g12_by_hbar)) * a_data - \
+			0.5j * self._constants.w_rabi * \
 				numpy.exp(1j * (- t * self._detuning - phi)) * b_data
 
 		b_res += (n_b * (-l22 / 2) + n_a * (-l12 / 2) -
-			1j * (n_b * g22 + n_a * g12)) * b_data - \
-			0.5j * self._constants.rabi_freq * \
+			1j * (n_b * g22_by_hbar + n_a * g12_by_hbar)) * b_data - \
+			0.5j * self._constants.w_rabi * \
 				numpy.exp(1j * (t * self._detuning + phi)) * a_data
 
 	def apply(self, cloud, theta, matrix=True):
 		phi =  cloud.time * self._detuning + self._starting_phase
-		t_pulse = theta * self._constants.rabi_period
+		t_pulse = (theta / math.pi / 2.0) * self._constants.t_rabi
 
 		if matrix:
 			self._applyMatrix(cloud, theta, phi)
@@ -369,6 +382,13 @@ class SplitStepEvolution(PairedCalculation):
 				${c.complex.name} pa, pb, da = ${c.complex.ctr}(0, 0), db = ${c.complex.ctr}(0, 0);
 				${c.scalar.name} n_a, n_b;
 
+				<%
+					# FIXME: remove component hardcoding
+					g11 = c.g_by_hbar[(COMP_1_minus1, COMP_1_minus1)]
+					g12 = c.g_by_hbar[(COMP_1_minus1, COMP_2_1)]
+					g22 = c.g_by_hbar[(COMP_2_1, COMP_2_1)]
+				%>
+
 				//iterate to midpoint solution
 				%for iter in range(c.itmax):
 					n_a = squared_abs(a);
@@ -378,18 +398,18 @@ class SplitStepEvolution(PairedCalculation):
 					// but without it the whole thing diverges
 					pa = ${c.complex.ctr}(
 						-(${c.l111} * n_a * n_a + ${c.l12} * n_b) / 2,
-						-(-V - ${c.g11} * n_a - ${c.g12} * n_b));
+						-(-V - ${g11} * n_a - ${g12} * n_b));
 					pb = ${c.complex.ctr}(
 						-(${c.l22} * n_b + ${c.l12} * n_a) / 2,
-						-(-V - ${c.g22} * n_b - ${c.g12} * n_a));
+						-(-V - ${g22} * n_b - ${g12} * n_a));
 
 					%if suffix == "Wigner":
 						pa += ${c.complex.ctr}(
 							(1.5 * n_a - 0.75 / ${c.dV}) * ${c.l111} + ${c.l12} * 0.25,
-							-(${c.g11} + 0.5 * ${c.g12})) / ${c.dV};
+							-(${g11} + 0.5 * ${g12})) / ${c.dV};
 						pb += ${c.complex.ctr}(
 							${c.l12} * 0.25 + ${c.l22} * 0.5,
-							-(${c.g22} + 0.5 * ${c.g12})) / ${c.dV};
+							-(${g22} + 0.5 * ${g12})) / ${c.dV};
 					%endif
 
 					// calculate midpoint log derivative and exponentiate
@@ -408,7 +428,8 @@ class SplitStepEvolution(PairedCalculation):
 			%endfor
 		"""
 
-		self._program = self._env.compile(kernels, self._constants)
+		self._program = self._env.compile(kernels, self._constants,
+			COMP_1_minus1=COMP_1_minus1, COMP_2_1=COMP_2_1)
 		self._kpropagate_func = self._program.propagateKSpaceRealTime
 		self._xpropagate_func = self._program.propagateXSpaceTwoComponent
 		self._xpropagate_wigner = self._program.propagateXSpaceTwoComponentWigner
@@ -499,10 +520,10 @@ class SplitStepEvolution(PairedCalculation):
 
 		comp1 = cloud.a.comp
 		comp2 = cloud.b.comp
-		g = self._constants.g
-		g11 = g[(comp1, comp1)]
-		g12 = g[(comp1, comp2)]
-		g22 = g[(comp2, comp2)]
+		g_by_hbar = self._constants.g_by_hbar
+		g11_by_hbar = g_by_hbar[(comp1, comp1)]
+		g12_by_hbar = g_by_hbar[(comp1, comp2)]
+		g22_by_hbar = g_by_hbar[(comp2, comp2)]
 
 		l111 = self._constants.l111
 		l12 = self._constants.l12
@@ -519,10 +540,10 @@ class SplitStepEvolution(PairedCalculation):
 			n_b = numpy.abs(b.data) ** 2
 
 			pa = n_a * n_a * (-l111 / 2) + n_b * (-l12 / 2) + \
-				1j * (n_a * g11 + n_b * g12)
+				1j * (n_a * g11_by_hbar + n_b * g12_by_hbar)
 
 			pb = n_b * (-l22 / 2) + n_a * (-l12 / 2) + \
-				1j * (n_b * g22 + n_a * g12)
+				1j * (n_b * g22_by_hbar + n_a * g12_by_hbar)
 
 			for e in xrange(cloud.a.size / self._constants.cells):
 				start = e * nvz
@@ -533,9 +554,9 @@ class SplitStepEvolution(PairedCalculation):
 			if cloud.type == WIGNER:
 				dV = self._constants.dV
 				pa += ((1.5 * n_a - 0.75 / dV) * l111 + l12 * 0.25 -
-					1j * (g11 + 0.5 * g12)) / dV
+					1j * (g11_by_hbar + 0.5 * g12_by_hbar)) / dV
 				pb += (l12 * 0.25 + l22 * 0.5 -
-					1j * (g22 + 0.5 * g12)) / dV
+					1j * (g22_by_hbar + 0.5 * g12_by_hbar)) / dV
 
 				#print numpy.sum(numpy.abs(noise_a)) / numpy.sum(numpy.abs(pa)), \
 				#	numpy.sum(numpy.abs(noise_b)) / numpy.sum(numpy.abs(pb))
@@ -585,10 +606,8 @@ class SplitStepEvolution(PairedCalculation):
 
 	def run(self, cloud, time, callbacks=None, callback_dt=0):
 
-		# in SI units
 		t = 0
 		callback_t = 0
-		t_rho = self._constants.t_rho
 
 		# in natural units
 		dt = self._constants.dt_evo
@@ -600,8 +619,8 @@ class SplitStepEvolution(PairedCalculation):
 
 			while t < time:
 				self.propagate(cloud, dt)
-				t += dt * t_rho
-				callback_t += dt * t_rho
+				t += dt
+				callback_t += dt
 
 				if callback_t > callback_dt:
 					self._runCallbacks(t, cloud, callbacks)

@@ -79,9 +79,9 @@ class Constants:
 		self.w_y = 2.0 * math.pi * model.fy
 		self.w_z = 2.0 * math.pi * model.fz
 
-		self.gamma111 = model.gamma111
-		self.gamma12 = model.gamma12
-		self.gamma22 = model.gamma22
+		self.l111 = model.gamma111
+		self.l12 = model.gamma12
+		self.l22 = model.gamma22
 
 		g11 = 4.0 * math.pi * (self.hbar ** 2) * model.a11 * a0 / self.m
 		g12 = 4.0 * math.pi * (self.hbar ** 2) * model.a12 * a0 / self.m
