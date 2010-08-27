@@ -31,8 +31,8 @@ def testAxial(gpu, matrix_pulses):
 	return HeightmapPlot(
 		HeightmapData("test", picture,
 			xmin=0, xmax=100,
-			ymin=-constants.zmax * constants.l_rho * 1e6,
-			ymax=constants.zmax * constants.l_rho * 1e6,
+			ymin=-constants.zmax * 1e6,
+			ymax=constants.zmax * 1e6,
 			zmin=-1, zmax=1,
 			xname="Time, ms", yname="z, $\\mu$m", zname="Spin projection")
 	)
