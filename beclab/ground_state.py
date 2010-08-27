@@ -339,7 +339,7 @@ class GPEGroundState(PairedCalculation):
 			state2.fillWithOnes()
 		else:
 			# TF state is a good first approximation in case of one-component cloud
-			state1 = self._tf_gs.create(comp=comp, N=desired_N1)
+			state1 = self._tf_gs.create(comp=comp, N=self._constants.N)
 			state2 = None
 
 		stats = self._statistics
