@@ -27,17 +27,21 @@ def testEvolutionGraph(gpu):
 
 	times = [str(int(x * 1000 + 0.5)) for x in times]
 
-	def constructPlot(dataset):
+	def constructPlot(dataset, dl):
 		hms = []
+
+		# good approximation for the scale: density in the middle of TF ground state
+		max_density = constants.muTF() / constants.g[(COMP_1_minus1, COMP_1_minus1)] * dl
+
 		for t, hm in zip(times, dataset):
 			hms.append(HeightmapData(t, hm.transpose(),
 				xmin=-constants.zmax, xmax=constants.zmax,
 				ymin=-constants.ymax, ymax=constants.ymax,
-				zmin=0, zmax=400))
+				zmin=0, zmax=max_density))
 
 		return EvolutionPlot(hms, shape=(6, 4))
 
-	return constructPlot(a_yz), constructPlot(b_yz)
+	return constructPlot(a_yz, constants.xmax), constructPlot(b_yz, constants.xmax)
 
 p1, p2 = testEvolutionGraph(gpu=False)
 p1.save("evolution_cpu_a.pdf")
