@@ -30,7 +30,7 @@ def testVisibility(gpu, matrix_pulses):
 	vis = XYData(name, times, vis, ymin=0, ymax=1, xname="Time, s", yname="Visibility")
 
 	times, N1, N2, N = p.getData()
-	particles = XYData(name, times, (N1 - N2) / constants.N,
+	particles = XYData(name, times, (N1 - N2) / N,
 		ymin=-1, ymax=1, xname="Time, s", yname="Population ratio")
 
 	return particles, vis
