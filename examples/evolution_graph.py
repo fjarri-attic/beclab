@@ -17,7 +17,7 @@ def testEvolutionGraph(gpu):
 	cloud = gs.createCloud()
 	pulse.apply(cloud, theta=0.5*math.pi)
 	t1 = time.time()
-	evolution.run(cloud, time=0.12, callbacks=[a], callback_dt=0.005)
+	evolution.run(cloud, time=0.119, callbacks=[a], callback_dt=0.005)
 	env.synchronize()
 	t2 = time.time()
 	print "Time spent: " + str(t2 - t1) + " s"
