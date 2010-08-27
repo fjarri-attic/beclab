@@ -389,6 +389,10 @@ class SplitStepEvolution(PairedCalculation):
 					g22 = c.g_by_hbar[(COMP_2_1, COMP_2_1)]
 				%>
 
+				// FIXME: Some magic here. l111 ~ 10^-42, while single precision float
+				// can only handle 10^-38.
+				${c.scalar.name} temp = n_a * ${1.0e-10};
+
 				//iterate to midpoint solution
 				%for iter in range(c.itmax):
 					n_a = squared_abs(a);
@@ -397,7 +401,7 @@ class SplitStepEvolution(PairedCalculation):
 					// TODO: there must be no minus sign before imaginary part,
 					// but without it the whole thing diverges
 					pa = ${c.complex.ctr}(
-						-(${c.l111} * n_a * n_a + ${c.l12} * n_b) / 2,
+						-(temp * temp * ${c.l111 * 1e10} + ${c.l12} * n_b) / 2,
 						-(-V - ${g11} * n_a - ${g12} * n_b));
 					pb = ${c.complex.ctr}(
 						-(${c.l22} * n_b + ${c.l12} * n_a) / 2,
