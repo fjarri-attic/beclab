@@ -83,16 +83,15 @@ class Constants:
 		self.gamma12 = model.gamma12
 		self.gamma22 = model.gamma22
 
-		# warning: here g = (actual g) / hbar
-		self.g11 = 4.0 * math.pi * (self.hbar ** 2) * model.a11 * a0 / self.m
-		self.g12 = 4.0 * math.pi * (self.hbar ** 2) * model.a12 * a0 / self.m
-		self.g22 = 4.0 * math.pi * (self.hbar ** 2) * model.a22 * a0 / self.m
+		g11 = 4.0 * math.pi * (self.hbar ** 2) * model.a11 * a0 / self.m
+		g12 = 4.0 * math.pi * (self.hbar ** 2) * model.a12 * a0 / self.m
+		g22 = 4.0 * math.pi * (self.hbar ** 2) * model.a22 * a0 / self.m
 
 		self.g = {
-			(COMP_1_minus1, COMP_1_minus1): self.g11,
-			(COMP_1_minus1, COMP_2_1): self.g12,
-			(COMP_2_1, COMP_1_minus1): self.g12,
-			(COMP_2_1, COMP_2_1): self.g22
+			(COMP_1_minus1, COMP_1_minus1): g11,
+			(COMP_1_minus1, COMP_2_1): g12,
+			(COMP_2_1, COMP_1_minus1): g12,
+			(COMP_2_1, COMP_2_1): g22
 		}
 
 		# g itself is too small for single precision
