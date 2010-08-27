@@ -332,9 +332,8 @@ class GPEGroundState(PairedCalculation):
 			# (not two one-component TF-states, because in case of
 			# immiscible regime they are far from ground state)
 
-			#state1 = State(self._env, self._constants, comp=comp)
-			#state1.fillWithOnes()
-			state1 = self._tf_gs.create(comp=comp, N=desired_N1)
+			state1 = State(self._env, self._constants, comp=comp)
+			state1.fillWithOnes()
 
 			state2 = State(self._env, self._constants, comp=COMP_2_1)
 			state2.fillWithOnes()
