@@ -37,7 +37,7 @@ class Pulse(PairedCalculation):
 
 		self._starting_phase = starting_phase
 
-		self._plan = createPlan(env, constants, constants.nvx, constants.nvy, constants.nvz)
+		self._plan = createPlan(env, constants, constants.shape)
 
 		self._potentials = getPotentials(env, constants)
 		self._kvectors = getKVectors(env, constants)
@@ -185,8 +185,12 @@ class Pulse(PairedCalculation):
 		k2 = self._constants.complex.cast(-1j * numpy.exp(-1j * phi) * math.sin(half_theta))
 		k3 = self._constants.complex.cast(-1j * numpy.exp(1j * phi) * math.sin(half_theta))
 
-		a[:,:,:] = a0 * k1 + b0 * k2
-		b[:,:,:] = a0 * k3 + b0 * k1
+		if self._constants.dim == 1:
+			a[:] = a0 * k1 + b0 * k2
+			b[:] = a0 * k3 + b0 * k1
+		else:
+			a[:,:,:] = a0 * k1 + b0 * k2
+			b[:,:,:] = a0 * k3 + b0 * k1
 
 	def _gpu__applyMatrix(self, cloud, theta, phi):
 		self._calculateMatrix(cloud.a.shape, cloud.a.data, cloud.b.data,
@@ -324,7 +328,7 @@ class SplitStepEvolution(PairedCalculation):
 		self._env = env
 		self._constants = constants
 
-		self._plan = createPlan(env, constants, constants.nvx, constants.nvy, constants.nvz)
+		self._plan = createPlan(env, constants, constants.shape)
 
 		# indicates whether current state is in midstep (i.e, right after propagation
 		# in x-space and FFT to k-space)
@@ -458,11 +462,18 @@ class SplitStepEvolution(PairedCalculation):
 		data2 = cloud.b.data
 		nvz = self._constants.nvz
 
-		for e in xrange(cloud.a.size / self._constants.cells):
-			start = e * nvz
-			stop = (e + 1) * nvz
-			data1[start:stop,:,:] *= kcoeff
-			data2[start:stop,:,:] *= kcoeff
+		if self._constants.dim == 1:
+			for e in xrange(cloud.a.size / self._constants.cells):
+				start = e * nvz
+				stop = (e + 1) * nvz
+				data1[start:stop] *= kcoeff
+				data2[start:stop] *= kcoeff
+		else:
+			for e in xrange(cloud.a.size / self._constants.cells):
+				start = e * nvz
+				stop = (e + 1) * nvz
+				data1[start:stop,:,:] *= kcoeff
+				data2[start:stop,:,:] *= kcoeff
 
 	def _gpu__xpropagate(self, cloud, dt):
 		if cloud.type == WIGNER:

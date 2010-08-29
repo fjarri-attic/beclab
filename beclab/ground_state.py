@@ -61,11 +61,16 @@ class TFGroundState(PairedCalculation):
 		mu_by_hbar = mu / self._constants.hbar
 		g_by_hbar = g / self._constants.hbar
 
-		for i in xrange(self._constants.nvx):
-			for j in xrange(self._constants.nvy):
-				for k in xrange(self._constants.nvz):
-					e = mu_by_hbar - self._potentials[k, j, i]
-					data[k, j, i] = math.sqrt(max(e / g_by_hbar, 0))
+		if self._constants.dim == 1:
+			for k in xrange(self._constants.nvz):
+				e = mu_by_hbar - self._potentials[k]
+				data[k] = math.sqrt(max(e / g_by_hbar, 0))
+		else:
+			for i in xrange(self._constants.nvx):
+				for j in xrange(self._constants.nvy):
+					for k in xrange(self._constants.nvz):
+						e = mu_by_hbar - self._potentials[k, j, i]
+						data[k, j, i] = math.sqrt(max(e / g_by_hbar, 0))
 
 	def create(self, comp=COMP_1_minus1, N=None):
 		res = State(self._env, self._constants, comp=comp)
@@ -87,7 +92,7 @@ class GPEGroundState(PairedCalculation):
 		self._constants = constants
 
 		self._tf_gs = TFGroundState(env, constants)
-		self._plan = createPlan(env, constants, constants.nvx, constants.nvy, constants.nvz)
+		self._plan = createPlan(env, constants, constants.shape)
 		self._statistics = ParticleStatistics(env, constants)
 
 		self._potentials = getPotentials(env, constants)

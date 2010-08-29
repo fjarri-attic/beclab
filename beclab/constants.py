@@ -62,22 +62,7 @@ class Constants:
 		self.scalar = precision.scalar
 		self.complex = precision.complex
 
-		self.nvx = model.nvx
-		self.nvy = model.nvy
-		self.nvz = model.nvz
-		self.cells = self.nvx * self.nvy * self.nvz
-		self.shape = (self.nvz, self.nvy, self.nvx)
-
-		# prefix "w_" stands for radial frequency, "f_" for common frequency
-
-		self.w_detuning = 2.0 * math.pi * model.detuning
-		self.w_rabi = 2.0 * math.pi * model.rabi_freq
-		self.t_rabi = 1.0 / model.rabi_freq
-
-		# trap frequencies
-		self.w_x = 2.0 * math.pi * model.fx
-		self.w_y = 2.0 * math.pi * model.fy
-		self.w_z = 2.0 * math.pi * model.fz
+		self.ensembles = model.ensembles
 
 		self.l111 = model.gamma111
 		self.l12 = model.gamma12
@@ -94,40 +79,82 @@ class Constants:
 			(COMP_2_1, COMP_2_1): g22
 		}
 
+		self.N = model.N
+
+		# trap frequencies
+		self.w_x = 2.0 * math.pi * model.fx
+		self.w_y = 2.0 * math.pi * model.fy
+		self.w_z = 2.0 * math.pi * model.fz
+
+		if model.nvx == 1 and model.nvy == 1:
+			self.dim = 1
+			self.nvz = model.nvz
+			self.shape = (self.nvz,)
+			self.ens_shape = (self.nvz * self.ensembles)
+			self.cells = self.nvz
+
+			l_rho = math.sqrt(self.hbar / (self.m * self.w_x))
+			eff_area = 2.0 * math.pi * l_rho ** 2
+
+			for key in self.g:
+				self.g[key] /= eff_area
+
+			self.l111 /= eff_area
+			self.l12 /= eff_area
+			self.l22 /= eff_area
+
+		elif model.nvx == 1:
+			raise Exception("2D clouds are not supported at the time")
+		else:
+			self.dim = 3
+			self.nvx = model.nvx
+			self.nvy = model.nvy
+			self.nvz = model.nvz
+			self.cells = self.nvx * self.nvy * self.nvz
+			self.shape = (self.nvz, self.nvy, self.nvx)
+			self.ens_shape = (self.nvz * self.ensembles, self.nvy, self.nvx)
+
+		# prefix "w_" stands for radial frequency, "f_" for common frequency
+
+		self.w_detuning = 2.0 * math.pi * model.detuning
+		self.w_rabi = 2.0 * math.pi * model.rabi_freq
+		self.t_rabi = 1.0 / model.rabi_freq
+
 		# g itself is too small for single precision
 		self.g_by_hbar = dict((key, self.g[key] / self.hbar) for key in self.g)
-
-		self.N = model.N
 
 		mu1 = self.muTF(comp=COMP_1_minus1)
 
 		self.e_cut = model.e_cut * mu1
 
-		self.xmax = model.border * math.sqrt(2.0 * mu1 / (self.m * self.w_x ** 2))
-		self.ymax = model.border * math.sqrt(2.0 * mu1 / (self.m * self.w_y ** 2))
+		if self.dim > 2: self.xmax = model.border * math.sqrt(2.0 * mu1 / (self.m * self.w_x ** 2))
+		if self.dim > 2: self.ymax = model.border * math.sqrt(2.0 * mu1 / (self.m * self.w_y ** 2))
 		self.zmax = model.border * math.sqrt(2.0 * mu1 / (self.m * self.w_z ** 2))
 
 		# space step
-		self.dx = 2.0 * self.xmax / (self.nvx - 1)
-		self.dy = 2.0 * self.ymax / (self.nvy - 1)
+		if self.dim > 2: self.dx = 2.0 * self.xmax / (self.nvx - 1)
+		if self.dim > 2: self.dy = 2.0 * self.ymax / (self.nvy - 1)
 		self.dz = 2.0 * self.zmax / (self.nvz - 1)
-		self.dV = self.dx * self.dy * self.dz
+
+		if self.dim == 1:
+			self.dV = self.dz
+		else:
+			self.dV = self.dx * self.dy * self.dz
+
 		self.V = self.dV * self.cells
 
-		self.nvx_pow = log2(self.nvx)
-		self.nvy_pow = log2(self.nvy)
+		if self.dim > 2: self.nvx_pow = log2(self.nvx)
+		if self.dim > 2: self.nvy_pow = log2(self.nvy)
 		self.nvz_pow = log2(self.nvz)
 
 		# k step
-		self.dkx = math.pi / self.xmax
-		self.dky = math.pi / self.ymax
+		if self.dim > 2: self.dkx = math.pi / self.xmax
+		if self.dim > 2: self.dky = math.pi / self.ymax
 		self.dkz = math.pi / self.zmax
 
 		self.itmax = model.itmax
 		self.dt_steady = model.dt_steady
 		self.dt_evo = model.dt_evo
-		self.ensembles = model.ensembles
-		self.ens_shape = (self.ensembles * self.nvz, self.nvy, self.nvx)
 
 		# cast all floating point values to current precision
 
@@ -160,7 +187,17 @@ class Constants:
 
 		g = self.g[(comp, comp)]
 
+		if self.dim == 3:
+			return self._muTF3D(g, N)
+		else:
+			return self._muTF1D(g, N)
+
+	def _muTF3D(self, g, N):
 		w = (self.w_x * self.w_y * self.w_z) ** (1.0 / 3)
 		return ((15 * N / (8.0 * math.pi)) ** 0.4) * \
 			((self.m * w * w / 2) ** 0.6) * \
 			(g ** 0.4)
+
+	def _muTF1D(self, g, N):
+		return ((0.75 * g * N) ** (2.0 / 3)) * \
+			((self.m * self.w_z * self.w_z / 2) ** (1.0 / 3))

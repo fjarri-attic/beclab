@@ -18,12 +18,12 @@ class State(PairedCalculation):
 		self._constants = constants
 		self.type = type
 		self.shape = constants.shape if type == PSI_FUNC else constants.ens_shape
-		self.size = self.shape[0] * self.shape[1] * self.shape[2]
+		self.size = constants.cells * (1 if type == PSI_FUNC else constants.ensembles)
 		self.dtype = constants.complex.dtype
 		self.comp = comp
 
 		self._projector_mask, _ = getProjectorMask(self._env, self._constants)
-		self._plan = createPlan(env, constants, constants.nvx, constants.nvy, constants.nvz)
+		self._plan = createPlan(env, constants, constants.shape)
 
 		self._prepare()
 		self._initializeMemory()
@@ -196,7 +196,7 @@ class ParticleStatistics(PairedCalculation):
 		self._env = env
 		self._constants = constants
 
-		self._plan = createPlan(env, constants, constants.nvx, constants.nvy, constants.nvz)
+		self._plan = createPlan(env, constants, constants.shape)
 		self._reduce = getReduce(env, constants)
 
 		self._potentials = getPotentials(env, constants)
@@ -238,12 +238,22 @@ class ParticleStatistics(PairedCalculation):
 		xk = data * kdata
 
 		g_by_hbar = self._constants.g_by_hbar[(state.comp, state.comp)]
-		for e in xrange(batch):
-			start = e * self._constants.cells
-			stop = (e + 1) * self._constants.cells
-			res[start:stop,:,:] = numpy.abs(n[start:stop,:,:] * (self._potentials +
-				n[start:stop,:,:] * (g_by_hbar / coeff)) +
-				xk[start:stop,:,:] * self._kvectors)
+
+		if self._constants.dim == 1:
+			for e in xrange(batch):
+				start = e * self._constants.cells
+				stop = (e + 1) * self._constants.cells
+				res[start:stop] = numpy.abs(n[start:stop] * (self._potentials +
+					n[start:stop] * (g_by_hbar / coeff)) +
+					xk[start:stop] * self._kvectors)
+
+		else:
+			for e in xrange(batch):
+				start = e * self._constants.cells
+				stop = (e + 1) * self._constants.cells
+				res[start:stop,:,:] = numpy.abs(n[start:stop,:,:] * (self._potentials +
+					n[start:stop,:,:] * (g_by_hbar / coeff)) +
+					xk[start:stop,:,:] * self._kvectors)
 
 		return self._reduce(res) / batch * self._constants.dV / N * self._constants.hbar
 
