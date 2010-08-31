@@ -121,15 +121,24 @@ class State(PairedCalculation):
 		for e in xrange(batch):
 			start = e * nvz
 			stop = (e + 1) * nvz
-			data[start:stop,:,:] = self.data
+
+			if self._constants.dim == 3:
+				data[start:stop,:,:] = self.data
+			else:
+				data[start:stop] = self.data
 
 		self._plan.execute(data, kdata, inverse=True, batch=batch)
 
 		for e in xrange(batch):
 			start = e * nvz
 			stop = (e + 1) * nvz
-			kdata[start:stop,:,:] += self._projector_mask * coeff * randoms[start:stop,:,:]
-			kdata[start:stop,:,:] *= self._projector_mask # remove high-energy components
+
+			if self._constants.dim == 3:
+				kdata[start:stop,:,:] += self._projector_mask * coeff * randoms[start:stop,:,:]
+				kdata[start:stop,:,:] *= self._projector_mask # remove high-energy components
+			else:
+				kdata[start:stop] += self._projector_mask * coeff * randoms[start:stop]
+				kdata[start:stop] *= self._projector_mask # remove high-energy components
 
 		self._plan.execute(kdata, data, batch=batch)
 
