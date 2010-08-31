@@ -1060,7 +1060,7 @@ class SplitStepEvolution2(PairedCalculation):
 		self._env = env
 		self._constants = constants
 
-		self._plan = createPlan(env, constants, constants.nvx, constants.nvy, constants.nvz)
+		self._plan = createPlan(env, constants, constants.shape)
 
 		# indicates whether current state is in midstep (i.e, right after propagation
 		# in x-space and FFT to k-space)
@@ -1078,7 +1078,10 @@ class SplitStepEvolution2(PairedCalculation):
 		for e in xrange(self._constants.ensembles):
 			start = e * nvz
 			stop = (e + 1) * nvz
-			data[start:stop,:,:] *= self._projector_mask
+			if self._constants.dim == 3:
+				data[start:stop,:,:] *= self._projector_mask
+			else:
+				data[start:stop] *= self._projector_mask
 
 	def _cpu__prepare(self):
 		pass
@@ -1194,8 +1197,12 @@ class SplitStepEvolution2(PairedCalculation):
 		for e in xrange(cloud.a.size / self._constants.cells):
 			start = e * nvz
 			stop = (e + 1) * nvz
-			data1[start:stop,:,:] *= kcoeff
-			data2[start:stop,:,:] *= kcoeff
+			if self._constants.dim == 3:
+				data1[start:stop,:,:] *= kcoeff
+				data2[start:stop,:,:] *= kcoeff
+			else:
+				data1[start:stop] *= kcoeff
+				data2[start:stop] *= kcoeff
 
 	def _gpu__xpropagate(self, cloud, dt):
 		if cloud.type == WIGNER:
@@ -1214,10 +1221,10 @@ class SplitStepEvolution2(PairedCalculation):
 
 		comp1 = cloud.a.comp
 		comp2 = cloud.b.comp
-		g = self._constants.g
-		g11 = g[(comp1, comp1)]
-		g12 = g[(comp1, comp2)]
-		g22 = g[(comp2, comp2)]
+		g_by_hbar = self._constants.g_by_hbar
+		g11_by_hbar = g_by_hbar[(comp1, comp1)]
+		g12_by_hbar = g_by_hbar[(comp1, comp2)]
+		g22_by_hbar = g_by_hbar[(comp2, comp2)]
 
 		l111 = self._constants.l111
 		l12 = self._constants.l12
@@ -1231,10 +1238,10 @@ class SplitStepEvolution2(PairedCalculation):
 			n_b = numpy.abs(b.data) ** 2
 
 			pa = n_a * n_a * (-l111 / 2) + n_b * (-l12 / 2) + \
-				1j * (n_a * g11 + n_b * g12)
+				1j * (n_a * g11_by_hbar + n_b * g12_by_hbar)
 
 			pb = n_b * (-l22 / 2) + n_a * (-l12 / 2) + \
-				1j * (n_b * g22 + n_a * g12)
+				1j * (n_b * g22_by_hbar + n_a * g12_by_hbar)
 
 			for e in xrange(cloud.a.size / self._constants.cells):
 				start = e * nvz
@@ -1368,7 +1375,6 @@ class SplitStepEvolution2(PairedCalculation):
 		# in SI units
 		t = 0
 		callback_t = 0
-		t_rho = self._constants.t_rho
 
 		# in natural units
 		dt = self._constants.dt_evo
@@ -1380,8 +1386,8 @@ class SplitStepEvolution2(PairedCalculation):
 
 			while t < time:
 				self.propagate(cloud, dt)
-				t += dt * t_rho
-				callback_t += dt * t_rho
+				t += dt
+				callback_t += dt
 
 				if callback_t > callback_dt:
 					self._runCallbacks(t, cloud, callbacks)
