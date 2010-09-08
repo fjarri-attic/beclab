@@ -93,8 +93,8 @@ class Constants:
 			self.ens_shape = (self.nvz * self.ensembles)
 			self.cells = self.nvz
 
-			l_rho = math.sqrt(self.hbar / (self.m * self.w_x))
-			eff_area = 2.0 * math.pi * l_rho ** 2
+			l_rho = math.sqrt(self.hbar / (2.0 * self.m * self.w_x))
+			eff_area = 4.0 * math.pi * (l_rho ** 2)
 
 			for key in self.g:
 				self.g[key] /= eff_area
@@ -156,6 +156,11 @@ class Constants:
 		self.dt_steady = model.dt_steady
 		self.dt_evo = model.dt_evo
 
+		# natural units
+		self.t_rho = 1.0 / self.w_z
+		self.e_rho = self.hbar * self.w_z
+		self.l_rho = math.sqrt(self.hbar / (2.0 * self.m * self.w_z))
+
 		# cast all floating point values to current precision
 
 		def recursiveCast(cast, obj):
@@ -167,11 +172,6 @@ class Constants:
 				return cast(obj)
 			else:
 				return obj
-
-		# natural units
-		self.t_rho = 1.0 / self.w_x
-		self.e_rho = self.hbar * self.w_x
-		self.l_rho = math.sqrt(self.hbar / (self.m * self.w_x))
 
 		# By doing this, we can lose some small constants (they are turned into 0s)
 		# So I decided to transform them in-place, only if it is necessary to pass
