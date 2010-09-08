@@ -297,28 +297,19 @@ def getKVectors(env, constants):
 	Returns array with values of k-space vectors
 	(coefficients for kinetic term) in hbar units
 	"""
-
-	def kvalue(i, dk, N):
-		if 2 * i > N:
-			return dk * (i - N)
-		else:
-			return dk * i
+	def kvalues(dx, N):
+		return numpy.fft.fftfreq(N, dx) * 2.0 * math.pi
 
 	kvectors = numpy.empty(constants.shape, dtype=constants.scalar.dtype)
 
 	if constants.dim == 1:
-		for k in xrange(constants.nvz):
-			kz = kvalue(k, constants.dkz, constants.nvz)
+		for k, kz in enumerate(kvalues(constants.dz, constants.nvz)):
 			kvectors[k] = constants.hbar * kz * kz / (2.0 * constants.m)
 
 	else:
-		for i in xrange(constants.nvx):
-			for j in xrange(constants.nvy):
-				for k in xrange(constants.nvz):
-
-					kx = kvalue(i, constants.dkx, constants.nvx)
-					ky = kvalue(j, constants.dky, constants.nvy)
-					kz = kvalue(k, constants.dkz, constants.nvz)
+		for i, kx in enumerate(kvalues(constants.dx, constants.nvx)):
+			for j, ky in enumerate(kvalues(constants.dy, constants.nvy)):
+				for k, kz in enumerate(kvalues(constants.dz, constants.nvz)):
 
 					kvectors[k, j, i] = constants.hbar * \
 						(kx * kx + ky * ky + kz * kz) / (2.0 * constants.m)
@@ -332,35 +323,24 @@ def getKVectors(env, constants):
 
 def getProjectorMask(env, constants):
 
-	def kvalue(i, dk, N):
-		if 2 * i > N:
-			return dk * (i - N)
-		else:
-			return dk * i
+	def kvalues(dx, N):
+		return numpy.fft.fftfreq(N, dx) * 2.0 * math.pi
 
 	mask = numpy.empty(constants.shape, dtype=constants.scalar.dtype)
 
-	kcut = math.sqrt(2 * constants.m * constants.e_cut) / constants.hbar
-
 	if constants.dim == 1:
-		for k in xrange(constants.nvz):
-			kz = kvalue(k, constants.dkz, constants.nvz)
-			kk = (constants.hbar ** 2) * kz * kz / (2.0 * constants.m)
-			mask[k] = 0.0 if kk > kcut else 1.0
+		for k, kz in enumerate(kvalues(constants.dz, constants.nvz)):
+			e_k = (constants.hbar * kz) ** 2 / (2.0 * constants.m)
+			mask[k] = 0.0 if e_k > constants.e_cut else 1.0
 
 	else:
-		for i in xrange(constants.nvx):
-			for j in xrange(constants.nvy):
-				for k in xrange(constants.nvz):
-
-					kx = kvalue(i, constants.dkx, constants.nvx)
-					ky = kvalue(j, constants.dky, constants.nvy)
-					kz = kvalue(k, constants.dkz, constants.nvz)
-
-					kk = (constants.hbar ** 2) * \
+		for i, kx in enumerate(kvalues(constants.dx, constants.nvx)):
+			for j, ky in enumerate(kvalues(constants.dy, constants.nvy)):
+				for k, kz in enumerate(kvalues(constants.dz, constants.nvz)):
+					e_k = (constants.hbar ** 2) * \
 						(kx * kx + ky * ky + kz * kz) / (2.0 * constants.m)
 
-					mask[k, j, i] = 0.0 if kk > kcut else 1.0
+					mask[k, j, i] = 0.0 if e_k > constants.e_cut else 1.0
 
 	modes = numpy.sum(mask)
 	#print "Projector modes: " + str(modes) + " out of " + str(constants.cells)
