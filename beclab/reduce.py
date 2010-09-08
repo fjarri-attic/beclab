@@ -149,7 +149,8 @@ class Reduce:
 
 			func = reduce_kernels[reduce_power / 2]
 
-			func(self._env.queue, (length / 2,), data_out, data_in, local_size=(reduce_power / 2,))
+			func(self._env.queue, (length / 2,), (reduce_power / 2,),
+				data_out, data_in)
 
 			length /= reduce_power
 

@@ -244,7 +244,7 @@ class _FunctionWrapper:
 		self.queue = queue
 
 	def __call__(self, shape, *args):
-		self._kernel(self.queue, tuple(reversed(shape)), *args)
+		self._kernel(self.queue, tuple(reversed(shape)), None, *args)
 
 
 def log2(x):
