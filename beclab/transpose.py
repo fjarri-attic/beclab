@@ -93,5 +93,5 @@ class Transpose:
 		assert height % self._half_warp_size == 0
 
 		global_size = (width, height)
-		self._func(self._queue, global_size, odata, idata, numpy.int32(width),
-			numpy.int32(height), numpy.int32(num), local_size=self._local_size)
+		self._func(self._queue, global_size, self._local_size, odata, idata, numpy.int32(width),
+			numpy.int32(height), numpy.int32(num))
