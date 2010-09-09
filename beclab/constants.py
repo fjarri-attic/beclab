@@ -90,7 +90,7 @@ class Constants:
 			self.dim = 1
 			self.nvz = model.nvz
 			self.shape = (self.nvz,)
-			self.ens_shape = (self.nvz * self.ensembles)
+			self.ens_shape = (self.nvz * self.ensembles,)
 			self.cells = self.nvz
 
 			l_rho = math.sqrt(self.hbar / (2.0 * self.m * self.w_x))
