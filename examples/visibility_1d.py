@@ -5,47 +5,80 @@ import math
 from beclab import *
 from beclab.state import ParticleStatistics
 
-constants = Constants(Model(N=60, nvx=1, nvy=1, nvz=32, ensembles=16,
-	fx=42e3, fy=42e3, fz=90, dt_evo=1e-5, border=2.0, e_cut=1,
-	a11=100.4, a12=97.9, a22=95.5, detuning=0,
-	gamma111=0, gamma12=0, gamma22=0), double_precision=True)
-env = Environment(gpu=False)
 
-evolution = SplitStepEvolution2(env, constants)
+def test(gpu=False, ensembles=64, nvz=32, dt_evo=1e-5, a12=97.9,
+	losses=True, equilibration_time=0, noise=True):
 
-gs = GPEGroundState(env, constants)
-pulse = Pulse(env, constants)
-v = VisibilityCollector(env, constants, verbose=False)
-p = ParticleNumberCollector(env, constants, pulse=pulse, matrix_pulse=True, verbose=True)
-a = AxialProjectionCollector(env, constants, matrix_pulse=True, pulse=pulse)
-ps = ParticleStatistics(env, constants)
+	kwds = {}
 
-cloud = gs.createCloud()
-cloud.toWigner()
+	if losses:
+		kwds['gamma111'] = 0
+		kwds['gamma12'] = 0
+		kwds['gamma22'] = 0
 
-#evolution.run(cloud, 0.05)
-pulse.apply(cloud, math.pi * 0.5, matrix=True)
+	constants = Constants(Model(N=60, nvx=1, nvy=1, nvz=nvz, ensembles=ensembles,
+		fx=42e3, fy=42e3, fz=90, dt_evo=dt_evo, border=2.0, e_cut=1,
+		a11=100.4, a12=a12, a22=95.5, detuning=0, **kwds),
+		double_precision=(not gpu))
+	env = Environment(gpu=gpu)
 
-t1 = time.time()
-evolution.run(cloud, 0.05, callbacks=[v, p, a], callback_dt=0.0005)
-env.synchronize()
-t2 = time.time()
-print "Time spent: " + str(t2 - t1) + " s"
+	evolution = SplitStepEvolution2(env, constants)
 
-times, vis = v.getData()
-XYPlot([XYData("test", times, vis, ymin=0, ymax=1,
-	xname="Time, s", yname="Visibility")]).save("1d_visibilty.pdf")
+	gs = GPEGroundState(env, constants)
+	pulse = Pulse(env, constants)
+	v = VisibilityCollector(env, constants, verbose=False)
+	p = ParticleNumberCollector(env, constants, pulse=pulse, matrix_pulse=True, verbose=False)
+	a = AxialProjectionCollector(env, constants, matrix_pulse=True, pulse=pulse)
 
-times, N1, N2, N = p.getData()
-XYPlot([XYData("test", times, N1,
-	ymin=0, ymax=60, xname="Time, s", yname="Population, N1")]).save("1d_population.pdf")
+	#ps = ParticleStatistics(env, constants)
 
-times, picture = a.getData()
-HeightmapPlot(HeightmapData("test", picture,
-	xmin=0, xmax=50,
-	ymin=-constants.zmax * 1e6,
-	ymax=constants.zmax * 1e6,
-	#zmin=-1, zmax=1,
-	zmin=0,
-	xname="Time, ms", yname="z, $\\mu$m", zname="Spin projection")
-).save("1d_axial.pdf")
+	cloud = gs.createCloud()
+	cloud.toWigner()
+
+	if equilibration_time > 0:
+		evolution.run(cloud, equilibration_time, noise=noise)
+
+	pulse.apply(cloud, math.pi * 0.5, matrix=True)
+
+	t1 = time.time()
+	evolution.run(cloud, 0.05, callbacks=[v, p, a], callback_dt=0.0005, noise=noise)
+	env.synchronize()
+	t2 = time.time()
+	print "Time spent: " + str(t2 - t1) + " s"
+
+	name = ["gpu" if gpu else "cpu",
+		str(ensembles) + " ens.",
+		str(nvz) + " cells",
+		"dt = " + str(dt_evo * 1e6) + " $\mu$s",
+		"a12 = " + str(a12)] + \
+		([] if losses else ["no losses"]) + \
+		(["eq. " + str(equilibration_time * 1e3) + " ms"] if equilibration_time > 0 else []) + \
+		(["noise"] if noise else [])
+
+	name = ", ".join(name)
+
+	times, vis = v.getData()
+	vis_data = XYData(name, times, vis, ymin=0, ymax=1,
+		xname="Time, s", yname="Visibility")
+
+	times, N1, N2, N = p.getData()
+	pop_data = XYData(name, times, N1,
+		ymin=0, ymax=60, xname="Time, s", yname="Population, N1")
+
+	times, picture = a.getData()
+	axial_data = HeightmapData(name, picture,
+		xmin=0, xmax=50,
+		ymin=-constants.zmax * 1e6,
+		ymax=constants.zmax * 1e6,
+		zmin=0, zmax=1,
+		xname="Time, ms", yname="z, $\\mu$m", zname="Spin projection")
+
+	return vis_data, pop_data, axial_data
+
+v1, _, _ = test(noise=False)
+v2, _, _ = test(noise=False, losses=False)
+v3, _, _ = test(noise=False, losses=False, equilibration_time=0.03)
+v4, _, _ = test(noise=False, losses=True)
+v5, _, _ = test(noise=False, losses=True, equilibration_time=0.03)
+
+XYPlot([v1, v2, v3, v4, v5], location="upper right").save("1d_visibility.pdf")
