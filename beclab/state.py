@@ -22,7 +22,6 @@ class State(PairedCalculation):
 		self.dtype = constants.complex.dtype
 		self.comp = comp
 
-		self._projector_mask, _ = getProjectorMask(self._env, self._constants)
 		self._plan = createPlan(env, constants, constants.shape)
 
 		self._prepare()
@@ -94,7 +93,7 @@ class State(PairedCalculation):
 	def _gpu_fillWithOnes(self):
 		self._fillWithOnes(self.shape, self.data)
 
-	def _gpu__addVacuumParticles(self, data, randoms):
+	def _gpu__addVacuumParticles(self, data, randoms, mask):
 		shape = data.shape
 		dtype = data.dtype
 		batch = data.size / self._constants.cells
@@ -104,10 +103,10 @@ class State(PairedCalculation):
 		self._initializeEnsembles(shape, data, self.data)
 		kdata = self._env.allocate(shape, dtype=dtype)
 		self._plan.execute(data, kdata, inverse=True, batch=batch)
-		self._addPlaneWaves(shape, kdata, randoms, self._projector_mask)
+		self._addPlaneWaves(shape, kdata, randoms, mask)
 		self._plan.execute(kdata, data, batch=batch)
 
-	def _cpu__addVacuumParticles(self, data, randoms):
+	def _cpu__addVacuumParticles(self, data, randoms, mask):
 
 		coeff = 1.0 / math.sqrt(self._constants.V)
 
@@ -134,11 +133,11 @@ class State(PairedCalculation):
 			stop = (e + 1) * nvz
 
 			if self._constants.dim == 3:
-				kdata[start:stop,:,:] += self._projector_mask * coeff * randoms[start:stop,:,:]
-				kdata[start:stop,:,:] *= self._projector_mask # remove high-energy components
+				kdata[start:stop,:,:] += mask * coeff * randoms[start:stop,:,:]
+				kdata[start:stop,:,:] *= mask # remove high-energy components
 			else:
-				kdata[start:stop] += self._projector_mask * coeff * randoms[start:stop]
-				kdata[start:stop] *= self._projector_mask # remove high-energy components
+				kdata[start:stop] += mask * coeff * randoms[start:stop]
+				kdata[start:stop] *= mask # remove high-energy components
 
 		self._plan.execute(kdata, data, batch=batch)
 
@@ -151,7 +150,8 @@ class State(PairedCalculation):
 		randoms = (numpy.random.normal(scale=0.5, size=self._constants.ens_shape) +
 			1j * numpy.random.normal(scale=0.5, size=self._constants.ens_shape)).astype(self._constants.complex.dtype)
 
-		self._addVacuumParticles(new_data, randoms)
+		projector_mask, _ = getProjectorMask(self._env, self._constants)
+		self._addVacuumParticles(new_data, randoms, projector_mask)
 
 		self.data = new_data
 		self.shape = self._constants.ens_shape
