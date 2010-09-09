@@ -1352,7 +1352,8 @@ class SplitStepEvolution2(PairedCalculation):
 
 		self._toXSpace(cloud)
 		self._xpropagate(cloud, dt)
-		self._propagateNoise(cloud, dt)
+		if self._noise:
+			self._propagateNoise(cloud, dt)
 		cloud.time += dt
 
 		self._midstep = True
@@ -1370,11 +1371,12 @@ class SplitStepEvolution2(PairedCalculation):
 			callback(t, cloud)
 		self._toKSpace(cloud)
 
-	def run(self, cloud, time, callbacks=None, callback_dt=0):
+	def run(self, cloud, time, callbacks=None, callback_dt=0, noise=True):
 
 		# in SI units
 		t = 0
 		callback_t = 0
+		self._noise = noise
 
 		# in natural units
 		dt = self._constants.dt_evo
