@@ -99,7 +99,7 @@ class Constants:
 			for key in self.g:
 				self.g[key] /= eff_area
 
-			self.l111 /= eff_area
+			self.l111 /= eff_area ** 2
 			self.l12 /= eff_area
 			self.l22 /= eff_area
 
