@@ -125,13 +125,13 @@ class Pulse(PairedCalculation):
 				__global ${c.complex.name} *a_kdata, __global ${c.complex.name} *b_kdata,
 				__global ${c.complex.name} *a_res, __global ${c.complex.name} *b_res,
 				${c.scalar.name} t, ${c.scalar.name} dt,
-				read_only image3d_t potentials, read_only image3d_t kvectors,
+				texture potentials, texture kvectors,
 				${c.scalar.name} phi, int stage)
 			{
 				DEFINE_INDEXES;
 
-				${c.scalar.name} kvector = get_float_from_image(kvectors, i, j, k % ${c.nvz});
-				${c.scalar.name} potential = get_float_from_image(potentials, i, j, k % ${c.nvz});
+				${c.scalar.name} kvector = GET_SCALAR(kvectors);
+				${c.scalar.name} potential = GET_SCALAR(potentials);
 
 				${c.complex.name} ra = a_res[index];
 				${c.complex.name} rb = b_res[index];
@@ -363,11 +363,11 @@ class SplitStepEvolution(PairedCalculation):
 
 			// Propagates state vector in k-space for evolution calculation (i.e., in real time)
 			__kernel void propagateKSpaceRealTime(__global ${c.complex.name} *a, __global ${c.complex.name} *b,
-				${c.scalar.name} dt, read_only image3d_t kvectors)
+				${c.scalar.name} dt, texture kvectors)
 			{
 				DEFINE_INDEXES;
 
-				${c.scalar.name} kvector = get_float_from_image(kvectors, i, j, k % ${c.nvz});
+				${c.scalar.name} kvector = GET_SCALAR(kvectors);
 				${c.scalar.name} prop_angle = kvector * dt / 2;
 				${c.complex.name} prop_coeff = ${c.complex.ctr}(native_cos(prop_angle), native_sin(prop_angle));
 
@@ -381,11 +381,11 @@ class SplitStepEvolution(PairedCalculation):
 			// Propagates state vector in x-space for evolution calculation
 			__kernel void propagateXSpaceTwoComponent(__global ${c.complex.name} *aa,
 				__global ${c.complex.name} *bb, ${c.scalar.name} dt,
-				read_only image3d_t potentials)
+				texture potentials)
 			{
 				DEFINE_INDEXES;
 
-				${c.scalar.name} V = get_float_from_image(potentials, i, j, k % ${c.nvz});
+				${c.scalar.name} V = GET_SCALAR(potentials);
 
 				${c.complex.name} a = aa[index];
 				${c.complex.name} b = bb[index];

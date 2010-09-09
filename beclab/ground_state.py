@@ -34,12 +34,12 @@ class TFGroundState(PairedCalculation):
 		kernel_template = """
 			// fill given buffer with ground state, obtained from Thomas-Fermi approximation
 			__kernel void fillWithTFGroundState(__global ${c.complex.name} *data,
-				read_only image3d_t potentials, ${c.scalar.name} mu_by_hbar,
+				texture potentials, ${c.scalar.name} mu_by_hbar,
 				${c.scalar.name} g_by_hbar)
 			{
 				DEFINE_INDEXES;
 
-				float potential = get_float_from_image(potentials, i, j, k);
+				${c.scalar.name} potential = GET_SCALAR(potentials);
 
 				${c.scalar.name} e = mu_by_hbar - potential;
 				if(e > 0)
@@ -121,11 +121,11 @@ class GPEGroundState(PairedCalculation):
 
 			// Propagates state vector in k-space for steady state calculation (i.e., in imaginary time)
 			__kernel void propagateKSpace(__global ${c.complex.name} *data,
-				read_only image3d_t kvectors)
+				texture kvectors)
 			{
 				DEFINE_INDEXES;
 
-				${c.scalar.name} kvector = get_float_from_image(kvectors, i, j, k);
+				${c.scalar.name} kvector = GET_SCALAR(kvectors);
 
 				${c.scalar.name} prop_coeff = native_exp(kvector *
 					(${c.scalar.name})${-c.dt_steady / 2.0});
@@ -137,11 +137,11 @@ class GPEGroundState(PairedCalculation):
 			// Version for processing two components at once
 			__kernel void propagateKSpace2(
 				__global ${c.complex.name} *data1, __global ${c.complex.name} *data2,
-				read_only image3d_t kvectors)
+				texture kvectors)
 			{
 				DEFINE_INDEXES;
 
-				${c.scalar.name} kvector = get_float_from_image(kvectors, i, j, k);
+				${c.scalar.name} kvector = GET_SCALAR(kvectors);
 
 				${c.scalar.name} prop_coeff = native_exp(kvector *
 					(${c.scalar.name})${-c.dt_steady / 2.0});
@@ -152,7 +152,7 @@ class GPEGroundState(PairedCalculation):
 
 			// Propagates state in x-space for steady state calculation
 			__kernel void propagateXSpace(__global ${c.complex.name} *data,
-				read_only image3d_t potentials, ${c.scalar.name} g_by_hbar)
+				texture potentials, ${c.scalar.name} g_by_hbar)
 			{
 				DEFINE_INDEXES;
 
@@ -162,7 +162,7 @@ class GPEGroundState(PairedCalculation):
 				${c.complex.name} a0 = a;
 
 				${c.scalar.name} da;
-				${c.scalar.name} V = get_float_from_image(potentials, i, j, k);
+				${c.scalar.name} V = GET_SCALAR(potentials);
 
 				//iterate to midpoint solution
 				%for iter in range(c.itmax):
@@ -180,7 +180,7 @@ class GPEGroundState(PairedCalculation):
 
 			// Propagates state in x-space for steady state calculation
 			__kernel void propagateXSpace2(__global ${c.complex.name} *a,
-				__global ${c.complex.name} *b, read_only image3d_t potentials,
+				__global ${c.complex.name} *b, texture potentials,
 				${c.scalar.name} g11_by_hbar, ${c.scalar.name} g22_by_hbar,
 				${c.scalar.name} g12_by_hbar)
 			{
@@ -194,7 +194,7 @@ class GPEGroundState(PairedCalculation):
 				${c.complex.name} b0 = b_res;
 
 				${c.scalar.name} da, db, a_density, b_density;
-				${c.scalar.name} V = get_float_from_image(potentials, i, j, k);
+				${c.scalar.name} V = GET_SCALAR(potentials);
 
 				//iterate to midpoint solution
 				%for iter in range(c.itmax):

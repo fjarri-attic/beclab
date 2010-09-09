@@ -210,19 +210,42 @@ class _ProgramWrapper:
 				return ${c.complex.ctr}(module * native_cos(angle), module * native_sin(angle));
 			}
 
-			float get_float_from_image(read_only image3d_t image, int i, int j, int k)
-			{
-				sampler_t sampler = CLK_FILTER_NEAREST | CLK_ADDRESS_CLAMP |
-					CLK_NORMALIZED_COORDS_FALSE;
+			%if c.dim == 1:
+				typedef __global ${c.scalar.name}* texture;
 
-				uint4 image_data = read_imageui(image, sampler,
-					(int4)(i, j, k, 0));
+				${c.scalar.name} get_scalar_from_texture(texture t, int i)
+				{
+					return t[i];
+				}
 
-				return *((float*)&image_data);
-			}
+				#define DEFINE_INDEXES int i_full = get_global_id(0), \\
+					index = i_full, \\
+					i = i_full % ${c.nvz}
 
-			#define DEFINE_INDEXES int i = get_global_id(0), j = get_global_id(1), k_full = get_global_id(2), \\
-				index = (k_full << ${c.nvx_pow + c.nvy_pow}) + (j << ${c.nvx_pow}) + i, k = k_full % ${c.nvz}
+				#define GET_SCALAR(t) get_scalar_from_texture(t, i)
+
+			%else:
+				typedef read_only image3d_t texture;
+
+				float get_scalar_from_texture(texture t, int i, int j, int k)
+				{
+					sampler_t sampler = CLK_FILTER_NEAREST | CLK_ADDRESS_CLAMP |
+						CLK_NORMALIZED_COORDS_FALSE;
+
+					uint4 image_data = read_imageui(t, sampler,
+						(int4)(i, j, k, 0));
+
+					return *((float*)&image_data);
+				}
+
+				#define DEFINE_INDEXES int i = get_global_id(0), j = get_global_id(1), \\
+					k_full = get_global_id(2), \\
+					index = (k_full << ${c.nvx_pow + c.nvy_pow}) + (j << ${c.nvx_pow}) + i, \\
+					k = k_full % ${c.nvz}
+
+				#define GET_SCALAR(t) get_scalar_from_texture(t, i, j, k)
+			%endif
+
 		""")
 
 		defines = kernel_defines.render(c=constants)
@@ -288,9 +311,12 @@ def getPotentials(env, constants):
 	if not env.gpu:
 		return potentials
 
-	return cl.Image(env.context, cl.mem_flags.READ_ONLY | cl.mem_flags.USE_HOST_PTR,
-		cl.ImageFormat(cl.channel_order.R, cl.channel_type.UNSIGNED_INT32),
-		shape=tuple(reversed(constants.shape)), hostbuf=potentials)
+	if constants.dim == 1:
+		return env.toGPU(potentials)
+	else:
+		return cl.Image(env.context, cl.mem_flags.READ_ONLY | cl.mem_flags.USE_HOST_PTR,
+			cl.ImageFormat(cl.channel_order.R, cl.channel_type.UNSIGNED_INT32),
+			shape=tuple(reversed(constants.shape)), hostbuf=potentials)
 
 def getKVectors(env, constants):
 	"""
@@ -317,9 +343,12 @@ def getKVectors(env, constants):
 	if not env.gpu:
 		return kvectors
 
-	return cl.Image(env.context, cl.mem_flags.READ_ONLY | cl.mem_flags.USE_HOST_PTR,
-		cl.ImageFormat(cl.channel_order.R, cl.channel_type.UNSIGNED_INT32),
-		shape=tuple(reversed(constants.shape)), hostbuf=kvectors)
+	if constants.dim == 1:
+		return env.toGPU(kvectors)
+	else:
+		return cl.Image(env.context, cl.mem_flags.READ_ONLY | cl.mem_flags.USE_HOST_PTR,
+			cl.ImageFormat(cl.channel_order.R, cl.channel_type.UNSIGNED_INT32),
+			shape=tuple(reversed(constants.shape)), hostbuf=kvectors)
 
 def getProjectorMask(env, constants):
 
@@ -348,6 +377,9 @@ def getProjectorMask(env, constants):
 	if not env.gpu:
 		return mask, modes
 
-	return cl.Image(env.context, cl.mem_flags.READ_ONLY | cl.mem_flags.USE_HOST_PTR,
-		cl.ImageFormat(cl.channel_order.R, cl.channel_type.UNSIGNED_INT32),
-		shape=tuple(reversed(constants.shape)), hostbuf=mask), modes
+	if constants.dim == 1:
+		return env.toGPU(mask), modes
+	else:
+		return cl.Image(env.context, cl.mem_flags.READ_ONLY | cl.mem_flags.USE_HOST_PTR,
+			cl.ImageFormat(cl.channel_order.R, cl.channel_type.UNSIGNED_INT32),
+			shape=tuple(reversed(constants.shape)), hostbuf=mask), modes

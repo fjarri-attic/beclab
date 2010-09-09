@@ -70,10 +70,10 @@ class State(PairedCalculation):
 
 			__kernel void addPlaneWaves(__global ${c.complex.name} *kdata,
 				__global ${c.complex.name} *randoms,
-				read_only image3d_t projector_mask)
+				texture projector_mask)
 			{
 				DEFINE_INDEXES;
-				${c.scalar.name} prj = get_float_from_image(projector_mask, i, j, k);
+				${c.scalar.name} prj = GET_SCALAR(projector_mask);
 				${c.scalar.name} coeff = ${1.0 / sqrt(c.V)};
 				kdata[index] += complex_mul_scalar(randoms[index], prj * coeff);
 				kdata[index] *= prj; // remove high-energy components
@@ -322,13 +322,13 @@ class ParticleStatistics(PairedCalculation):
 			%for name, coeff in (('Energy', 2), ('Mu', 1)):
 				__kernel void calculate${name}(__global ${c.scalar.name} *res,
 					__global ${c.complex.name} *xstate, __global ${c.complex.name} *kstate,
-					read_only image3d_t potentials, read_only image3d_t kvectors,
+					texture potentials, texture kvectors,
 					${c.scalar.name} g_by_hbar)
 				{
 					DEFINE_INDEXES;
 
-					${c.scalar.name} potential = get_float_from_image(potentials, i, j, k);
-					${c.scalar.name} kvector = get_float_from_image(kvectors, i, j, k);
+					${c.scalar.name} potential = GET_SCALAR(potentials);
+					${c.scalar.name} kvector = GET_SCALAR(kvectors);
 
 					${c.scalar.name} n = squared_abs(xstate[index]);
 					${c.complex.name} differential =
@@ -342,14 +342,14 @@ class ParticleStatistics(PairedCalculation):
 				__kernel void calculate${name}2(__global ${c.scalar.name} *res,
 					__global ${c.complex.name} *xstate1, __global ${c.complex.name} *kstate1,
 					__global ${c.complex.name} *xstate2, __global ${c.complex.name} *kstate2,
-					read_only image3d_t potentials, read_only image3d_t kvectors,
+					texture potentials, texture kvectors,
 					${c.scalar.name} g11_by_hbar, ${c.scalar.name} g22_by_hbar,
 					${c.scalar.name} g12_by_hbar)
 				{
 					DEFINE_INDEXES;
 
-					${c.scalar.name} potential = get_float_from_image(potentials, i, j, k);
-					${c.scalar.name} kvector = get_float_from_image(kvectors, i, j, k);
+					${c.scalar.name} potential = GET_SCALAR(potentials);
+					${c.scalar.name} kvector = GET_SCALAR(kvectors);
 
 					${c.scalar.name} n1 = squared_abs(xstate1[index]);
 					${c.scalar.name} n2 = squared_abs(xstate2[index]);
