@@ -337,7 +337,19 @@ class SplitStepEvolution(PairedCalculation):
 		self._potentials = getPotentials(self._env, self._constants)
 		self._kvectors = getKVectors(self._env, self._constants)
 
+		self._projector_mask, _ = getProjectorMask(self._env, self._constants)
+
 		self._prepare()
+
+	def _projector(self, data):
+		nvz = self._constants.nvz
+		for e in xrange(self._constants.ensembles):
+			start = e * nvz
+			stop = (e + 1) * nvz
+			if self._constants.dim == 3:
+				data[start:stop,:,:] *= self._projector_mask
+			else:
+				data[start:stop] *= self._projector_mask
 
 	def _cpu__prepare(self):
 		pass
@@ -367,8 +379,7 @@ class SplitStepEvolution(PairedCalculation):
 			}
 
 			// Propagates state vector in x-space for evolution calculation
-			%for suffix in ('', 'Wigner'):
-			__kernel void propagateXSpaceTwoComponent${suffix}(__global ${c.complex.name} *aa,
+			__kernel void propagateXSpaceTwoComponent(__global ${c.complex.name} *aa,
 				__global ${c.complex.name} *bb, ${c.scalar.name} dt,
 				read_only image3d_t potentials)
 			{
@@ -411,15 +422,6 @@ class SplitStepEvolution(PairedCalculation):
 						-(${c.l22} * n_b + ${c.l12} * n_a) / 2,
 						-(-V - ${g22} * n_b - ${g12} * n_a));
 
-					%if suffix == "Wigner":
-						pa += ${c.complex.ctr}(
-							(1.5 * n_a - 0.75 / ${c.dV}) * ${c.l111} + ${c.l12} * 0.25,
-							-(${g11} + 0.5 * ${g12})) / ${c.dV};
-						pb += ${c.complex.ctr}(
-							${c.l12} * 0.25 + ${c.l22} * 0.5,
-							-(${g22} + 0.5 * ${g12})) / ${c.dV};
-					%endif
-
 					// calculate midpoint log derivative and exponentiate
 					da = cexp(complex_mul_scalar(pa, (dt / 2)));
 					db = cexp(complex_mul_scalar(pb, (dt / 2)));
@@ -433,14 +435,12 @@ class SplitStepEvolution(PairedCalculation):
 				aa[index] = complex_mul(a, da);
 				bb[index] = complex_mul(b, db);
 			}
-			%endfor
 		"""
 
 		self._program = self._env.compile(kernels, self._constants,
 			COMP_1_minus1=COMP_1_minus1, COMP_2_1=COMP_2_1)
 		self._kpropagate_func = self._program.propagateKSpaceRealTime
 		self._xpropagate_func = self._program.propagateXSpaceTwoComponent
-		self._xpropagate_wigner = self._program.propagateXSpaceTwoComponentWigner
 
 	def _toKSpace(self, cloud):
 		batch = cloud.a.size / self._constants.cells
@@ -476,56 +476,8 @@ class SplitStepEvolution(PairedCalculation):
 				data2[start:stop,:,:] *= kcoeff
 
 	def _gpu__xpropagate(self, cloud, dt):
-		if cloud.type == WIGNER:
-			func = self._xpropagate_wigner
-		else:
-			func = self._xpropagate_func
-
-		func(cloud.a.shape, cloud.a.data, cloud.b.data,
+		self._xpropagate_func(cloud.a.shape, cloud.a.data, cloud.b.data,
 			self._constants.scalar.cast(dt), self._potentials)
-
-	def _cpu__getNoiseTerms(self, cloud):
-		noise_a = numpy.zeros(self._constants.ens_shape, dtype=self._constants.complex.dtype)
-		noise_b = numpy.zeros(self._constants.ens_shape, dtype=self._constants.complex.dtype)
-
-		shape = self._constants.ens_shape
-
-		eta = [numpy.random.normal(scale=math.sqrt(self._constants.dt_evo / self._constants.dV),
-			size=shape).astype(self._constants.scalar.dtype) for i in xrange(4)]
-
-		n1 = numpy.abs(cloud.a.data) ** 2
-		n2 = numpy.abs(cloud.b.data) ** 2
-		dV = self._constants.dV
-		l12 = self._constants.l12
-		l22 = self._constants.l22
-		l111 = self._constants.l111
-
-		a = 0.25 * l12 * (n2 - 0.5 / dV) + 0.25 * l111 * (3.0 * n1 * n1 - 6.0 * n1 / dV + 1.5 / dV / dV)
-		d = 0.25 * l12 * (n1 - 0.5 / dV) + 0.25 * l22 * (2.0 * n2 - 1.0 / dV)
-		t = 0.25 * l12 * cloud.a.data * numpy.conj(cloud.b.data)
-		b = numpy.real(t)
-		c = numpy.imag(t)
-
-		t1 = numpy.sqrt(a)
-		t2 = numpy.sqrt(d - (b ** 2) / a)
-		t3 = numpy.sqrt(a + a * (c ** 2) / (b ** 2 - a * d))
-
-		row1 = t1 * eta[0]
-		row2 = b / t1 * eta[0] + t2 * eta[1]
-		row3 = c / t2 * eta[1] + t3 * eta[2]
-		row4 = -c / t1 * eta[0] + b * c / (a * t2) * eta[1] + b / a * t3 * eta[2] + \
-			numpy.sqrt((a ** 2 - b ** 2 - c ** 2) / a) * eta[3]
-
-		noise_a = row1 + 1j * row3
-		noise_b = row2 + 1j * row4
-
-		noise_a /= (cloud.a.data * self._constants.dt_evo)
-		noise_b /= (cloud.b.data * self._constants.dt_evo)
-
-		#print numpy.sum(numpy.abs(noise_a))
-		#print numpy.sum(numpy.abs(numpy.nan_to_num(noise_a)))
-
-		return numpy.nan_to_num(noise_a), numpy.nan_to_num(noise_b)
 
 	def _cpu__xpropagate(self, cloud, dt):
 		a = cloud.a
@@ -547,9 +499,6 @@ class SplitStepEvolution(PairedCalculation):
 		p = self._potentials * 1j
 		nvz = self._constants.nvz
 
-		if cloud.type == WIGNER:
-			noise_a, noise_b = self._getNoiseTerms(cloud)
-
 		for iter in xrange(self._constants.itmax):
 			n_a = numpy.abs(a.data) ** 2
 			n_b = numpy.abs(b.data) ** 2
@@ -566,19 +515,6 @@ class SplitStepEvolution(PairedCalculation):
 				pa[start:stop] += p
 				pb[start:stop] += p
 
-			if cloud.type == WIGNER:
-				dV = self._constants.dV
-				pa += ((1.5 * n_a - 0.75 / dV) * l111 + l12 * 0.25 -
-					1j * (g11_by_hbar + 0.5 * g12_by_hbar)) / dV
-				pb += (l12 * 0.25 + l22 * 0.5 -
-					1j * (g22_by_hbar + 0.5 * g12_by_hbar)) / dV
-
-				#print numpy.sum(numpy.abs(noise_a)) / numpy.sum(numpy.abs(pa)), \
-				#	numpy.sum(numpy.abs(noise_b)) / numpy.sum(numpy.abs(pb))
-
-				pa += noise_a * 1j
-				pb += noise_b * 1j
-
 			da = numpy.exp(pa * (dt / 2))
 			db = numpy.exp(pb * (dt / 2))
 
@@ -588,12 +524,89 @@ class SplitStepEvolution(PairedCalculation):
 		a.data *= da
 		b.data *= db
 
+	def _noiseFunc(self, a_data, b_data, dt):
+		coeff = math.sqrt(dt / self._constants.dV)
+
+		n1 = numpy.abs(a_data) ** 2
+		n2 = numpy.abs(b_data) ** 2
+		l12 = self._constants.l12
+		l22 = self._constants.l22
+		l111 = self._constants.l111
+
+		a = 0.125 * l12 * n2 + 0.375 * l111 * n1 * n1
+		d = 0.125 * l12 * n1 + 0.25 * l22 * n2
+		t = 0.25 * l12 * a_data * numpy.conj(b_data)
+		b = numpy.real(t)
+		c = numpy.imag(t)
+
+		t1 = numpy.sqrt(a)
+		t2 = numpy.sqrt(d - (b ** 2) / a)
+		t3 = numpy.sqrt(a + a * (c ** 2) / (b ** 2 - a * d))
+
+		k1 = numpy.nan_to_num(c / t2)
+		k2 = numpy.nan_to_num(t3)
+		k3 = numpy.nan_to_num(b / t1)
+		k4 = numpy.nan_to_num(t2)
+		k5 = numpy.nan_to_num(-c / t1)
+		k6 = numpy.nan_to_num(b * c / (a * t2))
+		k7 = numpy.nan_to_num(b / a * t3)
+		k8 = numpy.nan_to_num(numpy.sqrt((a ** 2 - b ** 2 - c ** 2) / a))
+
+		zeros = numpy.zeros(a_data.shape, self._constants.scalar.dtype)
+
+		return \
+			coeff * t1 + 1j * zeros, \
+			zeros + 1j * coeff * k1, \
+			zeros + 1j * coeff * k2, \
+			zeros + 1j * zeros, \
+			coeff * (k3 + 1j * k5), \
+			coeff * (k4 + 1j * k6), \
+			coeff * (zeros + 1j * k7), \
+			coeff * (zeros + 1j * k8)
+
+	def _propagateNoise(self, cloud, dt):
+
+		shape = self._constants.ens_shape
+		Z1 = [numpy.random.normal(scale=1, size=shape).astype(
+			self._constants.scalar.dtype) for i in xrange(4)]
+		Z0 = [numpy.random.normal(scale=1, size=shape).astype(
+			self._constants.scalar.dtype) for i in xrange(4)]
+
+		G101, G102, G103, G104, G201, G202, G203, G204 = self._noiseFunc(cloud.a.data, cloud.b.data, dt)
+		G111, G112, G113, G114, G211, G212, G213, G214 = \
+			self._noiseFunc(
+				cloud.a.data + math.sqrt(dt / 2) * (
+					G101 * Z1[0] + G102 * Z1[1] + G103 * Z1[2] + G104 * Z1[3]),
+				cloud.b.data + math.sqrt(dt / 2) * (
+					G201 * Z1[0] + G202 * Z1[1] + G203 * Z1[2] + G204 * Z1[3]), dt)
+
+		G121, G122, G123, G124, G221, G222, G223, G224 = \
+			self._noiseFunc(
+				cloud.a.data + math.sqrt(dt / 2) * (
+					G101 * Z1[0] + G102 * Z1[1] + G103 * Z1[2] + G104 * Z1[3]),
+				cloud.b.data + math.sqrt(dt / 2) * (
+					G201 * Z1[0] + G202 * Z1[1] + G203 * Z1[2] + G204 * Z1[3]), dt)
+
+		cloud.a.data += 0.5 * math.sqrt(dt) * (
+				(G111 + G121) * Z0[0] +
+				(G112 + G122) * Z0[1] +
+				(G113 + G123) * Z0[2] +
+				(G114 + G124) * Z0[3]
+			)
+
+		cloud.b.data += 0.5 * math.sqrt(dt) * (
+				(G211 + G221) * Z0[0] +
+				(G212 + G222) * Z0[1] +
+				(G213 + G223) * Z0[2] +
+				(G214 + G224) * Z0[3]
+			)
+
 	def _finishStep(self, cloud, dt):
 		if self._midstep:
 			self._kpropagate(cloud, dt)
 			self._midstep = False
 
-	def propagate(self, cloud, dt):
+	def propagate(self, cloud, dt, noise):
 
 		# replace two dt/2 k-space propagation by one dt propagation,
 		# if there were no rendering between them
@@ -602,8 +615,16 @@ class SplitStepEvolution(PairedCalculation):
 		else:
 			self._kpropagate(cloud, dt)
 
+		if cloud.type == WIGNER and noise:
+			self._projector(cloud.a.data)
+			self._projector(cloud.b.data)
+
 		self._toXSpace(cloud)
 		self._xpropagate(cloud, dt)
+
+		if cloud.type == WIGNER and noise:
+			self._propagateNoise(cloud, dt)
+
 		cloud.time += dt
 
 		self._midstep = True
@@ -619,7 +640,7 @@ class SplitStepEvolution(PairedCalculation):
 			callback(t, cloud)
 		self._toKSpace(cloud)
 
-	def run(self, cloud, time, callbacks=None, callback_dt=0):
+	def run(self, cloud, time, callbacks=None, callback_dt=0, noise=True):
 
 		t = 0
 		callback_t = 0
@@ -633,7 +654,7 @@ class SplitStepEvolution(PairedCalculation):
 			self._runCallbacks(0, cloud, callbacks)
 
 			while t < time:
-				self.propagate(cloud, dt)
+				self.propagate(cloud, dt, noise)
 				t += dt
 				callback_t += dt
 
