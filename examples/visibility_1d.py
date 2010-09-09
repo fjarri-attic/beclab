@@ -6,7 +6,7 @@ from beclab import *
 from beclab.state import ParticleStatistics
 
 
-def test(gpu=False, ensembles=64, nvz=32, dt_evo=1e-5, a12=97.9,
+def test(gpu=False, ensembles=256, nvz=32, dt_evo=1e-5, a12=97.9,
 	losses=True, equilibration_time=0, noise=True):
 
 	kwds = {}
