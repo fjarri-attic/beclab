@@ -444,6 +444,37 @@ class SplitStepEvolution(PairedCalculation):
 				bb[index] = complex_mul(b, db);
 			}
 
+			// Propagates state vector in x-space for evolution calculation
+			__kernel void addNoise(__global ${c.complex.name} *a,
+				__global ${c.complex.name} *b, ${c.scalar.name} dt,
+				__global ${c.complex.name} *randoms)
+			{
+				DEFINE_INDEXES;
+
+				${c.complex.name} a0 = a[index];
+				${c.complex.name} b0 = b[index];
+
+				${c.complex.name} r_a = randoms[index];
+				${c.complex.name} r_b = randoms[index + ${c.cells * c.ensembles}];
+
+				${c.scalar.name} n_a = squared_abs(a0);
+				${c.scalar.name} n_b = squared_abs(b0);
+
+				${c.scalar.name} st = sqrt(dt / (${c.scalar.name})${c.dV});
+
+				// FIXME: Some magic here. l111 ~ 10^-42, while single precision float
+				// can only handle 10^-38.
+				${c.scalar.name} t_a = n_a * ${1.0e-10};
+
+				${c.scalar.name} d11 = sqrt(t_a * t_a * (${c.scalar.name})${9.0 * c.l111 * 1e20} +
+					(${c.scalar.name})${c.l12} * n_b) * st;
+				${c.scalar.name} d22 = sqrt((${c.scalar.name})${c.l12} * n_a +
+					(${c.scalar.name})${4.0 * c.l22} * n_b) * st;
+
+				a[index] = a0 + complex_mul_scalar(r_a, d11);
+				b[index] = b0 + complex_mul_scalar(r_b, d22);
+			}
+
 			__kernel void projector(__global ${c.complex.name} *a,
 				__global ${c.complex.name} *b, texture projector_mask)
 			{
@@ -462,6 +493,7 @@ class SplitStepEvolution(PairedCalculation):
 			COMP_1_minus1=COMP_1_minus1, COMP_2_1=COMP_2_1)
 		self._kpropagate_func = self._program.propagateKSpaceRealTime
 		self._xpropagate_func = self._program.propagateXSpaceTwoComponent
+		self._addnoise_func = self._program.addNoise
 		self._projector_func = self._program.projector
 
 	def _toKSpace(self, cloud):
@@ -623,6 +655,35 @@ class SplitStepEvolution(PairedCalculation):
 				(G214 + G224) * Z0[3]
 			)
 
+	def _cpu__propagateNoise2(self, cloud, dt):
+		shape = self._constants.ens_shape
+		Z0 = [numpy.random.normal(scale=1, size=shape).astype(
+			self._constants.scalar.dtype) for i in xrange(4)]
+
+		n1 = numpy.abs(cloud.a.data) ** 2
+		n2 = numpy.abs(cloud.b.data) ** 2
+		l12 = self._constants.l12
+		l22 = self._constants.l22
+		l111 = self._constants.l111
+
+		sdt = math.sqrt(dt / self._constants.dV)
+		d11 = numpy.sqrt(9.0 * l111 * (n1 ** 2) + l12 * n2) * st
+		d22 = numpy.sqrt(l12 * n1 + 4.0 * l22 * n2) * st
+
+		cloud.a.data += d11 * (Z0[0] + 1j * Z0[1])
+		cloud.b.data += d22 * (Z0[2] + 1j * Z0[3])
+
+	def _gpu__propagateNoise2(self, cloud, dt):
+		shape = list(self._constants.ens_shape)
+		shape[0] *= 2
+		shape = tuple(shape)
+
+		randoms = (numpy.random.normal(scale=1, size=shape) +
+			1j * numpy.random.normal(scale=1, size=shape)).astype(self._constants.complex.dtype)
+
+		self._addnoise_func(cloud.a.shape, cloud.a.data, cloud.b.data,
+			self._constants.scalar.cast(dt), self._env.toGPU(randoms))
+
 	def _finishStep(self, cloud, dt):
 		if self._midstep:
 			self._kpropagate(cloud, dt)
@@ -644,7 +705,7 @@ class SplitStepEvolution(PairedCalculation):
 		self._xpropagate(cloud, dt)
 
 		if cloud.type == WIGNER and noise:
-			self._propagateNoise(cloud, dt)
+			self._propagateNoise2(cloud, dt)
 
 		cloud.time += dt
 
