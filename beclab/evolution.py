@@ -416,7 +416,7 @@ class SplitStepEvolution(PairedCalculation):
 					// TODO: there must be no minus sign before imaginary part,
 					// but without it the whole thing diverges
 					pa = ${c.complex.ctr}(
-						-(temp * temp * ${c.l111 * 1e10} + ${c.l12} * n_b) / 2,
+						-(temp * temp * ${c.l111 * 1e20} + ${c.l12} * n_b) / 2,
 						-(-V - ${g11} * n_a - ${g12} * n_b));
 					pb = ${c.complex.ctr}(
 						-(${c.l22} * n_b + ${c.l12} * n_a) / 2,
