@@ -17,7 +17,7 @@ def test(gpu=False, ensembles=256, nvz=32, dt_evo=1e-5, a12=97.9,
 		kwds['gamma22'] = 0
 
 	constants = Constants(Model(N=60, nvx=1, nvy=1, nvz=nvz, ensembles=ensembles,
-		fx=42e3, fy=42e3, fz=90, dt_evo=dt_evo, border=2.0, e_cut=1,
+		fx=42e3, fy=42e3, fz=90, dt_evo=dt_evo, border=2.0, e_cut=1e5,
 		a11=100.4, a12=a12, a22=95.5, detuning=0, **kwds),
 		double_precision=(not gpu))
 	env = Environment(gpu=gpu)
