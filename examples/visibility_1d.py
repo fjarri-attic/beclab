@@ -11,7 +11,7 @@ def test(gpu=False, ensembles=256, nvz=32, dt_evo=1e-5, a12=97.9,
 
 	kwds = {}
 
-	if losses:
+	if not losses:
 		kwds['gamma111'] = 0
 		kwds['gamma12'] = 0
 		kwds['gamma22'] = 0
