@@ -341,15 +341,23 @@ class SplitStepEvolution(PairedCalculation):
 
 		self._prepare()
 
-	def _projector(self, data):
+	def _cpu__projector(self, cloud):
 		nvz = self._constants.nvz
+		a_data = cloud.a.data
+		b_data = cloud.b.data
+
 		for e in xrange(self._constants.ensembles):
 			start = e * nvz
 			stop = (e + 1) * nvz
 			if self._constants.dim == 3:
-				data[start:stop,:,:] *= self._projector_mask
+				a_data[start:stop,:,:] *= self._projector_mask
+				b_data[start:stop,:,:] *= self._projector_mask
 			else:
-				data[start:stop] *= self._projector_mask
+				a_data[start:stop] *= self._projector_mask
+				b_data[start:stop] *= self._projector_mask
+
+	def _gpu__projector(self, cloud):
+		self._projector_func(cloud.a.shape, cloud.a.data, cloud.b.data, self._projector_mask)
 
 	def _cpu__prepare(self):
 		pass
@@ -435,12 +443,26 @@ class SplitStepEvolution(PairedCalculation):
 				aa[index] = complex_mul(a, da);
 				bb[index] = complex_mul(b, db);
 			}
+
+			__kernel void projector(__global ${c.complex.name} *a,
+				__global ${c.complex.name} *b, texture projector_mask)
+			{
+				DEFINE_INDEXES;
+				${c.scalar.name} mask_val = GET_SCALAR(projector_mask);
+
+				${c.complex.name} a0 = a[index];
+				${c.complex.name} b0 = b[index];
+
+				a[index] = a0 * mask_val;
+				b[index] = b0 * mask_val;
+			}
 		"""
 
 		self._program = self._env.compile(kernels, self._constants,
 			COMP_1_minus1=COMP_1_minus1, COMP_2_1=COMP_2_1)
 		self._kpropagate_func = self._program.propagateKSpaceRealTime
 		self._xpropagate_func = self._program.propagateXSpaceTwoComponent
+		self._projector_func = self._program.projector
 
 	def _toKSpace(self, cloud):
 		batch = cloud.a.size / self._constants.cells
@@ -616,8 +638,7 @@ class SplitStepEvolution(PairedCalculation):
 			self._kpropagate(cloud, dt)
 
 		if cloud.type == WIGNER and noise:
-			self._projector(cloud.a.data)
-			self._projector(cloud.b.data)
+			self._projector(cloud)
 
 		self._toXSpace(cloud)
 		self._xpropagate(cloud, dt)
