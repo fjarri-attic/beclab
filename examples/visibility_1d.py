@@ -41,7 +41,7 @@ def test(gpu=False, ensembles=256, nvz=32, dt_evo=1e-5, a12=97.9,
 	pulse.apply(cloud, math.pi * 0.5, matrix=True)
 
 	t1 = time.time()
-	evolution.run(cloud, 0.05, callbacks=[v], callback_dt=0.0005, noise=noise)
+	evolution.run(cloud, 0.05, callbacks=[v], callback_dt=0.001, noise=noise)
 	env.synchronize()
 	t2 = time.time()
 	print "Time spent: " + str(t2 - t1) + " s"
