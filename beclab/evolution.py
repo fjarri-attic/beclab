@@ -604,7 +604,7 @@ class SplitStepEvolution(PairedCalculation):
 		k5 = numpy.nan_to_num(-c / t1)
 		k6 = numpy.nan_to_num(b * c / (a * t2))
 		k7 = numpy.nan_to_num(b / a * t3)
-		k8 = numpy.nan_to_num(numpy.sqrt((a ** 2 - b ** 2 - c ** 2) / a))
+		k8 = numpy.nan_to_num(numpy.sqrt((d ** 2 - b ** 2 - c ** 2) / a))
 
 		zeros = numpy.zeros(a_data.shape, self._constants.scalar.dtype)
 
