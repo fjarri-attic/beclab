@@ -579,7 +579,7 @@ class SplitStepEvolution(PairedCalculation):
 		b.data *= db
 
 	def _noiseFunc(self, a_data, b_data, dt):
-		coeff = math.sqrt(dt / self._constants.dV)
+		coeff = math.sqrt(1.0 / self._constants.dV)
 
 		n1 = numpy.abs(a_data) ** 2
 		n2 = numpy.abs(b_data) ** 2
@@ -587,9 +587,9 @@ class SplitStepEvolution(PairedCalculation):
 		l22 = self._constants.l22
 		l111 = self._constants.l111
 
-		a = 0.125 * l12 * n2 + 0.375 * l111 * n1 * n1
-		d = 0.125 * l12 * n1 + 0.25 * l22 * n2
-		t = 0.25 * l12 * a_data * numpy.conj(b_data)
+		a = l12 * n2 + (9.0 * l111) * n1 * n1
+		d = l12 * n1 + (4.0 * l22) * n2
+		t = l12 * a_data * numpy.conj(b_data)
 		b = numpy.real(t)
 		c = numpy.imag(t)
 
@@ -604,7 +604,7 @@ class SplitStepEvolution(PairedCalculation):
 		k5 = numpy.nan_to_num(-c / t1)
 		k6 = numpy.nan_to_num(b * c / (a * t2))
 		k7 = numpy.nan_to_num(b / a * t3)
-		k8 = numpy.nan_to_num(numpy.sqrt((d ** 2 - b ** 2 - c ** 2) / a))
+		k8 = numpy.nan_to_num(numpy.sqrt((d * a - b ** 2 - c ** 2) / a))
 
 		zeros = numpy.zeros(a_data.shape, self._constants.scalar.dtype)
 
