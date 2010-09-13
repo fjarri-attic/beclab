@@ -666,7 +666,7 @@ class SplitStepEvolution(PairedCalculation):
 		l22 = self._constants.l22
 		l111 = self._constants.l111
 
-		sdt = math.sqrt(dt / self._constants.dV)
+		st = math.sqrt(dt / self._constants.dV)
 		d11 = numpy.sqrt(9.0 * l111 * (n1 ** 2) + l12 * n2) * st
 		d22 = numpy.sqrt(l12 * n1 + 4.0 * l22 * n2) * st
 
