@@ -12,7 +12,7 @@ from .constants import *
 
 class State(PairedCalculation):
 
-	def __init__(self, env, constants, type=PSI_FUNC, comp=COMP_1_minus1):
+	def __init__(self, env, constants, type=PSI_FUNC, comp=COMP_1_minus1, prepare=True):
 		PairedCalculation.__init__(self, env)
 		self._env = env
 		self._constants = constants
@@ -22,13 +22,13 @@ class State(PairedCalculation):
 		self.dtype = constants.complex.dtype
 		self.comp = comp
 
-		self._plan = createPlan(env, constants, constants.shape)
+		if prepare:
+			self._plan = createPlan(env, constants, constants.shape)
+			self._prepare()
+			self._initializeMemory()
 
-		self._prepare()
-		self._initializeMemory()
-
-	def copy(self):
-		res = State(self._env, self._constants, type=self.type, comp=self.comp)
+	def copy(self, prepare=True):
+		res = State(self._env, self._constants, type=self.type, comp=self.comp, prepare=prepare)
 		res.data = self._env.copyBuffer(self.data)
 		return res
 
