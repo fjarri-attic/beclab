@@ -7,7 +7,8 @@ from beclab.state import ParticleStatistics
 
 
 def test(gpu=False, ensembles=256, nvz=32, dt_evo=1e-5, a12=97.9,
-	losses=True, equilibration_time=0, noise=True):
+	losses=True, equilibration_time=0, noise=True, wigner=True,
+	zero_gs=False, e_cut=1):
 
 	kwds = {}
 
@@ -17,7 +18,7 @@ def test(gpu=False, ensembles=256, nvz=32, dt_evo=1e-5, a12=97.9,
 		kwds['gamma22'] = 0
 
 	constants = Constants(Model(N=60, nvx=1, nvy=1, nvz=nvz, ensembles=ensembles,
-		fx=42e3, fy=42e3, fz=90, dt_evo=dt_evo, border=2.0, e_cut=1e5,
+		fx=42e3, fy=42e3, fz=90, dt_evo=dt_evo, border=2.0, e_cut=e_cut,
 		a11=100.4, a12=a12, a22=95.5, detuning=0, **kwds),
 		double_precision=(not gpu))
 	env = Environment(gpu=gpu)
@@ -27,13 +28,16 @@ def test(gpu=False, ensembles=256, nvz=32, dt_evo=1e-5, a12=97.9,
 	gs = GPEGroundState(env, constants)
 	pulse = Pulse(env, constants)
 	v = VisibilityCollector(env, constants, verbose=False)
-	#p = ParticleNumberCollector(env, constants, pulse=pulse, matrix_pulse=True, verbose=False)
+	p = ParticleNumberCollector(env, constants, pulse=pulse, matrix_pulse=True, verbose=False)
 	#a = AxialProjectionCollector(env, constants, matrix_pulse=True, pulse=pulse)
 
 	#ps = ParticleStatistics(env, constants)
 
 	cloud = gs.createCloud()
-	cloud.toWigner()
+	if zero_gs:
+		cloud.a._initializeMemory()
+	if wigner:
+		cloud.toWigner()
 
 	if equilibration_time > 0:
 		evolution.run(cloud, equilibration_time, noise=noise)
@@ -41,7 +45,7 @@ def test(gpu=False, ensembles=256, nvz=32, dt_evo=1e-5, a12=97.9,
 	pulse.apply(cloud, math.pi * 0.5, matrix=True)
 
 	t1 = time.time()
-	evolution.run(cloud, 0.05, callbacks=[v], callback_dt=0.001, noise=noise)
+	evolution.run(cloud, 0.05, callbacks=[v, p], callback_dt=0.001, noise=noise)
 	env.synchronize()
 	t2 = time.time()
 	print "Time spent: " + str(t2 - t1) + " s"
@@ -61,9 +65,9 @@ def test(gpu=False, ensembles=256, nvz=32, dt_evo=1e-5, a12=97.9,
 	vis_data = XYData(name, times, vis, ymin=0, ymax=1,
 		xname="Time, s", yname="Visibility")
 
-	#times, N1, N2, N = p.getData()
-	#pop_data = XYData(name, times, N1,
-	#	ymin=0, ymax=60, xname="Time, s", yname="Population, N1")
+	times, N1, N2, N = p.getData()
+	pop_data = XYData(name, times, N1,
+		ymin=0, ymax=60, xname="Time, s", yname="Population, N1")
 
 	#times, picture = a.getData()
 	#axial_data = HeightmapData(name, picture,
