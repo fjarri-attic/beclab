@@ -62,12 +62,12 @@ def test(gpu=False, ensembles=256, nvz=32, dt_evo=1e-5, a12=97.9,
 	name = ", ".join(name)
 
 	times, vis = v.getData()
-	vis_data = XYData(name, times, vis, ymin=0, ymax=1,
-		xname="Time, s", yname="Visibility")
+	vis_data = XYData(name, times * 1e3, vis, ymin=0, ymax=1,
+		xname="Time, ms", yname="Visibility")
 
 	times, N1, N2, N = p.getData()
-	pop_data = XYData(name, times, N1,
-		ymin=0, ymax=60, xname="Time, s", yname="Population, N1")
+	pop_data = XYData(name, times * 1e3, N1,
+		ymin=0, ymax=60, xname="Time, ms", yname="Population, N1")
 
 	#times, picture = a.getData()
 	#axial_data = HeightmapData(name, picture,
