@@ -413,7 +413,9 @@ class EvolutionPlot:
 
 class XYPlot:
 
-	def __init__(self, xydata_list, legend=True, location="lower left", title=None):
+	def __init__(self, xydata_list, legend=True, gradient=False,
+		location="lower left", title=None):
+
 		self.data_list = xydata_list
 
 		# check that data contains the same values
@@ -448,11 +450,22 @@ class XYPlot:
 			xlabel=self.data_list[0].xname,
 			ylabel=self.data_list[0].yname)
 
-		for data in self.data_list:
+		colors = [None for i in xrange(len(self.data_list))]
+
+		if not legend:
+			colors = ["0.2" for i in xrange(len(self.data_list))]
+
+		if gradient:
+			l = len(self.data_list)
+			colors = [(float(i) / (l - 1), 0, 1.0 - float(i) / (l - 1)) for i in xrange(l)]
+
+		for i, data in enumerate(self.data_list):
+			kwds = {'label': data.name}
+			if colors[i] is not None:
+				kwds['color'] = colors[i]
+
 			self.subplot.plot(data.xarray, data.yarray,
-				('o' if data.experimental else '-') +
-				('' if legend else 'k'),
-				label=data.name)
+				('o' if data.experimental else '-'), **kwds)
 
 		self.subplot.set_xlim(xmin=xmin, xmax=xmax)
 		self.subplot.set_ylim(ymin=ymin, ymax=ymax)
