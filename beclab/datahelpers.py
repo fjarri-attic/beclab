@@ -413,7 +413,7 @@ class EvolutionPlot:
 
 class XYPlot:
 
-	def __init__(self, xydata_list, location="lower left"):
+	def __init__(self, xydata_list, legend=True, location="lower left", title=None):
 		self.data_list = xydata_list
 
 		# check that data contains the same values
@@ -450,13 +450,18 @@ class XYPlot:
 
 		for data in self.data_list:
 			self.subplot.plot(data.xarray, data.yarray,
-				('o' if data.experimental else '-'),
+				('o' if data.experimental else '-') +
+				('' if legend else 'k'),
 				label=data.name)
 
 		self.subplot.set_xlim(xmin=xmin, xmax=xmax)
 		self.subplot.set_ylim(ymin=ymin, ymax=ymax)
 
-		self.subplot.legend(loc=location, prop={'size': 'x-small'})
+		if legend:
+			self.subplot.legend(loc=location, prop={'size': 'x-small'})
+
+		if title is not None:
+			self.subplot.set_title(title)
 
 		self.subplot.grid(True)
 
