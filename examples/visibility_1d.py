@@ -50,9 +50,9 @@ def test(gpu=False, ensembles=256, nvz=32, dt_evo=1e-5, a12=97.9,
 	t2 = time.time()
 	print "Time spent: " + str(t2 - t1) + " s"
 
-	name = ["gpu" if gpu else "cpu",
-		str(ensembles) + " ens.",
-		str(nvz) + " cells",
+	name = ["gpu" if gpu else "cpu"] + \
+		([str(ensembles) + " ens."] if wigner else []) + \
+		[str(nvz) + " cells",
 		"dt = " + str(dt_evo * 1e6) + " $\mu$s",
 		"a12 = " + str(a12)] + \
 		([] if losses else ["no losses"]) + \
