@@ -162,7 +162,7 @@ class State(PairedCalculation):
 
 class TwoComponentCloud:
 
-	def __init__(self, env, constants, a=None, b=None):
+	def __init__(self, env, constants, a=None, b=None, prepare=True):
 		assert a is not None or b is not None
 		assert a is None or b is None or a.type == b.type
 		assert a is None or a.comp == COMP_1_minus1
@@ -180,16 +180,19 @@ class TwoComponentCloud:
 
 		self.time = 0.0
 
-		self.a = a.copy() if a is not None else State(env, constants, type=type, comp=COMP_1_minus1)
-		self.b = b.copy() if b is not None else State(env, constants, type=type, comp=COMP_2_1)
+		self.a = a.copy(prepare=prepare) \
+			if a is not None else State(env, constants, type=type, comp=COMP_1_minus1)
+		self.b = b.copy(prepare=prepare) \
+			if b is not None else State(env, constants, type=type, comp=COMP_2_1)
 
 	def toWigner(self):
 		self.a.toWigner()
 		self.b.toWigner()
 		self.type = self.a.type
 
-	def copy(self):
-		res = TwoComponentCloud(self._env, self._constants, a=self.a, b=self.b)
+	def copy(self, prepare=True):
+		res = TwoComponentCloud(self._env, self._constants,
+			a=self.a, b=self.b, prepare=prepare)
 		res.time = self.time
 		return res
 
