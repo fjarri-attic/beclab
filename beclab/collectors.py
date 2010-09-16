@@ -20,7 +20,7 @@ class ParticleNumberCollector:
 		self.Nb = []
 
 	def __call__(self, t, cloud):
-		cloud = cloud.copy()
+		cloud = cloud.copy(prepare=False)
 
 		if self._pulse is not None:
 			self._pulse.apply(cloud, theta=0.5 * math.pi, matrix=self._matrix_pulse)
