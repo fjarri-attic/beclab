@@ -437,11 +437,7 @@ class ParticleStatistics(PairedCalculation):
 			self._constants.dV / N * self._constants.hbar
 
 	def _gpu_getVisibility(self, state1, state2):
-		density1 = self._env.allocate(state1.shape, self._constants.scalar.dtype)
-		density2 = self._env.allocate(state2.shape, self._constants.scalar.dtype)
-
 		interaction = self._env.allocate(state1.shape, self._constants.complex.dtype)
-
 		self._calculateInteraction(state1.shape, interaction, state1.data, state2.data)
 
 		N1 = self.countParticles(state1)
