@@ -161,6 +161,10 @@ class Constants:
 		self.e_rho = self.hbar * self.w_z
 		self.l_rho = math.sqrt(self.hbar / (2.0 * self.m * self.w_z))
 
+		#l_healing = 1.0 / math.sqrt(8.0 * math.pi * model.a11 * a0 * self.muTF() / g11)
+		#print "nz >> " + str(self.zmax * 2.0 / l_healing)
+		#print "nz << " + str(self.zmax * 2.0 / (model.a11 * a0))
+
 		# cast all floating point values to current precision
 
 		def recursiveCast(cast, obj):
