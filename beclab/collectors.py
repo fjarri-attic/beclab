@@ -77,25 +77,19 @@ class ParticleNumberCondition:
 class PhaseNoiseCollector:
 
 	def __init__(self, env, constants):
+		self._stats = ParticleStatistics(env, constants)
 		self._constants = constants
 		self._times = []
 		self._var = []
 
 	def __call__(self, t, cloud):
-		res = []
-		for i in xrange(self._constants.ensembles):
-			start = i * self._constants.cells
-			stop = (i + 1) * self._constants.cells
-			res.append(numpy.angle(numpy.sum(
-				cloud.a.data.ravel()[start:stop] * cloud.b.data.ravel()[start:stop].conj()
-			)))
-
+		noise = self._stats.getPhaseNoise(cloud.a, cloud.b)
+		print noise
 		self._times.append(t)
-		self._var.append(numpy.sqrt(numpy.var(numpy.array(res))))
-		print t, self._var[-1]
+		self._var.append(noise)
 
 	def getData(self):
-		return self._times, self._var
+		return numpy.array(self._times), numpy.array(self._var)
 
 
 class VisibilityCollector:
