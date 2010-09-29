@@ -448,6 +448,43 @@ class ParticleStatistics(PairedCalculation):
 
 		return 2 * abs(interaction) / (N1 + N2)
 
+	def _gpu__getEnsembleData(self, state1, state2):
+		interaction = self._env.allocate(state1.shape, self._constants.complex.dtype)
+		self._calculateInteraction(state1.shape, interaction, state1.data, state2.data)
+
+		n1 = self._env.allocate(state1.shape, self._constants.scalar.dtype)
+		n2 = self._env.allocate(state2.shape, self._constants.scalar.dtype)
+
+		self._calculateDensity(state1.shape, n1, state1.data, numpy.int32(1))
+		self._calculateDensity(state2.shape, n2, state2.data, numpy.int32(1))
+
+		return interaction, n1, n2
+
+	def _cpu__getEnsembleData(self, state1, state2):
+		return state1.data * state2.data.conj(), numpy.abs(state1.data) ** 2, numpy.abs(state2.data) ** 2
+
+	def getPhaseNoise(self, state1, state2):
+		ensembles = state1.size / self._constants.cells
+		get = self._env.toCPU
+		reduce = self._reduce
+		dV = self._constants.dV
+
+		i, n1, n2 = self._getEnsembleData(state1, state2)
+
+		n1 = get(reduce(n1, ensembles)) * dV
+		n2 = get(reduce(n2, ensembles)) * dV
+
+		if state1.type == WIGNER:
+			n1 -= self._projector_modes / 2
+			n2 -= self._projector_modes / 2
+
+		i = get(reduce(i, ensembles))
+
+		Pperp = 2.0 * i / (n1 + n2)
+		Pperp /= numpy.abs(Pperp)
+		#Pperp = numpy.angle(Pperp)
+		return numpy.sqrt(numpy.var(Pperp.imag))
+
 	def countParticles(self, state):
 		N = self._reduce(self.getAverageDensity(state)) * self._constants.dV
 		if state.type == WIGNER:
