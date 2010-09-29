@@ -201,7 +201,7 @@ class CPUReduce:
 			return numpy.sum(array)
 
 		flat_array = array.ravel()
-		res = numpy.empty(final_length)
+		res = numpy.empty(final_length, dtype=array.dtype)
 		reduce_power = array.size / final_length
 
 		for i in xrange(final_length):
