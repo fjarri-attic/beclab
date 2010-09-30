@@ -192,6 +192,42 @@ class Pulse(PairedCalculation):
 			a[:,:,:] = a0 * k1 + b0 * k2
 			b[:,:,:] = a0 * k3 + b0 * k1
 
+	def _cpu__applyNoiseMatrix(self, cloud, theta, phi, phi_noise, theta_noise):
+		a = cloud.a.data
+		b = cloud.b.data
+
+		nvz = self._constants.nvz
+		ens = self._constants.ensembles
+
+		a0 = a.copy()
+		b0 = b.copy()
+
+		if phi_noise > 0.0:
+			phis = numpy.random.normal(size=(ens,), scale=phi_noise, loc=phi)
+		else:
+			phis = numpy.ones(ens) * phi
+
+		if theta_noise > 0.0:
+			thetas = numpy.random.normal(size=(ens,), scale=theta_noise, loc=theta)
+		else:
+			thetas = numpy.ones(ens) * theta
+
+		half_thetas = thetas / 2.0
+		k1 = self._constants.scalar.cast(numpy.cos(half_thetas))
+		k2 = self._constants.complex.cast(-1j * numpy.exp(-1j * phis) * numpy.sin(half_thetas))
+		k3 = self._constants.complex.cast(-1j * numpy.exp(1j * phis) * numpy.sin(half_thetas))
+
+		for e in xrange(ens):
+			start = e * nvz
+			stop = (e + 1) * nvz
+
+			if self._constants.dim == 1:
+				a[start:stop] = a0[start:stop] * k1[e] + b0[start:stop] * k2[e]
+				b[start:stop] = a0[start:stop] * k3[e] + b0[start:stop] * k1[e]
+			else:
+				a[start:stop,:,:] = a0[start:stop,:,:] * k1[e] + b0[start:stop,:,:] * k2[e]
+				b[start:stop,:,:] = a0[start:stop,:,:] * k3[e] + b0[start:stop,:,:] * k1[e]
+
 	def _gpu__applyMatrix(self, cloud, theta, phi):
 		self._calculateMatrix(cloud.a.shape, cloud.a.data, cloud.b.data,
 			self._constants.scalar.cast(theta),
@@ -305,11 +341,13 @@ class Pulse(PairedCalculation):
 			0.5j * self._constants.w_rabi * \
 				numpy.exp(1j * (t * self._detuning + phi)) * a_data
 
-	def apply(self, cloud, theta, matrix=True):
-		phi =  cloud.time * self._detuning + self._starting_phase
+	def apply(self, cloud, theta, matrix=True, phi_noise=0.0, theta_noise=0.0):
+		phi = cloud.time * self._detuning + self._starting_phase
 		t_pulse = (theta / math.pi / 2.0) * self._constants.t_rabi
 
-		if matrix:
+		if phi_noise > 0 or theta_noise > 0:
+			self._applyNoiseMatrix(cloud, theta, phi, phi_noise, theta_noise)
+		elif matrix:
 			self._applyMatrix(cloud, theta, phi)
 		else:
 			self._applyReal(cloud, t_pulse, phi)
@@ -472,7 +510,7 @@ class SplitStepEvolution(PairedCalculation):
 				${c.scalar.name} n_a = squared_abs(a0);
 				${c.scalar.name} n_b = squared_abs(b0);
 
-				${c.scalar.name} st = sqrt(dt / (${c.scalar.name})${c.dV});
+				${c.scalar.name} st = sqrt(dt / (${c.scalar.name})${c.V});
 
 				// FIXME: Some magic here. l111 ~ 10^-42, while single precision float
 				// can only handle 10^-38.
