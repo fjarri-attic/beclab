@@ -68,6 +68,16 @@ class State(PairedCalculation):
 				wigner_func[index] = psi_val;
 			}
 
+			__kernel void fillEnsembles(__global ${c.complex.name} *new_data,
+				__global ${c.complex.name} *data)
+			{
+				DEFINE_INDEXES;
+				${c.complex.name} val = data[index];
+
+				for(int i = 0; i < ${c.ensembles}; i++)
+					new_data[index + i * ${c.cells}] = val;
+			}
+
 			__kernel void addPlaneWaves(__global ${c.complex.name} *kdata,
 				__global ${c.complex.name} *randoms,
 				texture projector_mask)
@@ -85,6 +95,7 @@ class State(PairedCalculation):
 		self._fillWithOnes = self._program.fillWithOnes
 		self._initializeEnsembles = self._program.initializeEnsembles
 		self._addPlaneWaves = self._program.addPlaneWaves
+		self._fillEnsembles = self._program.fillEnsembles
 
 	def _gpu__initializeMemory(self):
 		self.data = self._env.allocate(self.shape, self.dtype)
@@ -93,40 +104,29 @@ class State(PairedCalculation):
 	def _gpu_fillWithOnes(self):
 		self._fillWithOnes(self.shape, self.data)
 
-	def _gpu__addVacuumParticles(self, data, randoms, mask):
-		shape = data.shape
-		dtype = data.dtype
-		batch = data.size / self._constants.cells
+	def _gpu__addVacuumParticles(self, randoms, mask):
+
+		dtype = self.data.dtype
+		batch = self.data.size / self._constants.cells
 
 		randoms = self._env.toGPU(randoms)
 
-		self._initializeEnsembles(shape, data, self.data)
-		kdata = self._env.allocate(shape, dtype=dtype)
-		self._plan.execute(data, kdata, inverse=True, batch=batch)
-		self._addPlaneWaves(shape, kdata, randoms, mask)
-		self._plan.execute(kdata, data, batch=batch)
+		kdata = self._env.allocate(self._constants.ens_shape, dtype=dtype)
+		self._plan.execute(self.data, kdata, inverse=True, batch=batch)
+		self._addPlaneWaves(self._constants.ens_shape, kdata, randoms, mask)
+		self._plan.execute(kdata, self.data, batch=batch)
 
-	def _cpu__addVacuumParticles(self, data, randoms, mask):
+	def _cpu__addVacuumParticles(self, randoms, mask):
 
 		coeff = 1.0 / math.sqrt(self._constants.V)
 
-		shape = data.shape
-		dtype = data.dtype
-		batch = data.size / self._constants.cells
+		dtype = self.data.dtype
+		batch = self.data.size / self._constants.cells
 		nvz = self._constants.nvz
 
-		kdata = self._env.allocate(shape, dtype=dtype)
+		kdata = self._env.allocate(self._constants.ens_shape, dtype=dtype)
 
-		for e in xrange(batch):
-			start = e * nvz
-			stop = (e + 1) * nvz
-
-			if self._constants.dim == 3:
-				data[start:stop,:,:] = self.data
-			else:
-				data[start:stop] = self.data
-
-		self._plan.execute(data, kdata, inverse=True, batch=batch)
+		self._plan.execute(self.data, kdata, inverse=True, batch=batch)
 
 		for e in xrange(batch):
 			start = e * nvz
@@ -139,25 +139,38 @@ class State(PairedCalculation):
 				kdata[start:stop] += mask * coeff * randoms[start:stop]
 				kdata[start:stop] *= mask # remove high-energy components
 
-		self._plan.execute(kdata, data, batch=batch)
+		self._plan.execute(kdata, self.data, batch=batch)
 
 	def toWigner(self):
 
 		assert self.type == PSI_FUNC
 
-		new_data = self._env.allocate(self._constants.ens_shape, self._constants.complex.dtype)
+		self.createEnsembles()
 
 		randoms = (numpy.random.normal(scale=0.5, size=self._constants.ens_shape) +
 			1j * numpy.random.normal(scale=0.5, size=self._constants.ens_shape)).astype(self._constants.complex.dtype)
 
 		projector_mask, _ = getProjectorMask(self._env, self._constants)
-		self._addVacuumParticles(new_data, randoms, projector_mask)
-
-		self.data = new_data
-		self.shape = self._constants.ens_shape
-		self.size = self._constants.cells * self._constants.ensembles
+		self._addVacuumParticles(randoms, projector_mask)
 
 		self.type = WIGNER
+
+	def _cpu__createEnsembles(self):
+		tile = tuple([self._constants.ensembles] + [1] * (self._constants.dim - 1))
+		return numpy.tile(self.data, tile)
+
+	def _gpu__createEnsembles(self):
+		new_data = self._env.allocate(self._constants.ens_shape, self._constants.complex.dtype)
+		self._fillEnsembles(self._constants.shape, new_data, self.data)
+		return new_data
+
+	def createEnsembles(self):
+
+		assert self.size == self._constants.cells
+
+		self.data = self._createEnsembles()
+		self.shape = self._constants.ens_shape
+		self.size = self._constants.cells * self._constants.ensembles
 
 
 class TwoComponentCloud:
@@ -195,6 +208,10 @@ class TwoComponentCloud:
 			a=self.a, b=self.b, prepare=prepare)
 		res.time = self.time
 		return res
+
+	def createEnsembles(self):
+		self.a.createEnsembles()
+		self.b.createEnsembles()
 
 
 class ParticleStatistics(PairedCalculation):
