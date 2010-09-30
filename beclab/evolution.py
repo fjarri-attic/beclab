@@ -663,16 +663,16 @@ class SplitStepEvolution(PairedCalculation):
 		Z0 = [numpy.random.normal(scale=1, size=shape).astype(
 			self._constants.scalar.dtype) for i in xrange(4)]
 
-		G101, G102, G103, G104, G201, G202, G203, G204 = self._noiseFunc(cloud.a.data, cloud.b.data, dt)
+		G101, G102, G103, G104, G201, G202, G203, G204 = self._noiseFunc2(cloud.a.data, cloud.b.data, dt)
 		G111, G112, G113, G114, G211, G212, G213, G214 = \
-			self._noiseFunc(
+			self._noiseFunc2(
 				cloud.a.data + math.sqrt(dt / 2) * (
 					G101 * Z1[0] + G102 * Z1[1] + G103 * Z1[2] + G104 * Z1[3]),
 				cloud.b.data + math.sqrt(dt / 2) * (
 					G201 * Z1[0] + G202 * Z1[1] + G203 * Z1[2] + G204 * Z1[3]), dt)
 
 		G121, G122, G123, G124, G221, G222, G223, G224 = \
-			self._noiseFunc(
+			self._noiseFunc2(
 				cloud.a.data + math.sqrt(dt / 2) * (
 					G101 * Z1[0] + G102 * Z1[1] + G103 * Z1[2] + G104 * Z1[3]),
 				cloud.b.data + math.sqrt(dt / 2) * (
