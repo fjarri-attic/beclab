@@ -618,6 +618,31 @@ class SplitStepEvolution(PairedCalculation):
 			coeff * (zeros + 1j * k7), \
 			coeff * (zeros + 1j * k8)
 
+	def _noiseFunc2(self, a_data, b_data, dt):
+
+		n1 = numpy.abs(a_data) ** 2
+		n2 = numpy.abs(b_data) ** 2
+		l12 = self._constants.l12
+		l22 = self._constants.l22
+		l111 = self._constants.l111
+
+		st = math.sqrt(1.0 / self._constants.dV)
+		d11 = numpy.sqrt(9.0 * l111 * (n1 ** 2) + l12 * n2) * st
+		d22 = numpy.sqrt(l12 * n1 + 4.0 * l22 * n2) * st
+
+		zeros = numpy.zeros(a_data.shape, self._constants.scalar.dtype)
+		czeros = zeros + 1j * zeros
+
+		return \
+			d11 + 1j * zeros, \
+			czeros, \
+			zeros + 1j * d11, \
+			czeros, \
+			czeros, \
+			d22 + 1j * zeros, \
+			czeros, \
+			zeros + 1j * d22
+
 	def _propagateNoise(self, cloud, dt):
 
 		shape = self._constants.ens_shape
