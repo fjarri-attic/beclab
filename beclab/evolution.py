@@ -430,6 +430,18 @@ class SplitStepEvolution(PairedCalculation):
 						-(${c.l22} * n_b + ${c.l12} * n_a) / 2,
 						-(-V - ${g22} * n_b - ${g12} * n_a));
 
+					/*
+					pa += ${c.complex.ctr}(
+						-(${1.5 * c.l111 / c.V / c.V} - ${3.0 * c.l111 / c.V * 1e10} * temp -
+						${0.5 * c.l12 / c.V}) / 2,
+						-(${g11 / c.V} + ${0.5 * g12 / c.V})
+					);
+
+					pb += ${c.complex.ctr}(
+						-(-${c.l22 / c.V} - ${0.5 * c.l12 / c.V}) / 2,
+						-(${g22 / c.V} + ${0.5 * g12 / c.V})
+					);*/
+
 					// calculate midpoint log derivative and exponentiate
 					da = cexp(complex_mul_scalar(pa, (dt / 2)));
 					db = cexp(complex_mul_scalar(pb, (dt / 2)));
