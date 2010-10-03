@@ -5,13 +5,13 @@ except ImportError:
 
 import os.path
 
-VERSION = '0.1.0'
+VERSION = '0.1.2'
 
 documentation = open(os.path.join(os.path.dirname(__file__), 'README.rst')).read()
 
 setup(
 	name='beclab',
-	packages=['beclab'],
+	packages=['beclab', 'beclab.helpers'],
 	version=VERSION,
 	author='Bogdan Opanchuk',
 	author_email='mantihor@gmail.com',

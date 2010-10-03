@@ -1,12 +1,10 @@
 import numpy
 from mako.template import Template
 
-try:
-	import pyopencl as cl
-except:
-	pass
+from .typenames import MAP
 
-_kernel_template = Template("""
+
+_kernel_template = """
 /**
  * Fast matrix transpose kernel
  *
@@ -18,7 +16,7 @@ _kernel_template = Template("""
  * @param height Height of each matrix, must be a multiple of HALF_WARP_SIZE
  * @param num Matrices in the batch
  */
-__kernel void transposeKernel(__global ${typename}* odata, const __global ${typename}* idata,
+EXPORTED_FUNC void transposeKernel(GLOBAL_MEM ${typename}* odata, const GLOBAL_MEM ${typename}* idata,
 	unsigned int width, unsigned int height, unsigned int num)
 {
 	// To prevent shared memory bank confilcts:
@@ -31,13 +29,13 @@ __kernel void transposeKernel(__global ${typename}* odata, const __global ${type
 	//   array starts in a different bank - so reading from shared memory
 	//   doesn't cause bank conflicts when writing the transpose out to global
 	//   memory.
-	__local ${typename} block[(${half_warp_size} + 1) * ${half_warp_size}];
+	SHARED_MEM ${typename} block[(${half_warp_size} + 1) * ${half_warp_size}];
 
-	unsigned int lid_x = get_local_id(0);
-	unsigned int lid_y = get_local_id(1);
+	unsigned int lid_x = THREAD_ID_X;
+	unsigned int lid_y = THREAD_ID_Y;
 
-	unsigned int gid_x = get_group_id(0);
-	unsigned int gid_y = get_group_id(1);
+	unsigned int gid_x = BLOCK_ID_X;
+	unsigned int gid_y = BLOCK_ID_Y;
 
 	const unsigned int half_warp_size = ${half_warp_size};
 
@@ -55,7 +53,7 @@ __kernel void transposeKernel(__global ${typename}* odata, const __global ${type
 	{
 		block[index_block] = idata[index_in];
 
-		barrier(CLK_LOCAL_MEM_FENCE);
+		SYNC;
 
 		odata[index_out] = block[index_transpose];
 
@@ -63,28 +61,27 @@ __kernel void transposeKernel(__global ${typename}* odata, const __global ${type
 		index_out += size;
 	}
 }
-""")
+"""
 
-class Transpose:
+class GPUTranspose:
 
-	def __init__(self, env, type):
+	def __init__(self, env, dtype):
 
-		self._half_warp_size = 16
-		self._queue = env.queue
+		self._half_warp_size = env.warp_size / 2
 
-		# render function from template
-		source = _kernel_template.render(typename=type.name, half_warp_size=self._half_warp_size)
+		type = MAP[dtype]
 
-		# get function from module
-		_kernel_module = cl.Program(env.context, source).build()
-		self._func = _kernel_module.transposeKernel
+		self._program = env.compile(_kernel_template,
+			double=type.precision.double, typename=type.name,
+			half_warp_size=self._half_warp_size)
+		self._func = self._program.transposeKernel
 		self._local_size = (self._half_warp_size, self._half_warp_size)
 
-	def __call__(self, odata, idata, width, height, num=1):
+	def __call__(self, idata, odata, width, height, batch=1):
 		"""
 		Fast matrix transpose function
-		odata: Output buffer for transposed batch of matrices, must be different than idata
 		idata: Input batch of matrices
+		odata: Output buffer for transposed batch of matrices, must be different than idata
 		width: Width of each matrix, must be a multiple of HALF_WARP_SIZE
 		height: Height of each matrix, must be a multiple of HALF_WARP_SIZE
 		num: number of matrices in the batch
@@ -93,5 +90,24 @@ class Transpose:
 		assert height % self._half_warp_size == 0
 
 		global_size = (width, height)
-		self._func(self._queue, global_size, self._local_size, odata, idata, numpy.int32(width),
-			numpy.int32(height), numpy.int32(num))
+		self._func.customCall(global_size, self._local_size,
+			odata, idata, numpy.int32(width),
+			numpy.int32(height), numpy.int32(batch))
+
+
+class CPUTranspose:
+
+	def __call__(self, idata, odata, width, height, batch=1):
+		idata = idata.ravel()
+		odata = odata.ravel()
+		for i in xrange(batch):
+			start = i * width * height
+			stop = (i + 1) * width * height
+			odata[start:stop] = idata[start:stop].reshape((height, width)).T.ravel()
+
+
+def createTranspose(env, dtype):
+	if env.gpu:
+		return GPUTranspose(env, dtype)
+	else:
+		return CPUTranspose()

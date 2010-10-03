@@ -15,39 +15,6 @@ COMP_1_minus1 = 0
 COMP_2_1 = 1
 
 
-class _Type:
-	def __init__(self, name, dtype):
-		self.name = name
-		self.dtype = dtype
-		self.nbytes = dtype().nbytes
-		self.ctr = '(' + name + ')'
-		self.cast = numpy.cast[dtype]
-
-	def __getstate__(self):
-		d = dict(self.__dict__)
-		del d['cast']
-		return d
-
-	def __setstate__(self, state):
-		self.__dict__ = state
-		self.cast = numpy.cast[self.dtype]
-
-
-class _Precision:
-	def __init__(self, scalar, complex):
-		self.scalar = scalar
-		self.complex = complex
-
-_single_float = _Type('float', numpy.float32)
-_double_float = _Type('double', numpy.float64)
-
-_single_complex = _Type('float2', numpy.complex64)
-_double_complex = _Type('double2', numpy.complex128)
-
-_single_precision = _Precision(_single_float, _single_complex)
-_double_precision = _Precision(_double_float, _double_complex)
-
-
 class Constants:
 	"""Calculation constants, in natural units"""
 
