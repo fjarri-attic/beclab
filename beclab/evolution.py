@@ -755,7 +755,7 @@ class SplitStepEvolution(PairedCalculation):
 			1j * numpy.random.normal(scale=1, size=shape)).astype(self._constants.complex.dtype)
 
 		self._addnoise_func(cloud.a.shape, cloud.a.data, cloud.b.data,
-			self._constants.scalar.cast(dt), self._env.toGPU(randoms))
+			self._constants.scalar.cast(dt), self._env.toDevice(randoms))
 
 	def _finishStep(self, cloud, dt):
 		if self._midstep:

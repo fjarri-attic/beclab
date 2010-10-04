@@ -108,7 +108,7 @@ class State(PairedCalculation):
 		dtype = self.data.dtype
 		batch = self.data.size / self._constants.cells
 
-		randoms = self._env.toGPU(randoms)
+		randoms = self._env.toDevice(randoms)
 
 		kdata = self._env.allocate(self._constants.ens_shape, dtype=dtype)
 		self._plan.execute(self.data, kdata, inverse=True, batch=batch)
@@ -160,7 +160,7 @@ class State(PairedCalculation):
 
 	def _gpu__createEnsembles(self):
 		new_data = self._env.allocate(self._constants.ens_shape, self._constants.complex.dtype)
-		self._fillEnsembles(self._constants.shape, new_data, self.data)
+		self._fillEnsembles(self._constants.cells, new_data, self.data)
 		return new_data
 
 	def createEnsembles(self):
@@ -473,8 +473,8 @@ class ParticleStatistics(PairedCalculation):
 		n1 = self._env.allocate(state1.shape, self._constants.scalar.dtype)
 		n2 = self._env.allocate(state2.shape, self._constants.scalar.dtype)
 
-		self._calculateDensity(state1.shape, n1, state1.data, numpy.int32(1))
-		self._calculateDensity(state2.shape, n2, state2.data, numpy.int32(1))
+		self._calculateDensity(state1.size, n1, state1.data, numpy.int32(1))
+		self._calculateDensity(state2.size, n2, state2.data, numpy.int32(1))
 
 		return interaction, n1, n2
 
@@ -484,7 +484,7 @@ class ParticleStatistics(PairedCalculation):
 
 	def getPhaseNoise(self, state1, state2):
 		ensembles = state1.size / self._constants.cells
-		get = self._env.toCPU
+		get = self._env.fromDevice
 		reduce = self._reduce
 		creduce = self._creduce
 		dV = self._constants.dV
@@ -645,18 +645,18 @@ class Projection:
 		density = self._stats.getAverageDensity(state)
 		x = self._constants.nvx
 		y = self._constants.nvy
-		return self._env.toCPU(self._reduce.sparse(density, final_length=x * y), shape=(y, x))
+		return self._env.fromDevice(self._reduce.sparse(density, final_length=x * y), shape=(y, x))
 
 	def getYZ(self, state):
 		density = self._stats.getAverageDensity(state)
 		y = self._constants.nvy
 		z = self._constants.nvz
-		return self._env.toCPU(self._reduce(density, final_length=y * z), shape=(z, y))
+		return self._env.fromDevice(self._reduce(density, final_length=y * z), shape=(z, y))
 
 	def getZ(self, state):
 		density = self._stats.getAverageDensity(state)
 		z = self._constants.nvz
-		return self._env.toCPU(self._reduce(density, final_length=z))
+		return self._env.fromDevice(self._reduce(density, final_length=z))
 
 
 class Slice:
@@ -668,10 +668,10 @@ class Slice:
 
 	def getXY(self, state):
 		density = self._stats.getAverageDensity(state)
-		temp = self._env.toCPU(density)
+		temp = self._env.fromDevice(density)
 		return temp[self._constants.nvz / 2,:,:]
 
 	def getYZ(self, state):
 		density = self._stats.getAverageDensity(state)
-		temp = self._env.toCPU(density).transpose((2, 0, 1))
+		temp = self._env.fromDevice(density).transpose((2, 0, 1))
 		return temp[self._constants.nvx / 2,:,:]
