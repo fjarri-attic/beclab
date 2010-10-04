@@ -7,7 +7,7 @@ from beclab import *
 def testVisibility(gpu, matrix_pulses):
 	constants = Constants(Model(N=30000, nvx=16, nvy=16, nvz=128),
 		double=False)
-	env = envs.cuda() if gpu else envs.cl()
+	env = envs.cuda() if gpu else envs.cpu()
 	evolution = SplitStepEvolution(env, constants)
 
 	gs = GPEGroundState(env, constants)
