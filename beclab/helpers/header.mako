@@ -79,6 +79,12 @@ INTERNAL_FUNC ${complex} cexp(${complex} a)
 	return complex_mul_scalar(complex_ctr(cos_a, sin_a), module);
 }
 
+%if not cuda:
+	#define sin native_sin
+	#define cos native_cos
+	#define exp native_exp
+%endif
+
 %if cuda:
 	#define THREAD_ID_X threadIdx.x
 	#define BLOCK_ID_X blockIdx.x
@@ -89,6 +95,8 @@ INTERNAL_FUNC ${complex} cexp(${complex} a)
 	#define BLOCK_ID_Y blockIdx.y
 	#define GLOBAL_ID_Y (threadIdx.y + blockDim.y * blockIdx.y)
 	#define GLOBAL_SIZE_Y (blockDim.y * gridDim.y)
+
+	#define GLOBAL_ID_FLAT threadIdx.x + blockDim.x * blockIdx.x + gridDim.x * blockDim.x * blockIdx.y
 %else:
 	#define THREAD_ID_X get_local_id(0)
 	#define BLOCK_ID_X get_group_id(0)
@@ -99,7 +107,11 @@ INTERNAL_FUNC ${complex} cexp(${complex} a)
 	#define BLOCK_ID_Y get_group_id(1)
 	#define GLOBAL_ID_Y get_global_id(1)
 	#define GLOBAL_SIZE_Y get_global_size(1)
+
+	#define GLOBAL_ID_FLAT get_global_id(0)
 %endif
+
+${prelude}
 
 %if cuda:
 	extern "C" {
