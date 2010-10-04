@@ -42,6 +42,11 @@ from .model import Model
 from .constants import Constants, COMP_1_minus1, COMP_2_1
 from .ground_state import GPEGroundState
 from .evolution import Pulse, SplitStepEvolution, SplitStepEvolution2, RungeKuttaEvolution, RK4Evolution
-from .datahelpers import XYData, HeightmapData, XYPlot, HeightmapPlot, EvolutionPlot
 from .collectors import AxialProjectionCollector, ParticleNumberCollector, \
 	SurfaceProjectionCollector, VisibilityCollector, SliceCollector, PhaseNoiseCollector
+
+# FIXME: temporary, just to run simulations on VPAC
+try:
+	from .datahelpers import XYData, HeightmapData, XYPlot, HeightmapPlot, EvolutionPlot
+except:
+	print "Failed to load datahelpers. Most probably, matplotlib is missing"
