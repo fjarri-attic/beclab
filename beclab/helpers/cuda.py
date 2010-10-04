@@ -20,11 +20,11 @@ class _KernelWrapper:
 		self._stream = env.stream
 		self._kernel = kernel
 
-	def __call__(self, size, block_size=None, *args):
 		max_block_size = self._env.max_block_size
 
 		if block_size is None:
 			block_size = min(size, max_block_size)
+	def __call__(self, size, *args):
 
 		if size <= block_size:
 			block = (size, 1, 1)

@@ -46,8 +46,8 @@ class _KernelWrapper:
 		self._kernel = kernel
 		self._queue = queue
 
-	def __call__(self, size, block_size=None, *args):
-		self._kernel(self._queue, (size,), None if block_size is None else (block_size,), *args)
+	def __call__(self, size, *args):
+		self._kernel(self._queue, (size,), None, *args)
 
 	def customCall(self, global_size, block, *args):
 		self._kernel(self._queue, global_size, block, *args)
