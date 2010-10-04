@@ -12,9 +12,8 @@ try:
 except:
 	pass
 
+from .helpers import *
 from .globals import *
-from .fft import createPlan
-from .reduce import getReduce
 from .ground_state import GPEGroundState
 from .constants import PSI_FUNC, WIGNER, COMP_1_minus1, COMP_2_1
 
@@ -37,7 +36,7 @@ class Pulse(PairedCalculation):
 
 		self._starting_phase = starting_phase
 
-		self._plan = createPlan(env, constants, constants.shape)
+		self._plan = createFFTPlan(env, constants.shape, constants.complex.dtype)
 
 		self._potentials = getPotentials(env, constants)
 		self._kvectors = getKVectors(env, constants)
@@ -53,48 +52,48 @@ class Pulse(PairedCalculation):
 				from math import sqrt
 			%>
 
-			__kernel void calculateMatrix(__global ${c.complex.name} *a,
-				__global ${c.complex.name} *b,
-				${c.scalar.name} theta, ${c.scalar.name} phi)
+			EXPORTED_FUNC void calculateMatrix(GLOBAL_MEM COMPLEX *a,
+				GLOBAL_MEM COMPLEX *b,
+				SCALAR theta, SCALAR phi)
 			{
 				DEFINE_INDEXES;
 
-				${c.complex.name} a0 = a[index];
-				${c.complex.name} b0 = b[index];
+				COMPLEX a0 = a[index];
+				COMPLEX b0 = b[index];
 
-				${c.scalar.name} sin_half_theta = sin(theta / 2);
-				${c.scalar.name} cos_half_theta = cos(theta / 2);
+				SCALAR sin_half_theta = sin(theta / 2);
+				SCALAR cos_half_theta = cos(theta / 2);
 
-				${c.complex.name} minus_i = ${c.complex.ctr}(0, -1);
+				COMPLEX minus_i = complex_ctr(0, -1);
 
-				${c.complex.name} k2 = complex_mul_scalar(complex_mul(
-					minus_i, cexp(${c.complex.ctr}(0, -phi))
+				COMPLEX k2 = complex_mul_scalar(complex_mul(
+					minus_i, cexp(complex_ctr(0, -phi))
 				), sin_half_theta);
 
-				${c.complex.name} k3 = complex_mul_scalar(complex_mul(
-					minus_i, cexp(${c.complex.ctr}(0, phi))
+				COMPLEX k3 = complex_mul_scalar(complex_mul(
+					minus_i, cexp(complex_ctr(0, phi))
 				), sin_half_theta);
 
 				a[index] = complex_mul_scalar(a0, cos_half_theta) + complex_mul(b0, k2);
 				b[index] = complex_mul_scalar(b0, cos_half_theta) + complex_mul(a0, k3);
 			}
 
-			void propagationFunc(${c.complex.name} *a_res, ${c.complex.name} *b_res,
-				${c.complex.name} a, ${c.complex.name} b,
-				${c.complex.name} ka, ${c.complex.name} kb,
-				${c.scalar.name} t, ${c.scalar.name} dt,
-				${c.scalar.name} kvector, ${c.scalar.name} potential,
-				${c.scalar.name} phi)
+			INTERNAL_FUNC void propagationFunc(COMPLEX *a_res, COMPLEX *b_res,
+				COMPLEX a, COMPLEX b,
+				COMPLEX ka, COMPLEX kb,
+				SCALAR t, SCALAR dt,
+				SCALAR kvector, SCALAR potential,
+				SCALAR phi)
 			{
-				${c.scalar.name} n_a = squared_abs(a);
-				${c.scalar.name} n_b = squared_abs(b);
+				SCALAR n_a = squared_abs(a);
+				SCALAR n_b = squared_abs(b);
 
-				${c.complex.name} ta = complex_mul_scalar(ka, kvector) - complex_mul_scalar(a, potential);
-				${c.complex.name} tb = complex_mul_scalar(kb, kvector) - complex_mul_scalar(b, potential);
+				COMPLEX ta = complex_mul_scalar(ka, kvector) - complex_mul_scalar(a, potential);
+				COMPLEX tb = complex_mul_scalar(kb, kvector) - complex_mul_scalar(b, potential);
 
-				${c.scalar.name} phase = t * (${c.scalar.name})${detuning} + phi;
-				${c.scalar.name} sin_phase = ${c.w_rabi / 2} * sin(phase);
-				${c.scalar.name} cos_phase = ${c.w_rabi / 2} * cos(phase);
+				SCALAR phase = t * (SCALAR)${detuning} + phi;
+				SCALAR sin_phase = ${c.w_rabi / 2} * sin(phase);
+				SCALAR cos_phase = ${c.w_rabi / 2} * cos(phase);
 
 				<%
 					# FIXME: remove component hardcoding
@@ -105,45 +104,45 @@ class Pulse(PairedCalculation):
 
 				// FIXME: Some magic here. l111 ~ 10^-42, while single precision float
 				// can only handle 10^-38.
-				${c.scalar.name} temp = n_a * ${1.0e-10};
+				SCALAR temp = n_a * ${1.0e-10};
 
-				*a_res = ${c.complex.ctr}(-ta.y, ta.x) +
-					complex_mul(${c.complex.ctr}(
+				*a_res = complex_ctr(-ta.y, ta.x) +
+					complex_mul(complex_ctr(
 						- temp * temp * ${c.l111 * 1.0e20} - n_b * ${c.l12 / 2},
 						- n_a * ${g11} - n_b * ${g12}), a) -
-					complex_mul(${c.complex.ctr}(sin_phase, cos_phase), b);
+					complex_mul(complex_ctr(sin_phase, cos_phase), b);
 
-				*b_res = ${c.complex.ctr}(-tb.y, tb.x) +
-					complex_mul(${c.complex.ctr}(
+				*b_res = complex_ctr(-tb.y, tb.x) +
+					complex_mul(complex_ctr(
 						- n_a * ${c.l12 / 2} - n_b * ${c.l22 / 2},
 						- n_a * ${g12} - n_b * ${g22}), b) -
-					complex_mul(${c.complex.ctr}(-sin_phase, cos_phase), a);
+					complex_mul(complex_ctr(-sin_phase, cos_phase), a);
 			}
 
-			__kernel void calculateRK(__global ${c.complex.name} *a, __global ${c.complex.name} *b,
-				__global ${c.complex.name} *a_copy, __global ${c.complex.name} *b_copy,
-				__global ${c.complex.name} *a_kdata, __global ${c.complex.name} *b_kdata,
-				__global ${c.complex.name} *a_res, __global ${c.complex.name} *b_res,
-				${c.scalar.name} t, ${c.scalar.name} dt,
-				texture potentials, texture kvectors,
-				${c.scalar.name} phi, int stage)
+			EXPORTED_FUNC void calculateRK(GLOBAL_MEM COMPLEX *a, GLOBAL_MEM COMPLEX *b,
+				GLOBAL_MEM COMPLEX *a_copy, GLOBAL_MEM COMPLEX *b_copy,
+				GLOBAL_MEM COMPLEX *a_kdata, GLOBAL_MEM COMPLEX *b_kdata,
+				GLOBAL_MEM COMPLEX *a_res, GLOBAL_MEM COMPLEX *b_res,
+				SCALAR t, SCALAR dt,
+				GLOBAL_MEM SCALAR *potentials, GLOBAL_MEM SCALAR *kvectors,
+				SCALAR phi, int stage)
 			{
 				DEFINE_INDEXES;
 
-				${c.scalar.name} kvector = GET_SCALAR(kvectors);
-				${c.scalar.name} potential = GET_SCALAR(potentials);
+				SCALAR kvector = kvectors[cell_index];
+				SCALAR potential = potentials[cell_index];
 
-				${c.complex.name} ra = a_res[index];
-				${c.complex.name} rb = b_res[index];
-				${c.complex.name} ka = a_kdata[index];
-				${c.complex.name} kb = b_kdata[index];
-				${c.complex.name} a0 = a_copy[index];
-				${c.complex.name} b0 = b_copy[index];
+				COMPLEX ra = a_res[index];
+				COMPLEX rb = b_res[index];
+				COMPLEX ka = a_kdata[index];
+				COMPLEX kb = b_kdata[index];
+				COMPLEX a0 = a_copy[index];
+				COMPLEX b0 = b_copy[index];
 
-				${c.scalar.name} val_coeffs[4] = {0.5, 0.5, 1.0};
-				${c.scalar.name} res_coeffs[4] = {1.0 / 6.0, 1.0 / 3.0, 1.0 / 3.0, 1.0 / 6.0};
+				SCALAR val_coeffs[4] = {0.5, 0.5, 1.0};
+				SCALAR res_coeffs[4] = {1.0 / 6.0, 1.0 / 3.0, 1.0 / 3.0, 1.0 / 6.0};
 
-				${c.complex.name} a_val, b_val;
+				COMPLEX a_val, b_val;
 				if(stage == 0)
 				{
 					a_val = a0;
@@ -163,12 +162,12 @@ class Pulse(PairedCalculation):
 					b_res[index] = b0 + complex_mul_scalar(rb, dt * val_coeffs[stage]);
 				}
 
-				a[index] += complex_mul_scalar(ra, dt * res_coeffs[stage]);
-				b[index] += complex_mul_scalar(rb, dt * res_coeffs[stage]);
+				a[index] = a[index] + complex_mul_scalar(ra, dt * res_coeffs[stage]);
+				b[index] = b[index] + complex_mul_scalar(rb, dt * res_coeffs[stage]);
 			}
 		"""
 
-		self._program = self._env.compile(kernels, self._constants,
+		self._program = self._env.compileProgram(kernels, self._constants,
 			detuning=self._detuning, COMP_1_minus1=COMP_1_minus1, COMP_2_1=COMP_2_1)
 		self._calculateMatrix = self._program.calculateMatrix
 		self._calculateRK = self._program.calculateRK
@@ -229,7 +228,7 @@ class Pulse(PairedCalculation):
 				b[start:stop,:,:] = a0[start:stop,:,:] * k3[e] + b0[start:stop,:,:] * k1[e]
 
 	def _gpu__applyMatrix(self, cloud, theta, phi):
-		self._calculateMatrix(cloud.a.shape, cloud.a.data, cloud.b.data,
+		self._calculateMatrix(cloud.a.size, cloud.a.data, cloud.b.data,
 			self._constants.scalar.cast(theta),
 			self._constants.scalar.cast(phi))
 
@@ -269,7 +268,7 @@ class Pulse(PairedCalculation):
 		dt = cast(t_pulse / steps)
 		phi = cast(phi)
 
-		shape = cloud.a.shape
+		size = cloud.a.size
 		dtype = cloud.a.dtype
 
 		a_copy = self._env.allocate(shape, dtype=dtype)
@@ -287,22 +286,22 @@ class Pulse(PairedCalculation):
 
 			fft(a_copy, a_kdata, inverse=True, batch=batch)
 			fft(b_copy, b_kdata, inverse=True, batch=batch)
-			func(shape, cloud.a.data, cloud.b.data, a_copy, b_copy, a_kdata, b_kdata,
+			func(size, cloud.a.data, cloud.b.data, a_copy, b_copy, a_kdata, b_kdata,
 				a_res, b_res, t, dt, p, k, phi, numpy.int32(0))
 
 			fft(a_res, a_kdata, inverse=True, batch=batch)
 			fft(b_res, b_kdata, inverse=True, batch=batch)
-			func(shape, cloud.a.data, cloud.b.data, a_copy, b_copy, a_kdata, b_kdata,
+			func(size, cloud.a.data, cloud.b.data, a_copy, b_copy, a_kdata, b_kdata,
 				a_res, b_res, t, dt, p, k, phi, numpy.int32(1))
 
 			fft(a_res, a_kdata, inverse=True, batch=batch)
 			fft(b_res, b_kdata, inverse=True, batch=batch)
-			func(shape, cloud.a.data, cloud.b.data, a_copy, b_copy, a_kdata, b_kdata,
+			func(size, cloud.a.data, cloud.b.data, a_copy, b_copy, a_kdata, b_kdata,
 				a_res, b_res, t, dt, p, k, phi, numpy.int32(2))
 
 			fft(a_res, a_kdata, inverse=True, batch=batch)
 			fft(b_res, b_kdata, inverse=True, batch=batch)
-			func(shape, cloud.a.data, cloud.b.data, a_copy, b_copy, a_kdata, b_kdata,
+			func(size, cloud.a.data, cloud.b.data, a_copy, b_copy, a_kdata, b_kdata,
 				a_res, b_res, t, dt, p, k, phi, numpy.int32(3))
 
 	def _propagationFunc(self, a_data, b_data, a_kdata, b_kdata, a_res, b_res, t, dt, phi):
@@ -366,7 +365,7 @@ class SplitStepEvolution(PairedCalculation):
 		self._env = env
 		self._constants = constants
 
-		self._plan = createPlan(env, constants, constants.shape)
+		self._plan = createFFTPlan(env, constants.shape, constants.complex.dtype)
 
 		# indicates whether current state is in midstep (i.e, right after propagation
 		# in x-space and FFT to k-space)
@@ -408,40 +407,39 @@ class SplitStepEvolution(PairedCalculation):
 			%>
 
 			// Propagates state vector in k-space for evolution calculation (i.e., in real time)
-			__kernel void propagateKSpaceRealTime(__global ${c.complex.name} *a, __global ${c.complex.name} *b,
-				${c.scalar.name} dt, texture kvectors)
+			EXPORTED_FUNC void propagateKSpaceRealTime(GLOBAL_MEM COMPLEX *a, GLOBAL_MEM COMPLEX *b,
+				SCALAR dt, GLOBAL_MEM SCALAR *kvectors)
 			{
 				DEFINE_INDEXES;
 
-				${c.scalar.name} kvector = GET_SCALAR(kvectors);
-				${c.scalar.name} prop_angle = kvector * dt / 2;
-				${c.complex.name} prop_coeff = ${c.complex.ctr}(native_cos(prop_angle), native_sin(prop_angle));
+				SCALAR kvector = kvectors[cell_index];
+				SCALAR prop_angle = kvector * dt / 2;
+				COMPLEX prop_coeff = complex_ctr(cos(prop_angle), sin(prop_angle));
 
-				${c.complex.name} a0 = a[index];
-				${c.complex.name} b0 = b[index];
+				COMPLEX a0 = a[index];
+				COMPLEX b0 = b[index];
 
 				a[index] = complex_mul(a0, prop_coeff);
 				b[index] = complex_mul(b0, prop_coeff);
 			}
 
 			// Propagates state vector in x-space for evolution calculation
-			__kernel void propagateXSpaceTwoComponent(__global ${c.complex.name} *aa,
-				__global ${c.complex.name} *bb, ${c.scalar.name} dt,
-				texture potentials)
+			EXPORTED_FUNC void propagateXSpaceTwoComponent(GLOBAL_MEM COMPLEX *aa,
+				GLOBAL_MEM COMPLEX *bb, SCALAR dt, GLOBAL_MEM SCALAR *potentials)
 			{
 				DEFINE_INDEXES;
 
-				${c.scalar.name} V = GET_SCALAR(potentials);
+				SCALAR V = potentials[cell_index];
 
-				${c.complex.name} a = aa[index];
-				${c.complex.name} b = bb[index];
+				COMPLEX a = aa[index];
+				COMPLEX b = bb[index];
 
 				//store initial x-space field
-				${c.complex.name} a0 = a;
-				${c.complex.name} b0 = b;
+				COMPLEX a0 = a;
+				COMPLEX b0 = b;
 
-				${c.complex.name} pa, pb, da = ${c.complex.ctr}(0, 0), db = ${c.complex.ctr}(0, 0);
-				${c.scalar.name} n_a, n_b;
+				COMPLEX pa, pb, da = complex_ctr(0, 0), db = complex_ctr(0, 0);
+				SCALAR n_a, n_b;
 
 				<%
 					# FIXME: remove component hardcoding
@@ -452,7 +450,7 @@ class SplitStepEvolution(PairedCalculation):
 
 				// FIXME: Some magic here. l111 ~ 10^-42, while single precision float
 				// can only handle 10^-38.
-				${c.scalar.name} temp = n_a * ${1.0e-10};
+				SCALAR temp = n_a * ${1.0e-10};
 
 				//iterate to midpoint solution
 				%for iter in range(c.itmax):
@@ -461,21 +459,21 @@ class SplitStepEvolution(PairedCalculation):
 
 					// TODO: there must be no minus sign before imaginary part,
 					// but without it the whole thing diverges
-					pa = ${c.complex.ctr}(
+					pa = complex_ctr(
 						-(temp * temp * ${c.l111 * 1e20} + ${c.l12} * n_b) / 2,
 						-(-V - ${g11} * n_a - ${g12} * n_b));
-					pb = ${c.complex.ctr}(
+					pb = complex_ctr(
 						-(${c.l22} * n_b + ${c.l12} * n_a) / 2,
 						-(-V - ${g22} * n_b - ${g12} * n_a));
 
 					/*
-					pa += ${c.complex.ctr}(
+					pa += complex_ctr(
 						-(${1.5 * c.l111 / c.V / c.V} - ${3.0 * c.l111 / c.V * 1e10} * temp -
 						${0.5 * c.l12 / c.V}) / 2,
 						-(${g11 / c.V} + ${0.5 * g12 / c.V})
 					);
 
-					pb += ${c.complex.ctr}(
+					pb += complex_ctr(
 						-(-${c.l22 / c.V} - ${0.5 * c.l12 / c.V}) / 2,
 						-(${g22 / c.V} + ${0.5 * g12 / c.V})
 					);*/
@@ -495,51 +493,51 @@ class SplitStepEvolution(PairedCalculation):
 			}
 
 			// Propagates state vector in x-space for evolution calculation
-			__kernel void addNoise(__global ${c.complex.name} *a,
-				__global ${c.complex.name} *b, ${c.scalar.name} dt,
-				__global ${c.complex.name} *randoms)
+			EXPORTED_FUNC void addNoise(GLOBAL_MEM COMPLEX *a,
+				GLOBAL_MEM COMPLEX *b, SCALAR dt,
+				GLOBAL_MEM COMPLEX *randoms)
 			{
 				DEFINE_INDEXES;
 
-				${c.complex.name} a0 = a[index];
-				${c.complex.name} b0 = b[index];
+				COMPLEX a0 = a[index];
+				COMPLEX b0 = b[index];
 
-				${c.complex.name} r_a = randoms[index];
-				${c.complex.name} r_b = randoms[index + ${c.cells * c.ensembles}];
+				COMPLEX r_a = randoms[index];
+				COMPLEX r_b = randoms[index + ${c.cells * c.ensembles}];
 
-				${c.scalar.name} n_a = squared_abs(a0);
-				${c.scalar.name} n_b = squared_abs(b0);
+				SCALAR n_a = squared_abs(a0);
+				SCALAR n_b = squared_abs(b0);
 
-				${c.scalar.name} st = sqrt(dt / (${c.scalar.name})${c.V});
+				SCALAR st = sqrt(dt / (SCALAR)${c.V});
 
 				// FIXME: Some magic here. l111 ~ 10^-42, while single precision float
 				// can only handle 10^-38.
-				${c.scalar.name} t_a = n_a * ${1.0e-10};
+				SCALAR t_a = n_a * ${1.0e-10};
 
-				${c.scalar.name} d11 = sqrt(t_a * t_a * (${c.scalar.name})${9.0 * c.l111 * 1e20} +
-					(${c.scalar.name})${c.l12} * n_b) * st;
-				${c.scalar.name} d22 = sqrt((${c.scalar.name})${c.l12} * n_a +
-					(${c.scalar.name})${4.0 * c.l22} * n_b) * st;
+				SCALAR d11 = sqrt(t_a * t_a * (SCALAR)${9.0 * c.l111 * 1e20} +
+					(SCALAR)${c.l12} * n_b) * st;
+				SCALAR d22 = sqrt((SCALAR)${c.l12} * n_a +
+					(SCALAR)${4.0 * c.l22} * n_b) * st;
 
 				a[index] = a0 + complex_mul_scalar(r_a, d11);
 				b[index] = b0 + complex_mul_scalar(r_b, d22);
 			}
 
-			__kernel void projector(__global ${c.complex.name} *a,
-				__global ${c.complex.name} *b, texture projector_mask)
+			EXPORTED_FUNC void projector(GLOBAL_MEM COMPLEX *a,
+				GLOBAL_MEM COMPLEX *b, GLOBAL_MEM SCALAR *projector_mask)
 			{
 				DEFINE_INDEXES;
-				${c.scalar.name} mask_val = GET_SCALAR(projector_mask);
+				SCALAR mask_val = projector_mask[cell_index];
 
-				${c.complex.name} a0 = a[index];
-				${c.complex.name} b0 = b[index];
+				COMPLEX a0 = a[index];
+				COMPLEX b0 = b[index];
 
-				a[index] = a0 * mask_val;
-				b[index] = b0 * mask_val;
+				a[index] = complex_mul_scalar(a0, mask_val);
+				b[index] = complex_mul_scalar(b0, mask_val);
 			}
 		"""
 
-		self._program = self._env.compile(kernels, self._constants,
+		self._program = self._env.compileProgram(kernels, self._constants,
 			COMP_1_minus1=COMP_1_minus1, COMP_2_1=COMP_2_1)
 		self._kpropagate_func = self._program.propagateKSpaceRealTime
 		self._xpropagate_func = self._program.propagateXSpaceTwoComponent
@@ -557,7 +555,7 @@ class SplitStepEvolution(PairedCalculation):
 		self._plan.execute(cloud.b.data, batch=batch)
 
 	def _gpu__kpropagate(self, cloud, dt):
-		self._kpropagate_func(cloud.a.shape,
+		self._kpropagate_func(cloud.a.size,
 			cloud.a.data, cloud.b.data, self._constants.scalar.cast(dt), self._kvectors)
 
 	def _cpu__kpropagate(self, cloud, dt):
@@ -580,7 +578,7 @@ class SplitStepEvolution(PairedCalculation):
 				data2[start:stop,:,:] *= kcoeff
 
 	def _gpu__xpropagate(self, cloud, dt):
-		self._xpropagate_func(cloud.a.shape, cloud.a.data, cloud.b.data,
+		self._xpropagate_func(cloud.a.size, cloud.a.data, cloud.b.data,
 			self._constants.scalar.cast(dt), self._potentials)
 
 	def _cpu__xpropagate(self, cloud, dt):
@@ -835,7 +833,7 @@ class RungeKuttaEvolution(PairedCalculation):
 		self._env = env
 		self._constants = constants
 
-		self._plan = createPlan(env, constants, constants.nvx, constants.nvy, constants.nvz)
+		self._plan = createFFTPlan(env, constants.shape, constants.complex.dtype)
 
 		self._potentials = getPotentials(self._env, self._constants)
 		self._kvectors = getKVectors(self._env, self._constants)
@@ -1022,7 +1020,7 @@ class RK4Evolution(PairedCalculation):
 		self._env = env
 		self._constants = constants
 
-		self._plan = createPlan(env, constants, constants.nvx, constants.nvy, constants.nvz)
+		self._plan = createFFTPlan(env, constants.shape, constants.complex.dtype)
 
 		self._potentials = getPotentials(env, constants)
 		self._kvectors = getKVectors(env, constants)
@@ -1238,7 +1236,7 @@ class SplitStepEvolution2(PairedCalculation):
 		self._env = env
 		self._constants = constants
 
-		self._plan = createPlan(env, constants, constants.shape)
+		self._plan = createFFTPlan(env, constants.shape, constants.complex.dtype)
 
 		# indicates whether current state is in midstep (i.e, right after propagation
 		# in x-space and FFT to k-space)
@@ -1272,17 +1270,17 @@ class SplitStepEvolution2(PairedCalculation):
 			%>
 
 			// Propagates state vector in k-space for evolution calculation (i.e., in real time)
-			__kernel void propagateKSpaceRealTime(__global ${c.complex.name} *a, __global ${c.complex.name} *b,
-				${c.scalar.name} dt, read_only image3d_t kvectors)
+			EXPORTED_FUNC void propagateKSpaceRealTime(GLOBAL_MEM COMPLEX *a, GLOBAL_MEM COMPLEX *b,
+				SCALAR dt, read_only image3d_t kvectors)
 			{
 				DEFINE_INDEXES;
 
-				${c.scalar.name} kvector = get_float_from_image(kvectors, i, j, k % ${c.nvz});
-				${c.scalar.name} prop_angle = kvector * dt / 2;
-				${c.complex.name} prop_coeff = ${c.complex.ctr}(native_cos(prop_angle), native_sin(prop_angle));
+				SCALAR kvector = get_float_from_image(kvectors, i, j, k % ${c.nvz});
+				SCALAR prop_angle = kvector * dt / 2;
+				COMPLEX prop_coeff = complex_ctr(cos(prop_angle), sin(prop_angle));
 
-				${c.complex.name} a0 = a[index];
-				${c.complex.name} b0 = b[index];
+				COMPLEX a0 = a[index];
+				COMPLEX b0 = b[index];
 
 				a[index] = complex_mul(a0, prop_coeff);
 				b[index] = complex_mul(b0, prop_coeff);
@@ -1290,23 +1288,23 @@ class SplitStepEvolution2(PairedCalculation):
 
 			// Propagates state vector in x-space for evolution calculation
 			%for suffix in ('', 'Wigner'):
-			__kernel void propagateXSpaceTwoComponent${suffix}(__global ${c.complex.name} *aa,
-				__global ${c.complex.name} *bb, ${c.scalar.name} dt,
+			EXPORTED_FUNC void propagateXSpaceTwoComponent${suffix}(GLOBAL_MEM COMPLEX *aa,
+				GLOBAL_MEM COMPLEX *bb, SCALAR dt,
 				read_only image3d_t potentials)
 			{
 				DEFINE_INDEXES;
 
-				${c.scalar.name} V = get_float_from_image(potentials, i, j, k % ${c.nvz});
+				SCALAR V = get_float_from_image(potentials, i, j, k % ${c.nvz});
 
-				${c.complex.name} a = aa[index];
-				${c.complex.name} b = bb[index];
+				COMPLEX a = aa[index];
+				COMPLEX b = bb[index];
 
 				//store initial x-space field
-				${c.complex.name} a0 = a;
-				${c.complex.name} b0 = b;
+				COMPLEX a0 = a;
+				COMPLEX b0 = b;
 
-				${c.complex.name} pa, pb, da = ${c.complex.ctr}(0, 0), db = ${c.complex.ctr}(0, 0);
-				${c.scalar.name} n_a, n_b;
+				COMPLEX pa, pb, da = complex_ctr(0, 0), db = complex_ctr(0, 0);
+				SCALAR n_a, n_b;
 
 				//iterate to midpoint solution
 				%for iter in range(c.itmax):
@@ -1315,18 +1313,18 @@ class SplitStepEvolution2(PairedCalculation):
 
 					// TODO: there must be no minus sign before imaginary part,
 					// but without it the whole thing diverges
-					pa = ${c.complex.ctr}(
+					pa = complex_ctr(
 						-(${c.l111} * n_a * n_a + ${c.l12} * n_b) / 2,
 						-(-V - ${c.g11} * n_a - ${c.g12} * n_b));
-					pb = ${c.complex.ctr}(
+					pb = complex_ctr(
 						-(${c.l22} * n_b + ${c.l12} * n_a) / 2,
 						-(-V - ${c.g22} * n_b - ${c.g12} * n_a));
 
 					%if suffix == "Wigner":
-						pa += ${c.complex.ctr}(
+						pa += complex_ctr(
 							(1.5 * n_a - 0.75 / ${c.dV}) * ${c.l111} + ${c.l12} * 0.25,
 							-(${c.g11} + 0.5 * ${c.g12})) / ${c.dV};
-						pb += ${c.complex.ctr}(
+						pb += complex_ctr(
 							${c.l12} * 0.25 + ${c.l22} * 0.5,
 							-(${c.g22} + 0.5 * ${c.g12})) / ${c.dV};
 					%endif
@@ -1347,7 +1345,7 @@ class SplitStepEvolution2(PairedCalculation):
 			%endfor
 		"""
 
-		self._program = self._env.compile(kernels, self._constants)
+		self._program = self._env.compileProgram(kernels, self._constants)
 		self._kpropagate_func = self._program.propagateKSpaceRealTime
 		self._xpropagate_func = self._program.propagateXSpaceTwoComponent
 		self._xpropagate_wigner = self._program.propagateXSpaceTwoComponentWigner

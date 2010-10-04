@@ -1,9 +1,8 @@
 import numpy
 import math
 
-from globals import *
+from helpers import *
 from state import ParticleStatistics, Projection, BlochSphereProjection, Slice
-from reduce import getReduce
 from evolution import Pulse, TerminateEvolution
 
 

@@ -7,6 +7,7 @@ import math
 import numpy
 
 from .globals import *
+from .helpers import *
 
 PSI_FUNC = 0
 WIGNER = 1
@@ -18,14 +19,16 @@ COMP_2_1 = 1
 class Constants:
 	"""Calculation constants, in natural units"""
 
-	def __init__(self, model, double_precision=False):
+	def __init__(self, model, double=False):
 
 		self.hbar = 1.054571628e-34 # Planck constant
 		self.m = model.m
 		a0 = 5.2917720859e-11 # Bohr radius
 
 		model = copy.deepcopy(model)
-		precision = _double_precision if double_precision else _single_precision
+		self.double = double
+
+		precision = double_precision if double else single_precision
 		self.scalar = precision.scalar
 		self.complex = precision.complex
 

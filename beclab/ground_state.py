@@ -6,10 +6,9 @@ import math
 import copy
 import numpy
 
+from .helpers import *
 from .globals import *
-from .fft import createPlan
 from .state import ParticleStatistics, State, TwoComponentCloud
-from .reduce import getReduce
 from .constants import COMP_1_minus1, COMP_2_1
 
 
@@ -33,28 +32,28 @@ class TFGroundState(PairedCalculation):
 	def _gpu__prepare(self):
 		kernel_template = """
 			// fill given buffer with ground state, obtained from Thomas-Fermi approximation
-			__kernel void fillWithTFGroundState(__global ${c.complex.name} *data,
-				texture potentials, ${c.scalar.name} mu_by_hbar,
-				${c.scalar.name} g_by_hbar)
+			EXPORTED_FUNC void fillWithTFGroundState(GLOBAL_MEM COMPLEX *data,
+				GLOBAL_MEM SCALAR *potentials, SCALAR mu_by_hbar,
+				SCALAR g_by_hbar)
 			{
 				DEFINE_INDEXES;
 
-				${c.scalar.name} potential = GET_SCALAR(potentials);
+				SCALAR potential = potentials[cell_index];
 
-				${c.scalar.name} e = mu_by_hbar - potential;
+				SCALAR e = mu_by_hbar - potential;
 				if(e > 0)
-					data[index] = ${c.complex.ctr}(sqrt(e / g_by_hbar), 0);
+					data[index] = complex_ctr(sqrt(e / g_by_hbar), 0);
 				else
-					data[index] = ${c.complex.ctr}(0, 0);
+					data[index] = complex_ctr(0, 0);
 			}
 		"""
 
-		self._program = self._env.compile(kernel_template, self._constants)
+		self._program = self._env.compileProgram(kernel_template, self._constants)
 		self._fillWithTFGroundState = self._program.fillWithTFGroundState
 
 	def _gpu__create(self, data, g, mu):
 		cast = self._constants.scalar.cast
-		self._fillWithTFGroundState(data.shape, data, self._potentials,
+		self._fillWithTFGroundState(data.size, data, self._potentials,
 			cast(mu / self._constants.hbar), cast(g / self._constants.hbar))
 
 	def _cpu__create(self, data, g, mu):
@@ -92,7 +91,7 @@ class GPEGroundState(PairedCalculation):
 		self._constants = constants
 
 		self._tf_gs = TFGroundState(env, constants)
-		self._plan = createPlan(env, constants, constants.shape)
+		self._plan = createFFTPlan(env, constants.shape, constants.complex.dtype)
 		self._statistics = ParticleStatistics(env, constants)
 
 		self._potentials = getPotentials(env, constants)
@@ -105,14 +104,14 @@ class GPEGroundState(PairedCalculation):
 
 	def _gpu__prepare(self):
 		kernel_template = """
-			__kernel void multiply(__global ${c.complex.name} *data, ${c.scalar.name} coeff)
+			EXPORTED_FUNC void multiply(GLOBAL_MEM COMPLEX *data, SCALAR coeff)
 			{
 				DEFINE_INDEXES;
 				data[index] = complex_mul_scalar(data[index], coeff);
 			}
 
-			__kernel void multiply2(__global ${c.complex.name} *data1, __global ${c.complex.name} *data2,
-				${c.scalar.name} c1, ${c.scalar.name} c2)
+			EXPORTED_FUNC void multiply2(GLOBAL_MEM COMPLEX *data1, GLOBAL_MEM COMPLEX *data2,
+				SCALAR c1, SCALAR c2)
 			{
 				DEFINE_INDEXES;
 				data1[index] = complex_mul_scalar(data1[index], c1);
@@ -120,54 +119,54 @@ class GPEGroundState(PairedCalculation):
 			}
 
 			// Propagates state vector in k-space for steady state calculation (i.e., in imaginary time)
-			__kernel void propagateKSpace(__global ${c.complex.name} *data,
-				texture kvectors)
+			EXPORTED_FUNC void propagateKSpace(GLOBAL_MEM COMPLEX *data,
+				GLOBAL_MEM SCALAR *kvectors)
 			{
 				DEFINE_INDEXES;
 
-				${c.scalar.name} kvector = GET_SCALAR(kvectors);
+				SCALAR kvector = kvectors[cell_index];
 
-				${c.scalar.name} prop_coeff = native_exp(kvector *
-					(${c.scalar.name})${-c.dt_steady / 2.0});
-				${c.complex.name} temp = data[index];
+				SCALAR prop_coeff = exp(kvector *
+					(SCALAR)${-c.dt_steady / 2.0});
+				COMPLEX temp = data[index];
 				data[index] = complex_mul_scalar(temp, prop_coeff);
 			}
 
 			// Propagates state vector in k-space for steady state calculation (i.e., in imaginary time)
 			// Version for processing two components at once
-			__kernel void propagateKSpace2(
-				__global ${c.complex.name} *data1, __global ${c.complex.name} *data2,
-				texture kvectors)
+			EXPORTED_FUNC void propagateKSpace2(
+				GLOBAL_MEM COMPLEX *data1, GLOBAL_MEM COMPLEX *data2,
+				GLOBAL_MEM SCALAR *kvectors)
 			{
 				DEFINE_INDEXES;
 
-				${c.scalar.name} kvector = GET_SCALAR(kvectors);
+				SCALAR kvector = kvectors[cell_index];
 
-				${c.scalar.name} prop_coeff = native_exp(kvector *
-					(${c.scalar.name})${-c.dt_steady / 2.0});
+				SCALAR prop_coeff = exp(kvector *
+					(SCALAR)${-c.dt_steady / 2.0});
 
 				data1[index] = complex_mul_scalar(data1[index], prop_coeff);
 				data2[index] = complex_mul_scalar(data2[index], prop_coeff);
 			}
 
 			// Propagates state in x-space for steady state calculation
-			__kernel void propagateXSpace(__global ${c.complex.name} *data,
-				texture potentials, ${c.scalar.name} g_by_hbar)
+			EXPORTED_FUNC void propagateXSpace(GLOBAL_MEM COMPLEX *data,
+				GLOBAL_MEM SCALAR *potentials, SCALAR g_by_hbar)
 			{
 				DEFINE_INDEXES;
 
-				${c.complex.name} a = data[index];
+				COMPLEX a = data[index];
 
 				//store initial x-space field
-				${c.complex.name} a0 = a;
+				COMPLEX a0 = a;
 
-				${c.scalar.name} da;
-				${c.scalar.name} V = GET_SCALAR(potentials);
+				SCALAR da;
+				SCALAR V = potentials[cell_index];
 
 				//iterate to midpoint solution
 				%for iter in range(c.itmax):
 					//calculate midpoint log derivative and exponentiate
-					da = exp((${c.scalar.name})${c.dt_steady / 2.0} *
+					da = exp((SCALAR)${c.dt_steady / 2.0} *
 						(-V - g_by_hbar * squared_abs(a)));
 
 					//propagate to midpoint using log derivative
@@ -179,22 +178,22 @@ class GPEGroundState(PairedCalculation):
 			}
 
 			// Propagates state in x-space for steady state calculation
-			__kernel void propagateXSpace2(__global ${c.complex.name} *a,
-				__global ${c.complex.name} *b, texture potentials,
-				${c.scalar.name} g11_by_hbar, ${c.scalar.name} g22_by_hbar,
-				${c.scalar.name} g12_by_hbar)
+			EXPORTED_FUNC void propagateXSpace2(GLOBAL_MEM COMPLEX *a,
+				GLOBAL_MEM COMPLEX *b, GLOBAL_MEM SCALAR *potentials,
+				SCALAR g11_by_hbar, SCALAR g22_by_hbar,
+				SCALAR g12_by_hbar)
 			{
 				DEFINE_INDEXES;
 
-				${c.complex.name} a_res = a[index];
-				${c.complex.name} b_res = b[index];
+				COMPLEX a_res = a[index];
+				COMPLEX b_res = b[index];
 
 				//store initial x-space field
-				${c.complex.name} a0 = a_res;
-				${c.complex.name} b0 = b_res;
+				COMPLEX a0 = a_res;
+				COMPLEX b0 = b_res;
 
-				${c.scalar.name} da, db, a_density, b_density;
-				${c.scalar.name} V = GET_SCALAR(potentials);
+				SCALAR da, db, a_density, b_density;
+				SCALAR V = potentials[cell_index];
 
 				//iterate to midpoint solution
 				%for iter in range(c.itmax):
@@ -202,9 +201,9 @@ class GPEGroundState(PairedCalculation):
 					a_density = squared_abs(a_res);
 					b_density = squared_abs(b_res);
 
-					da = exp((${c.scalar.name})${c.dt_steady / 2.0} *
+					da = exp((SCALAR)${c.dt_steady / 2.0} *
 						(-V - g11_by_hbar * a_density - g12_by_hbar * b_density));
-					db = exp((${c.scalar.name})${c.dt_steady / 2.0} *
+					db = exp((SCALAR)${c.dt_steady / 2.0} *
 						(-V - g12_by_hbar * a_density - g22_by_hbar * b_density));
 
 					//propagate to midpoint using log derivative
@@ -218,7 +217,7 @@ class GPEGroundState(PairedCalculation):
 			}
 		"""
 
-		self._program = self._env.compile(kernel_template, self._constants)
+		self._program = self._env.compileProgram(kernel_template, self._constants)
 
 		self._propagateKSpace = self._program.propagateKSpace
 		self._propagateKSpace2 = self._program.propagateKSpace2
@@ -235,9 +234,9 @@ class GPEGroundState(PairedCalculation):
 
 	def _gpu__kpropagate(self, state1, state2):
 		if state2 is None:
-			self._propagateKSpace(state1.shape, state1.data, self._kvectors)
+			self._propagateKSpace(state1.size, state1.data, self._kvectors)
 		else:
-			self._propagateKSpace2(state1.shape, state1.data, state2.data, self._kvectors)
+			self._propagateKSpace2(state1.size, state1.data, state2.data, self._kvectors)
 
 	def _cpu__xpropagate(self, state1, state2):
 		p = self._potentials
@@ -283,7 +282,7 @@ class GPEGroundState(PairedCalculation):
 		cast = self._constants.scalar.cast
 		if state2 is None:
 			g_by_hbar = self._constants.g_by_hbar[(state1.comp, state1.comp)]
-			self._propagateXSpace(state1.shape, state1.data, self._potentials,
+			self._propagateXSpace(state1.size, state1.data, self._potentials,
 				cast(g_by_hbar))
 		else:
 			comp1 = state1.comp
@@ -293,7 +292,7 @@ class GPEGroundState(PairedCalculation):
 			g12_by_hbar = g_by_hbar[(comp1, comp2)]
 			g22_by_hbar = g_by_hbar[(comp2, comp2)]
 
-			self._propagateXSpace2(state1.shape, state1.data, state2.data,
+			self._propagateXSpace2(state1.size, state1.data, state2.data,
 				self._potentials, cast(g11_by_hbar), cast(g22_by_hbar), cast(g12_by_hbar))
 
 	def _cpu__renormalize(self, state1, state2, coeff):
@@ -307,10 +306,10 @@ class GPEGroundState(PairedCalculation):
 	def _gpu__renormalize(self, state1, state2, coeff):
 		cast = self._constants.scalar.cast
 		if state2 is None:
-			self._multiply(state1.shape, state1.data, cast(coeff))
+			self._multiply(state1.size, state1.data, cast(coeff))
 		else:
 			c1, c2 = coeff
-			self._multiply2(state1.shape, state1.data, state2.data, cast(c1), cast(c2))
+			self._multiply2(state1.size, state1.data, state2.data, cast(c1), cast(c2))
 
 	def _toXSpace(self, state1, state2):
 		self._plan.execute(state1.data)

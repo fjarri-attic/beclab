@@ -4,9 +4,7 @@ Different meters for particle states (measuring particles number, energy and so 
 
 import math
 
-from .globals import *
-from .fft import createPlan
-from .reduce import getReduce
+from .helpers import *
 from .constants import *
 
 
@@ -23,7 +21,7 @@ class State(PairedCalculation):
 		self.comp = comp
 
 		if prepare:
-			self._plan = createPlan(env, constants, constants.shape)
+			self._plan = createFFTPlan(env, constants.shape, constants.complex.dtype)
 			self._prepare()
 			self._initializeMemory()
 
@@ -47,50 +45,51 @@ class State(PairedCalculation):
 				from math import sqrt
 			%>
 
-			__kernel void fillWithZeroes(__global ${c.complex.name} *res)
+			EXPORTED_FUNC void fillWithZeroes(GLOBAL_MEM COMPLEX *res)
 			{
 				DEFINE_INDEXES;
-				res[index] = ${c.complex.ctr}(0, 0);
+				res[index] = complex_ctr(0, 0);
 			}
 
-			__kernel void fillWithOnes(__global ${c.complex.name} *res)
+			EXPORTED_FUNC void fillWithOnes(GLOBAL_MEM COMPLEX *res)
 			{
 				DEFINE_INDEXES;
-				res[index] = ${c.complex.ctr}(1, 0);
+				res[index] = complex_ctr(1, 0);
 			}
 
 			// Initialize ensembles with steady state
-			__kernel void initializeEnsembles(__global ${c.complex.name} *wigner_func,
-				__global ${c.complex.name} *psi_func)
+			EXPORTED_FUNC void initializeEnsembles(GLOBAL_MEM COMPLEX *wigner_func,
+				GLOBAL_MEM COMPLEX *psi_func)
 			{
 				DEFINE_INDEXES;
-				${c.complex.name} psi_val = psi_func[index % ${c.cells}];
+				COMPLEX psi_val = psi_func[index % ${c.cells}];
 				wigner_func[index] = psi_val;
 			}
 
-			__kernel void fillEnsembles(__global ${c.complex.name} *new_data,
-				__global ${c.complex.name} *data)
+			EXPORTED_FUNC void fillEnsembles(GLOBAL_MEM COMPLEX *new_data,
+				GLOBAL_MEM COMPLEX *data)
 			{
 				DEFINE_INDEXES;
-				${c.complex.name} val = data[index];
+				COMPLEX val = data[index];
 
 				for(int i = 0; i < ${c.ensembles}; i++)
 					new_data[index + i * ${c.cells}] = val;
 			}
 
-			__kernel void addPlaneWaves(__global ${c.complex.name} *kdata,
-				__global ${c.complex.name} *randoms,
-				texture projector_mask)
+			EXPORTED_FUNC void addPlaneWaves(GLOBAL_MEM COMPLEX *kdata,
+				GLOBAL_MEM COMPLEX *randoms,
+				GLOBAL_MEM SCALAR *projector_mask)
 			{
 				DEFINE_INDEXES;
-				${c.scalar.name} prj = GET_SCALAR(projector_mask);
-				${c.scalar.name} coeff = ${1.0 / sqrt(c.V)};
-				kdata[index] += complex_mul_scalar(randoms[index], prj * coeff);
-				kdata[index] *= prj; // remove high-energy components
+				SCALAR prj = projector_mask[cell_index];
+				SCALAR coeff = ${1.0 / sqrt(c.V)};
+
+				// add noise and remove high-energy components
+				kdata[index] = kdata[index] + complex_mul_scalar(randoms[index], prj * coeff);
 			}
 		"""
 
-		self._program = self._env.compile(kernel_template, self._constants)
+		self._program = self._env.compileProgram(kernel_template, self._constants)
 		self._fillWithZeroes = self._program.fillWithZeroes
 		self._fillWithOnes = self._program.fillWithOnes
 		self._initializeEnsembles = self._program.initializeEnsembles
@@ -99,10 +98,10 @@ class State(PairedCalculation):
 
 	def _gpu__initializeMemory(self):
 		self.data = self._env.allocate(self.shape, self.dtype)
-		self._fillWithZeroes(self.shape, self.data)
+		self._fillWithZeroes(self.size, self.data)
 
 	def _gpu_fillWithOnes(self):
-		self._fillWithOnes(self.shape, self.data)
+		self._fillWithOnes(self.size, self.data)
 
 	def _gpu__addVacuumParticles(self, randoms, mask):
 
@@ -113,7 +112,7 @@ class State(PairedCalculation):
 
 		kdata = self._env.allocate(self._constants.ens_shape, dtype=dtype)
 		self._plan.execute(self.data, kdata, inverse=True, batch=batch)
-		self._addPlaneWaves(self._constants.ens_shape, kdata, randoms, mask)
+		self._addPlaneWaves(kdata.size, kdata, randoms, mask)
 		self._plan.execute(kdata, self.data, batch=batch)
 
 	def _cpu__addVacuumParticles(self, randoms, mask):
@@ -225,8 +224,9 @@ class ParticleStatistics(PairedCalculation):
 		self._env = env
 		self._constants = constants
 
-		self._plan = createPlan(env, constants, constants.shape)
-		self._reduce = getReduce(env, constants)
+		self._plan = createFFTPlan(env, constants.shape, constants.complex.dtype)
+		self._reduce = createReduce(env, constants.scalar.dtype)
+		self._creduce = createReduce(env, constants.complex.dtype)
 
 		self._potentials = getPotentials(env, constants)
 		self._kvectors = getKVectors(env, constants)
@@ -319,70 +319,70 @@ class ParticleStatistics(PairedCalculation):
 		N2 = self.countParticles(state2)
 
 		coeff = self._constants.dV / ensembles
-		interaction = abs(self._reduce(state1.data * state2.data.conj())) * coeff
+		interaction = abs(self._creduce(state1.data * state2.data.conj())) * coeff
 
 		return 2 * interaction / (N1 + N2)
 
 	def _gpu__prepare(self):
 		kernel_template = """
-			__kernel void calculateDensity(__global ${c.scalar.name} *res,
-				__global ${c.complex.name} *state, int ensembles)
+			EXPORTED_FUNC void calculateDensity(GLOBAL_MEM SCALAR *res,
+				GLOBAL_MEM COMPLEX *state, int ensembles)
 			{
 				DEFINE_INDEXES;
 				res[index] = squared_abs(state[index]) / ensembles;
 			}
 
-			__kernel void calculateInteraction(__global ${c.complex.name} *interaction,
-				__global ${c.complex.name} *a_state, __global ${c.complex.name} *b_state)
+			EXPORTED_FUNC void calculateInteraction(GLOBAL_MEM COMPLEX *interaction,
+				GLOBAL_MEM COMPLEX *a_state, GLOBAL_MEM COMPLEX *b_state)
 			{
 				DEFINE_INDEXES;
 				interaction[index] = complex_mul(a_state[index], conj(b_state[index]));
 			}
 
 			%for name, coeff in (('Energy', 2), ('Mu', 1)):
-				__kernel void calculate${name}(__global ${c.scalar.name} *res,
-					__global ${c.complex.name} *xstate, __global ${c.complex.name} *kstate,
-					texture potentials, texture kvectors,
-					${c.scalar.name} g_by_hbar)
+				EXPORTED_FUNC void calculate${name}(GLOBAL_MEM SCALAR *res,
+					GLOBAL_MEM COMPLEX *xstate, GLOBAL_MEM COMPLEX *kstate,
+					GLOBAL_MEM SCALAR *potentials, GLOBAL_MEM SCALAR *kvectors,
+					SCALAR g_by_hbar)
 				{
 					DEFINE_INDEXES;
 
-					${c.scalar.name} potential = GET_SCALAR(potentials);
-					${c.scalar.name} kvector = GET_SCALAR(kvectors);
+					SCALAR potential = potentials[cell_index];
+					SCALAR kvector = kvectors[cell_index];
 
-					${c.scalar.name} n = squared_abs(xstate[index]);
-					${c.complex.name} differential =
-						complex_mul(complex_mul(xstate[index], kstate[index]), kvector);
-					${c.scalar.name} nonlinear = n * (potential + g_by_hbar * n / ${coeff});
+					SCALAR n = squared_abs(xstate[index]);
+					COMPLEX differential =
+						complex_mul_scalar(complex_mul(xstate[index], kstate[index]), kvector);
+					SCALAR nonlinear = n * (potential + g_by_hbar * n / ${coeff});
 
 					// differential.y will be equal to 0, because \psi * D \psi is a real number
 					res[index] = nonlinear + differential.x;
 				}
 
-				__kernel void calculate${name}2(__global ${c.scalar.name} *res,
-					__global ${c.complex.name} *xstate1, __global ${c.complex.name} *kstate1,
-					__global ${c.complex.name} *xstate2, __global ${c.complex.name} *kstate2,
-					texture potentials, texture kvectors,
-					${c.scalar.name} g11_by_hbar, ${c.scalar.name} g22_by_hbar,
-					${c.scalar.name} g12_by_hbar)
+				EXPORTED_FUNC void calculate${name}2(GLOBAL_MEM SCALAR *res,
+					GLOBAL_MEM COMPLEX *xstate1, GLOBAL_MEM COMPLEX *kstate1,
+					GLOBAL_MEM COMPLEX *xstate2, GLOBAL_MEM COMPLEX *kstate2,
+					GLOBAL_MEM SCALAR *potentials, GLOBAL_MEM SCALAR *kvectors,
+					SCALAR g11_by_hbar, SCALAR g22_by_hbar,
+					SCALAR g12_by_hbar)
 				{
 					DEFINE_INDEXES;
 
-					${c.scalar.name} potential = GET_SCALAR(potentials);
-					${c.scalar.name} kvector = GET_SCALAR(kvectors);
+					SCALAR potential = potentials[cell_index];
+					SCALAR kvector = kvectors[cell_index];
 
-					${c.scalar.name} n1 = squared_abs(xstate1[index]);
-					${c.scalar.name} n2 = squared_abs(xstate2[index]);
+					SCALAR n1 = squared_abs(xstate1[index]);
+					SCALAR n2 = squared_abs(xstate2[index]);
 
-					${c.complex.name} differential1 =
-						complex_mul(complex_mul(xstate1[index], kstate1[index]), kvector);
-					${c.complex.name} differential2 =
-						complex_mul(complex_mul(xstate2[index], kstate2[index]), kvector);
+					COMPLEX differential1 =
+						complex_mul_scalar(complex_mul(xstate1[index], kstate1[index]), kvector);
+					COMPLEX differential2 =
+						complex_mul_scalar(complex_mul(xstate2[index], kstate2[index]), kvector);
 
-					${c.scalar.name} nonlinear1 = n1 * (potential +
+					SCALAR nonlinear1 = n1 * (potential +
 						g11_by_hbar * n1 / ${coeff} +
 						g12_by_hbar * n2 / ${coeff});
-					${c.scalar.name} nonlinear2 = n2 * (potential +
+					SCALAR nonlinear2 = n2 * (potential +
 						g12_by_hbar * n1 / ${coeff} +
 						g22_by_hbar * n2 / ${coeff});
 
@@ -393,7 +393,7 @@ class ParticleStatistics(PairedCalculation):
 			%endfor
 		"""
 
-		self._program = self._env.compile(kernel_template, self._constants)
+		self._program = self._env.compileProgram(kernel_template, self._constants)
 
 		self._calculateMu = self._program.calculateMu
 		self._calculateEnergy = self._program.calculateEnergy
@@ -409,9 +409,10 @@ class ParticleStatistics(PairedCalculation):
 
 		# This function does not return "real" density for Wigner case.
 		# See comment for CPU version for details.
-		self._calculateDensity(state.shape, density, state.data, numpy.int32(ensembles))
+		self._calculateDensity(state.size, density, state.data, numpy.int32(ensembles))
 		density = self._reduce.sparse(density, final_length=self._constants.cells)
-		return density.reshape(self._constants.shape)
+		density.shape = self._constants.shape
+		return density
 
 	def _gpu__countState(self, state, coeff, N):
 		if coeff == 1:
@@ -422,7 +423,7 @@ class ParticleStatistics(PairedCalculation):
 		kstate = self._env.allocate(state.shape, dtype=state.dtype)
 		res = self._env.allocate(state.shape, dtype=self._constants.scalar.dtype)
 		self._plan.execute(state.data, kstate, inverse=True, batch=state.size / self._constants.cells)
-		func(state.shape, res, state.data, kstate, self._potentials, self._kvectors,
+		func(state.size, res, state.data, kstate, self._potentials, self._kvectors,
 			self._constants.scalar.cast(self._constants.g_by_hbar[(state.comp, state.comp)]))
 		return self._reduce(res) / (state.size / self._constants.cells) * \
 			self._constants.dV / N * self._constants.hbar
@@ -446,7 +447,7 @@ class ParticleStatistics(PairedCalculation):
 		else:
 			func = self._calculateEnergy2
 
-		func(state1.shape, res, state1.data, kstate1,
+		func(state1.size, res, state1.data, kstate1,
 			state2.data, kstate2, self._potentials, self._kvectors,
 				g11_by_hbar, g22_by_hbar, g12_by_hbar)
 
@@ -455,19 +456,19 @@ class ParticleStatistics(PairedCalculation):
 
 	def _gpu_getVisibility(self, state1, state2):
 		interaction = self._env.allocate(state1.shape, self._constants.complex.dtype)
-		self._calculateInteraction(state1.shape, interaction, state1.data, state2.data)
+		self._calculateInteraction(state1.size, interaction, state1.data, state2.data)
 
 		N1 = self.countParticles(state1)
 		N2 = self.countParticles(state2)
 
 		coeff = self._constants.dV / (state1.size / self._constants.cells)
-		interaction = self._reduce(interaction) * coeff
+		interaction = self._creduce(interaction) * coeff
 
 		return 2 * abs(interaction) / (N1 + N2)
 
 	def _gpu__getEnsembleData(self, state1, state2):
 		interaction = self._env.allocate(state1.shape, self._constants.complex.dtype)
-		self._calculateInteraction(state1.shape, interaction, state1.data, state2.data)
+		self._calculateInteraction(state1.size, interaction, state1.data, state2.data)
 
 		n1 = self._env.allocate(state1.shape, self._constants.scalar.dtype)
 		n2 = self._env.allocate(state2.shape, self._constants.scalar.dtype)
@@ -478,12 +479,14 @@ class ParticleStatistics(PairedCalculation):
 		return interaction, n1, n2
 
 	def _cpu__getEnsembleData(self, state1, state2):
-		return state1.data * state2.data.conj(), numpy.abs(state1.data) ** 2, numpy.abs(state2.data) ** 2
+		return state1.data * state2.data.conj(), numpy.abs(state1.data) ** 2, \
+			numpy.abs(state2.data) ** 2
 
 	def getPhaseNoise(self, state1, state2):
 		ensembles = state1.size / self._constants.cells
 		get = self._env.toCPU
 		reduce = self._reduce
+		creduce = self._creduce
 		dV = self._constants.dV
 
 		i, n1, n2 = self._getEnsembleData(state1, state2)
@@ -495,7 +498,7 @@ class ParticleStatistics(PairedCalculation):
 			n1 -= self._projector_modes / 2
 			n2 -= self._projector_modes / 2
 
-		i = get(reduce(i, ensembles))
+		i = get(creduce(i, ensembles))
 
 		Pperp = 2.0 * i / (n1 + n2)
 		Pperp /= numpy.abs(Pperp)
@@ -635,7 +638,7 @@ class Projection:
 	def __init__(self, env, constants):
 		self._env = env
 		self._constants = constants
-		self._reduce = getReduce(env, constants)
+		self._reduce = createReduce(env, constants.scalar.dtype)
 		self._stats = ParticleStatistics(env, constants)
 
 	def getXY(self, state):
