@@ -6,8 +6,8 @@ from beclab import *
 
 def testVisibility(gpu, matrix_pulses):
 	constants = Constants(Model(N=30000, nvx=16, nvy=16, nvz=128),
-		double_precision=False if gpu else True)
-	env = Environment(gpu=gpu)
+		double=False)
+	env = envs.cuda() if gpu else envs.cl()
 	evolution = SplitStepEvolution(env, constants)
 
 	gs = GPEGroundState(env, constants)
@@ -24,7 +24,7 @@ def testVisibility(gpu, matrix_pulses):
 	t2 = time.time()
 	print "Time spent: " + str(t2 - t1) + " s"
 
-	name = ("gpu" if gpu else "cpu") + ", " + ("ideal" if matrix_pulses else "nonideal") + " pulses"
+	name = str(env) + ", " + ("ideal" if matrix_pulses else "nonideal") + " pulses"
 
 	times, vis = v.getData()
 	vis = XYData(name, times, vis, ymin=0, ymax=1, xname="Time, s", yname="Visibility")
@@ -33,6 +33,7 @@ def testVisibility(gpu, matrix_pulses):
 	particles = XYData(name, times, (N1 - N2) / N,
 		ymin=-1, ymax=1, xname="Time, s", yname="Population ratio")
 
+	env.release()
 	return particles, vis
 
 visibility_data = []
