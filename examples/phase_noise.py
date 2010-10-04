@@ -7,8 +7,8 @@ from beclab.state import ParticleStatistics
 
 def testPhaseNoise(gpu):
 	constants = Constants(Model(N=40000, detuning=-41, nvx=16, nvy=16, nvz=128,
-		ensembles=4, e_cut=1e6), double_precision=(False if gpu else True))
-	env = Environment(gpu=gpu)
+		ensembles=4, e_cut=1e6), double=(False if gpu else True))
+	env = envs.cuda() if gpu else envs.cpu()
 	evolution = SplitStepEvolution(env, constants)
 	pulse = Pulse(env, constants)
 	a = VisibilityCollector(env, constants, verbose=True)
@@ -19,9 +19,9 @@ def testPhaseNoise(gpu):
 	gs = GPEGroundState(env, constants)
 
 	cloud = gs.createCloud()
-	cloud.createEnsembles()
+	cloud.toWigner()
 
-	pulse.apply(cloud, 0.5 * math.pi, matrix=True, phi_noise=1e-6)
+	pulse.apply(cloud, 0.5 * math.pi, matrix=True)
 
 	t1 = time.time()
 	evolution.run(cloud, 0.05, callbacks=[n], callback_dt=0.01, noise=False)
@@ -42,4 +42,6 @@ def testPhaseNoise(gpu):
 	XYPlot([XYData("test", times * 1000, noise, ymin=0, xname="Time, ms")]).save(
 		'phase_noise_' + str(env) + '.pdf')
 
-testPhaseNoise(False)
+	env.release()
+
+testPhaseNoise(True)
