@@ -75,15 +75,19 @@ class ParticleNumberCondition:
 
 class PhaseNoiseCollector:
 
-	def __init__(self, env, constants):
+	def __init__(self, env, constants, verbose=False):
 		self._stats = ParticleStatistics(env, constants)
 		self._constants = constants
 		self._times = []
 		self._var = []
+		self._verbose = verbose
 
 	def __call__(self, t, cloud):
 		noise = self._stats.getPhaseNoise(cloud.a, cloud.b)
-		print noise
+
+		if self._verbose:
+			print "Phase noise: " + repr((t, noise))
+
 		self._times.append(t)
 		self._var.append(noise)
 

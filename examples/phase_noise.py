@@ -14,7 +14,7 @@ def testPhaseNoise(gpu):
 	a = VisibilityCollector(env, constants, verbose=True)
 	b = ParticleNumberCollector(env, constants, verbose=True, pulse=pulse, matrix_pulse=True)
 	p = ParticleStatistics(env, constants)
-	n = PhaseNoiseCollector(env, constants)
+	n = PhaseNoiseCollector(env, constants, verbose=True)
 
 	gs = GPEGroundState(env, constants)
 
