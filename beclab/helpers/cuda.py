@@ -59,20 +59,20 @@ class _KernelWrapper:
 
 class _ProgramWrapper:
 
-	def __init__(self, env, source, double=False, **kwds):
+	def __init__(self, env, source, double=False, prelude="", **kwds):
 		# program and kernels are tied to queue, which is not exactly logical,
 		# but works for our purposes and makes code simpler (because program uses
 		# single queue for all calculations anyway)
 		self._env = env
-		self._compile(source, double=double, **kwds)
+		self._compile(source, double=double, prelude=prelude, **kwds)
 
-	def _compile(self, source, double=False, **kwds):
+	def _compile(self, source, double=False, prelude="", **kwds):
 		"""
 		Adds helper functions and defines to given source, renders it,
 		compiles and saves OpenCL program object.
 		"""
 		kernel_src = Template(source).render(**kwds)
-		src = _header.render(cuda=True, double=double, kernels=kernel_src)
+		src = _header.render(cuda=True, double=double, kernels=kernel_src, prelude=prelude)
 		self._program = SourceModule(src, no_extern_c=True, options=['-use_fast_math'])
 
 	def __getattr__(self, name):
@@ -141,5 +141,5 @@ class CUDAEnvironment:
 	def release(self):
 		self.context.pop()
 
-	def compile(self, source, double=False, **kwds):
-		return _ProgramWrapper(self, source, double=double, **kwds)
+	def compile(self, source, double=False, prelude="", **kwds):
+		return _ProgramWrapper(self, source, double=double, prelude=prelude, **kwds)

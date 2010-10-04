@@ -56,20 +56,20 @@ class _KernelWrapper:
 
 class _ProgramWrapper:
 
-	def __init__(self, context, queue, source, double=False, **kwds):
+	def __init__(self, context, queue, source, double=False, prelude="", **kwds):
 		# program and kernels are tied to queue, which is not exactly logical,
 		# but works for our purposes and makes code simpler (because program uses
 		# single queue for all calculations anyway)
 		self.queue = queue
-		self._compile(context, source, double=double, **kwds)
+		self._compile(context, source, double=double, prelude=prelude, **kwds)
 
-	def _compile(self, context, source, double=False, **kwds):
+	def _compile(self, context, source, double=False, prelude="", **kwds):
 		"""
 		Adds helper functions and defines to given source, renders it,
 		compiles and saves OpenCL program object.
 		"""
 		kernel_src = Template(source).render(**kwds)
-		src = _header.render(cuda=False, double=double, kernels=kernel_src)
+		src = _header.render(cuda=False, double=double, kernels=kernel_src, prelude=prelude)
 		self._program = cl.Program(context, src).build(options='-cl-mad-enable')
 
 	def __getattr__(self, name):
@@ -132,5 +132,6 @@ class CLEnvironment:
 	def release(self):
 		pass
 
-	def compile(self, source, double=False, **kwds):
-		return _ProgramWrapper(self.context, self.queue, source, double=double, **kwds)
+	def compile(self, source, double=False, prelude="", **kwds):
+		return _ProgramWrapper(self.context, self.queue, source, double=double,
+			prelude=prelude, **kwds)
