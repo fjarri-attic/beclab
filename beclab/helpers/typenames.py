@@ -5,7 +5,7 @@ class _Type:
 		self.name = name
 		self.dtype = dtype
 		self.nbytes = dtype().nbytes
-		self.cast = numpy.cast[dtype]
+		self.cast = dtype # numpy.cast[dtype]
 
 	def __getstate__(self):
 		d = dict(self.__dict__)
