@@ -9,6 +9,8 @@ import numpy
 import os
 from mako.template import Template
 
+from .misc import log2
+
 _dir, _file = os.path.split(os.path.abspath(__file__))
 _header = Template(filename=os.path.join(_dir, 'header.mako'))
 
@@ -20,11 +22,12 @@ class _KernelWrapper:
 		self._stream = env.stream
 		self._kernel = kernel
 
-		max_block_size = self._env.max_block_size
+		self._max_block_size = 2 ** log2(min(self._env.max_block_size,
+			self._env.max_registers / self._kernel.num_regs))
 
-		if block_size is None:
-			block_size = min(size, max_block_size)
 	def __call__(self, size, *args):
+		max_block_size = self._max_block_size
+		block_size = min(size, max_block_size)
 
 		if size <= block_size:
 			block = (size, 1, 1)
@@ -98,6 +101,8 @@ class CUDAEnvironment:
 
 		self.max_grid_size_x = self.device.get_attribute(cuda.device_attribute.MAX_GRID_DIM_X)
 		self.max_grid_size_y = self.device.get_attribute(cuda.device_attribute.MAX_GRID_DIM_Y)
+
+		self.max_registers = self.device.get_attribute(cuda.device_attribute.MAX_REGISTERS_PER_BLOCK)
 
 		self.warp_size = self.device.get_attribute(cuda.device_attribute.WARP_SIZE)
 
