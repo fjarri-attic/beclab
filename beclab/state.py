@@ -502,8 +502,8 @@ class ParticleStatistics(PairedCalculation):
 
 		Pperp = 2.0 * i / (n1 + n2)
 		Pperp /= numpy.abs(Pperp)
-		#Pperp = numpy.angle(Pperp)
-		return numpy.sqrt(numpy.var(Pperp.imag))
+
+		return ((Pperp * (Pperp.mean()).conj()).imag).std()
 
 	def countParticles(self, state):
 		N = self._reduce(self.getAverageDensity(state)) * self._constants.dV
