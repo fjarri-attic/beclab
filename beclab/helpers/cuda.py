@@ -92,7 +92,7 @@ class CUDAEnvironment:
 		#self.device = self.context.get_device()
 
 		# FIXME: using second card for testing purposes
-		self.device = cuda.Device(1)
+		self.device = cuda.Device(0)
 		self.context = self.device.make_context()
 
 		self.stream = cuda.Stream()
