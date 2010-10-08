@@ -96,6 +96,28 @@ class PhaseNoiseCollector:
 		return numpy.array(self._times), numpy.array(self._var)
 
 
+class PzNoiseCollector:
+
+	def __init__(self, env, constants, verbose=False):
+		self._stats = ParticleStatistics(env, constants)
+		self._constants = constants
+		self._times = []
+		self._var = []
+		self._verbose = verbose
+
+	def __call__(self, t, cloud):
+		noise = self._stats.getPzNoise(cloud.a, cloud.b)
+
+		if self._verbose:
+			print "Pz noise: " + repr((t, noise))
+
+		self._times.append(t)
+		self._var.append(noise)
+
+	def getData(self):
+		return numpy.array(self._times), numpy.array(self._var)
+
+
 class VisibilityCollector:
 
 	def __init__(self, env, constants, verbose=False):

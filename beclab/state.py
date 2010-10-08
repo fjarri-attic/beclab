@@ -505,6 +505,29 @@ class ParticleStatistics(PairedCalculation):
 
 		return ((Pperp * (Pperp.mean()).conj()).imag).std()
 
+	def getPzNoise(self, state1, state2):
+		ensembles = state1.size / self._constants.cells
+		get = self._env.fromDevice
+		reduce = self._reduce
+		creduce = self._creduce
+		dV = self._constants.dV
+
+		# FIXME: maybe it will be better to rearrange functions,
+		# in order to avoid unused return values
+		_, n1, n2 = self._getEnsembleData(state1, state2)
+
+		n1 = get(reduce(n1, ensembles)) * dV
+		n2 = get(reduce(n2, ensembles)) * dV
+
+		# FIXME: this has to be done in centralized manner somewhere
+		if state1.type == WIGNER:
+			n1 -= self._projector_modes / 2
+			n2 -= self._projector_modes / 2
+
+		Pz = (n1 - n2) / (n1 + n2)
+
+		return Pz.std()
+
 	def countParticles(self, state):
 		N = self._reduce(self.getAverageDensity(state)) * self._constants.dV
 		if state.type == WIGNER:

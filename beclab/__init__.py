@@ -44,7 +44,8 @@ from .ground_state import GPEGroundState
 from .evolution import SplitStepEvolution, SplitStepEvolution2, RungeKuttaEvolution, RK4Evolution
 from .pulse import Pulse
 from .collectors import AxialProjectionCollector, ParticleNumberCollector, \
-	SurfaceProjectionCollector, VisibilityCollector, SliceCollector, PhaseNoiseCollector
+	SurfaceProjectionCollector, VisibilityCollector, SliceCollector, \
+	PhaseNoiseCollector, PzNoiseCollector
 
 # FIXME: temporary, just to run simulations on VPAC
 try:
