@@ -2,8 +2,9 @@ import numpy
 import math
 
 from helpers import *
-from state import ParticleStatistics, Projection, BlochSphereProjection, Slice
-from evolution import Pulse, TerminateEvolution
+from .state import ParticleStatistics, Projection, BlochSphereProjection, Slice
+from .evolution import TerminateEvolution
+from .pulse import Pulse
 
 
 class ParticleNumberCollector:

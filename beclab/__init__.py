@@ -41,7 +41,8 @@ envs = _Envs()
 from .model import Model
 from .constants import Constants, COMP_1_minus1, COMP_2_1
 from .ground_state import GPEGroundState
-from .evolution import Pulse, SplitStepEvolution, SplitStepEvolution2, RungeKuttaEvolution, RK4Evolution
+from .evolution import SplitStepEvolution, SplitStepEvolution2, RungeKuttaEvolution, RK4Evolution
+from .pulse import Pulse
 from .collectors import AxialProjectionCollector, ParticleNumberCollector, \
 	SurfaceProjectionCollector, VisibilityCollector, SliceCollector, PhaseNoiseCollector
 
