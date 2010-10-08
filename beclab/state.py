@@ -497,7 +497,7 @@ class ParticleStatistics(PairedCalculation):
 			n1 -= self._projector_modes / 2
 			n2 -= self._projector_modes / 2
 
-		i = get(creduce(i, ensembles))
+		i = get(creduce(i, ensembles)) * dV
 
 		Pperp = 2.0 * i / (n1 + n2)
 		Pperp /= numpy.abs(Pperp)
