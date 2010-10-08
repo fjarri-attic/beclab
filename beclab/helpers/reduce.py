@@ -169,14 +169,7 @@ class CPUReduce:
 		if final_length == 1:
 			return numpy.sum(array)
 
-		flat_array = array.ravel()
-		res = numpy.empty(final_length, dtype=array.dtype)
-		reduce_power = array.size / final_length
-
-		for i in xrange(final_length):
-			res[i] = numpy.sum(flat_array[i*reduce_power:(i+1)*reduce_power])
-
-		return res
+		return array.reshape(final_length, array.size / final_length).sum(1)
 
 	def sparse(self, array, final_length=1):
 
