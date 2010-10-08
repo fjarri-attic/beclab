@@ -241,18 +241,17 @@ class ParticleStatistics(PairedCalculation):
 	def _cpu_getAverageDensity(self, state):
 		normalized_values = numpy.abs(state.data) ** 2
 
-		if state.type == WIGNER:
-			# What we are returning here is not in fact the measurable density.
-			# In order to return density, we would have to calculate integral
-			# of \delta_P for each cell, which is not that simple in general case
-			# (although, it is simple for plane wave basis).
-			# So, we are just returning reduced data for countParticles(),
-			# which will subtract vacuum particles (which is a lot simpler)
+		ensembles = state.size / self._constants.cells
 
-			density = self._reduce.sparse(normalized_values, self._constants.cells)
-			return density.reshape(self._constants.shape) / self._constants.ensembles
-		else:
-			return normalized_values
+		# What we are returning here is not in fact the measurable density
+		# (in case of Wigner representation).
+		# In order to return density, we would have to calculate integral
+		# of \delta_P for each cell, which is not that simple in general case
+		# (although, it is simple for plane wave basis).
+		# So, we are just returning reduced data for countParticles(),
+		# which will subtract vacuum particles (which is a lot simpler)
+		density = self._reduce.sparse(normalized_values, self._constants.cells)
+		return density.reshape(self._constants.shape) / ensembles
 
 	def _cpu__countState(self, state, coeff, N):
 		kdata = self._env.allocate(state.shape, dtype=state.dtype)
