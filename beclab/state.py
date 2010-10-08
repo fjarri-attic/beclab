@@ -493,6 +493,7 @@ class ParticleStatistics(PairedCalculation):
 		n1 = get(reduce(n1, ensembles)) * dV
 		n2 = get(reduce(n2, ensembles)) * dV
 
+		# FIXME: this has to be done in centralized manner somewhere
 		if state1.type == WIGNER:
 			n1 -= self._projector_modes / 2
 			n2 -= self._projector_modes / 2
@@ -523,7 +524,6 @@ class ParticleStatistics(PairedCalculation):
 			N = self.countParticles(state)
 
 		return self._countState(state, coeff, N)
-
 
 	def countEnergy(self, state, N=None):
 		return self._countStateGeneric(state, 2, N)
