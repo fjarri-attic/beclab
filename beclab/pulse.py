@@ -1,5 +1,6 @@
 from .helpers import *
 from .globals import *
+from .constants import PSI_FUNC, WIGNER, COMP_1_minus1, COMP_2_1
 
 
 class Pulse(PairedCalculation):
@@ -41,8 +42,37 @@ class Pulse(PairedCalculation):
 				COMPLEX a0 = a[index];
 				COMPLEX b0 = b[index];
 
-				SCALAR sin_half_theta = sin(theta / 2);
-				SCALAR cos_half_theta = cos(theta / 2);
+				SCALAR sin_half_theta = sin(theta / (SCALAR)2.0);
+				SCALAR cos_half_theta = cos(theta / (SCALAR)2.0);
+
+				COMPLEX minus_i = complex_ctr(0, -1);
+
+				COMPLEX k2 = complex_mul_scalar(complex_mul(
+					minus_i, cexp(complex_ctr(0, -phi))
+				), sin_half_theta);
+
+				COMPLEX k3 = complex_mul_scalar(complex_mul(
+					minus_i, cexp(complex_ctr(0, phi))
+				), sin_half_theta);
+
+				a[index] = complex_mul_scalar(a0, cos_half_theta) + complex_mul(b0, k2);
+				b[index] = complex_mul_scalar(b0, cos_half_theta) + complex_mul(a0, k3);
+			}
+
+			EXPORTED_FUNC void calculateNoiseMatrix(GLOBAL_MEM COMPLEX *a,
+				GLOBAL_MEM COMPLEX *b, SCALAR *thetas, SCALAR *phis)
+			{
+				DEFINE_INDEXES;
+
+				COMPLEX a0 = a[index];
+				COMPLEX b0 = b[index];
+
+				int trajectory = index / ${c.cells};
+				SCALAR theta = thetas[trajectory];
+				SCALAR phi = phis[trajectory];
+
+				SCALAR sin_half_theta = sin(theta / (SCALAR)2.0);
+				SCALAR cos_half_theta = cos(theta / (SCALAR)2.0);
 
 				COMPLEX minus_i = complex_ctr(0, -1);
 
@@ -150,6 +180,7 @@ class Pulse(PairedCalculation):
 		self._program = self._env.compileProgram(kernels, self._constants,
 			detuning=self._detuning, COMP_1_minus1=COMP_1_minus1, COMP_2_1=COMP_2_1)
 		self._calculateMatrix = self._program.calculateMatrix
+		self._calculateNoiseMatrixFunc = self._program.calculateNoiseMatrix
 		self._calculateRK = self._program.calculateRK
 
 	def _cpu__applyMatrix(self, cloud, theta, phi):
@@ -171,15 +202,10 @@ class Pulse(PairedCalculation):
 			a[:,:,:] = a0 * k1 + b0 * k2
 			b[:,:,:] = a0 * k3 + b0 * k1
 
-	def _cpu__applyNoiseMatrix(self, cloud, theta, phi, phi_noise, theta_noise):
-		a = cloud.a.data
-		b = cloud.b.data
+	def _applyNoiseMatrix(self, cloud, theta, phi, theta_noise, phi_noise):
 
-		nvz = self._constants.nvz
 		ens = self._constants.ensembles
-
-		a0 = a.copy()
-		b0 = b.copy()
+		dtype = self._constants.scalar.dtype
 
 		if phi_noise > 0.0:
 			phis = numpy.random.normal(size=(ens,), scale=phi_noise, loc=phi)
@@ -191,21 +217,41 @@ class Pulse(PairedCalculation):
 		else:
 			thetas = numpy.ones(ens) * theta
 
+		d_phis = self._env.toDevice(phis.astype(dtype))
+		d_thetas = self._env.toDevice(thetas.astype(dtype))
+
+		self._calculateNoiseMatrix(cloud.a.data, cloud.b.data, d_thetas, d_phis)
+
+	def _gpu__calculateNoiseMatrix(self, a_data, b_data, thetas, phis):
+		return self._calculateNoiseMatrixFunc(a_data.size, a_data, b_data, thetas, phis)
+
+	def _cpu__calculateNoiseMatrix(self, a, b, thetas, phis):
+
+		ens = self._constants.ensembles
+
+		a0 = a.copy()
+		b0 = b.copy()
+
 		half_thetas = thetas / 2.0
 		k1 = self._constants.scalar.cast(numpy.cos(half_thetas))
 		k2 = self._constants.complex.cast(-1j * numpy.exp(-1j * phis) * numpy.sin(half_thetas))
 		k3 = self._constants.complex.cast(-1j * numpy.exp(1j * phis) * numpy.sin(half_thetas))
 
-		for e in xrange(ens):
-			start = e * nvz
-			stop = (e + 1) * nvz
+		a_view = a.ravel()
+		b_view = b.ravel()
+		a0_view = a0.ravel()
+		b0_view = b0.ravel()
+		step = self._constants.cells
 
-			if self._constants.dim == 1:
-				a[start:stop] = a0[start:stop] * k1[e] + b0[start:stop] * k2[e]
-				b[start:stop] = a0[start:stop] * k3[e] + b0[start:stop] * k1[e]
-			else:
-				a[start:stop,:,:] = a0[start:stop,:,:] * k1[e] + b0[start:stop,:,:] * k2[e]
-				b[start:stop,:,:] = a0[start:stop,:,:] * k3[e] + b0[start:stop,:,:] * k1[e]
+		for e in xrange(ens):
+			start = e * step
+			stop = (e + 1) * step
+
+			a0_part = a0_view[start:stop]
+			b0_part = b0_view[start:stop]
+
+			a_view[start:stop] = a0_part * k1[e] + b0_part * k2[e]
+			b_view[start:stop] = a0_part * k3[e] + b0_part * k1[e]
 
 	def _gpu__applyMatrix(self, cloud, theta, phi):
 		self._calculateMatrix(cloud.a.size, cloud.a.data, cloud.b.data,
@@ -320,12 +366,15 @@ class Pulse(PairedCalculation):
 			0.5j * self._constants.w_rabi * \
 				numpy.exp(1j * (t * self._detuning + phi)) * a_data
 
-	def apply(self, cloud, theta, matrix=True, phi_noise=0.0, theta_noise=0.0):
+	def apply(self, cloud, theta, matrix=True, theta_noise=0.0, phi_noise=0.0):
 		phi = cloud.time * self._detuning + self._starting_phase
+
+		# FIXME: should we change cloud time depending on pulse time?
+		# (if theta_noise != 0)
 		t_pulse = (theta / math.pi / 2.0) * self._constants.t_rabi
 
 		if phi_noise > 0 or theta_noise > 0:
-			self._applyNoiseMatrix(cloud, theta, phi, phi_noise, theta_noise)
+			self._applyNoiseMatrix(cloud, theta, phi, theta_noise, phi_noise)
 		elif matrix:
 			self._applyMatrix(cloud, theta, phi)
 		else:
