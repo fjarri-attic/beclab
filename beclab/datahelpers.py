@@ -1,6 +1,10 @@
 import yaml
 import numpy
+
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+
 from matplotlib.colors import ListedColormap
 from mpl_toolkits.axes_grid import AxesGrid
 from mpl_toolkits.axes_grid.anchored_artists import AnchoredText
