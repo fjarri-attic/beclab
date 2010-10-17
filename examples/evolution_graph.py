@@ -6,8 +6,8 @@ from beclab import *
 
 def testEvolutionGraph(gpu):
 	# preparation
-	env = Environment(gpu=gpu)
-	constants = Constants(Model(N=150000), double_precision=False if gpu else True)
+	env = envs.cuda() if gpu else envs.cpu()
+	constants = Constants(Model(N=150000), double=False if gpu else True)
 	gs = GPEGroundState(env, constants)
 	evolution = SplitStepEvolution(env, constants)
 	pulse = Pulse(env, constants)
@@ -41,7 +41,9 @@ def testEvolutionGraph(gpu):
 
 		return EvolutionPlot(hms, shape=(6, 4))
 
-	return constructPlot(a_yz, constants.xmax), constructPlot(b_yz, constants.xmax)
+	res = constructPlot(a_yz, constants.xmax), constructPlot(b_yz, constants.xmax)
+	env.release()
+	return res
 
 p1, p2 = testEvolutionGraph(gpu=False)
 p1.save("evolution_cpu_a.pdf")
