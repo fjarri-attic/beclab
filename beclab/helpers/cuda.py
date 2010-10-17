@@ -117,12 +117,12 @@ class CUDAEnvironment:
 
 	def fromDevice(self, buf, shape=None):
 		res = buf.get()
-		if shape is None:
+		if shape is not None:
 			res = res.reshape(shape)
 		return res
 
 	def toDevice(self, buf, shape=None):
-		if shape is None:
+		if shape is not None:
 			buf = buf.reshape(shape)
 
 		# FIXME: to_gpu_async() throws LogicError for some reason
