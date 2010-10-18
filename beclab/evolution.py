@@ -54,7 +54,7 @@ class SplitStepEvolution(PairedCalculation):
 				b_data[start:stop] *= self._projector_mask
 
 	def _gpu__projector(self, cloud):
-		self._projector_func(cloud.a.shape, cloud.a.data, cloud.b.data, self._projector_mask)
+		self._projector_func(cloud.a.size, cloud.a.data, cloud.b.data, self._projector_mask)
 
 	def _cpu__prepare(self):
 		pass
@@ -416,7 +416,7 @@ class SplitStepEvolution(PairedCalculation):
 		randoms = (numpy.random.normal(scale=1, size=shape) +
 			1j * numpy.random.normal(scale=1, size=shape)).astype(self._constants.complex.dtype)
 
-		self._addnoise_func(cloud.a.shape, cloud.a.data, cloud.b.data,
+		self._addnoise_func(cloud.a.size, cloud.a.data, cloud.b.data,
 			self._constants.scalar.cast(dt), self._env.toDevice(randoms))
 
 	def _finishStep(self, cloud, dt):
