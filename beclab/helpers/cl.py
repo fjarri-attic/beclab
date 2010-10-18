@@ -107,12 +107,14 @@ class CLEnvironment:
 		cl.enqueue_read_buffer(self.queue, buf, cpu_buf).wait()
 		return cpu_buf
 
-	def toDevice(self, buf, shape=None):
+	def toDevice(self, buf, shape=None, async=False):
 		if shape is not None:
 			shape = buf.shape
 
 		gpu_buf = _Buffer(self.context, shape, buf.dtype)
-		cl.enqueue_write_buffer(self.queue, gpu_buf, buf).wait()
+		event = cl.enqueue_write_buffer(self.queue, gpu_buf, buf)
+		if not async:
+			event.wait()
 		return gpu_buf
 
 	def copyBuffer(self, buf, dest=None):
