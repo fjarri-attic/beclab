@@ -26,6 +26,7 @@ class SplitStepEvolution(PairedCalculation):
 		self._constants = constants
 
 		self._plan = createFFTPlan(env, constants.shape, constants.complex.dtype)
+		self._random = createRandom(env, constants.double)
 
 		# indicates whether current state is in midstep (i.e, right after propagation
 		# in x-space and FFT to k-space)
@@ -409,15 +410,10 @@ class SplitStepEvolution(PairedCalculation):
 		cloud.b.data += d22 * (Z0[2] + 1j * Z0[3])
 
 	def _gpu__propagateNoise2(self, cloud, dt):
-		shape = list(self._constants.ens_shape)
-		shape[0] *= 2
-		shape = tuple(shape)
-
-		randoms = (numpy.random.normal(scale=1, size=shape) +
-			1j * numpy.random.normal(scale=1, size=shape)).astype(self._constants.complex.dtype)
+		randoms = self._random.random_normal(size=cloud.a.size * 2)
 
 		self._addnoise_func(cloud.a.size, cloud.a.data, cloud.b.data,
-			self._constants.scalar.cast(dt), self._env.toDevice(randoms))
+			self._constants.scalar.cast(dt), randoms)
 
 	def _finishStep(self, cloud, dt):
 		if self._midstep:
