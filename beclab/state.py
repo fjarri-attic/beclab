@@ -22,6 +22,7 @@ class State(PairedCalculation):
 
 		if prepare:
 			self._plan = createFFTPlan(env, constants.shape, constants.complex.dtype)
+			self._random = createRandom(env, constants.double)
 			self._prepare()
 			self._initializeMemory()
 
@@ -108,8 +109,6 @@ class State(PairedCalculation):
 		dtype = self.data.dtype
 		batch = self.data.size / self._constants.cells
 
-		randoms = self._env.toDevice(randoms)
-
 		kdata = self._env.allocate(self._constants.ens_shape, dtype=dtype)
 		self._plan.execute(self.data, kdata, inverse=True, batch=batch)
 		self._addPlaneWaves(kdata.size, kdata, randoms, mask)
@@ -118,6 +117,7 @@ class State(PairedCalculation):
 	def _cpu__addVacuumParticles(self, randoms, mask):
 
 		coeff = 1.0 / math.sqrt(self._constants.V)
+		randoms = randoms.reshape(self._constants.ens_shape)
 
 		dtype = self.data.dtype
 		batch = self.data.size / self._constants.cells
@@ -146,8 +146,8 @@ class State(PairedCalculation):
 
 		self.createEnsembles()
 
-		randoms = (numpy.random.normal(scale=0.5, size=self._constants.ens_shape) +
-			1j * numpy.random.normal(scale=0.5, size=self._constants.ens_shape)).astype(self._constants.complex.dtype)
+		randoms = self._random.random_normal(
+			self._constants.cells * self._constants.ensembles, scale=0.5)
 
 		projector_mask, _ = getProjectorMask(self._env, self._constants)
 		self._addVacuumParticles(randoms, projector_mask)
