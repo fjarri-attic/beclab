@@ -7,14 +7,13 @@ from beclab.state import ParticleStatistics
 
 def testWigner(gpu):
 	constants = Constants(Model(N=40000, detuning=-41, nvx=16, nvy=16, nvz=128,
-		ensembles=4, e_cut=1e6), double_precision=(False if gpu else True))
-	env = Environment(gpu=gpu)
+		ensembles=4, e_cut=1e6), double=(False if gpu else True))
+	env = envs.cuda() if gpu else envs.cpu()
 	evolution = SplitStepEvolution(env, constants)
 	pulse = Pulse(env, constants)
 	a = VisibilityCollector(env, constants, verbose=True)
 	b = ParticleNumberCollector(env, constants, verbose=True, pulse=pulse, matrix_pulse=True)
 	p = ParticleStatistics(env, constants)
-	n = PhaseNoiseCollector(env, constants)
 
 	gs = GPEGroundState(env, constants)
 
@@ -25,7 +24,7 @@ def testWigner(gpu):
 	pulse.apply(cloud, 0.5 * math.pi, matrix=True)
 
 	t1 = time.time()
-	evolution.run(cloud, 0.05, callbacks=[n], callback_dt=0.01, noise=False)
+	evolution.run(cloud, 0.02, callbacks=[a, b], callback_dt=0.01, noise=True)
 	env.synchronize()
 	t2 = time.time()
 	print "Time spent: " + str(t2 - t1) + " s"
@@ -39,9 +38,11 @@ def testWigner(gpu):
 	#vis = XYPlot([vis])
 	#vis.save('test.pdf')
 
-	times, noise = n.getData()
-	XYPlot([XYData("test", times * 1000, noise, ymin=0, xname="Time, ms")]).save(
-		'phase_noise_' + str(env) + '.pdf')
+	#times, noise = n.getData()
+	#XYPlot([XYData("test", times * 1000, noise, ymin=0, xname="Time, ms")]).save(
+	#	'phase_noise_' + str(env) + '.pdf')
+
+	env.release()
 
 #testWigner(False)
 testWigner(True)
