@@ -171,7 +171,7 @@ class SplitStepEvolution(PairedCalculation):
 				SCALAR n_a = squared_abs(a0);
 				SCALAR n_b = squared_abs(b0);
 
-				SCALAR st = sqrt(dt / (SCALAR)${c.V});
+				SCALAR st = sqrt(dt / (SCALAR)${c.dV * 2});
 
 				// FIXME: Some magic here. l111 ~ 10^-42, while single precision float
 				// can only handle 10^-38.
