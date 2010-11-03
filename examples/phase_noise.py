@@ -6,7 +6,7 @@ from beclab import *
 from beclab.state import ParticleStatistics
 
 def testPhaseNoise(gpu):
-	constants = Constants(Model(N=40000, detuning=-41, nvx=16, nvy=16, nvz=128,
+	constants = Constants(Model(N=40000, detuning=-41, nvx=8, nvy=8, nvz=64,
 		ensembles=16, e_cut=1e6), double=(False if gpu else True))
 	env = envs.cuda() if gpu else envs.cpu()
 	evolution = SplitStepEvolution(env, constants)
