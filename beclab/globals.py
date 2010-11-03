@@ -115,7 +115,8 @@ def getKVectors(env, constants):
 
 	return env.toDevice(kvectors)
 
-def getProjectorMask(env, constants):
+
+def getProjectorArray(constants):
 
 	def kvalues(dx, N):
 		return numpy.fft.fftfreq(N, dx) * 2.0 * math.pi
@@ -140,4 +141,8 @@ def getProjectorMask(env, constants):
 	modes = numpy.sum(mask)
 	#print "Projector modes: " + str(modes) + " out of " + str(constants.cells)
 
-	return env.toDevice(mask), modes
+	return mask, modes
+
+def getProjectorMask(env, constants):
+	mask, _ = getProjectorArray(constants)
+	return env.toDevice(mask)
