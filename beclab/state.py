@@ -295,23 +295,24 @@ class ParticleStatistics(PairedCalculation):
 
 		return self._reduce(res) / batch * self._constants.dV / N * self._constants.hbar
 
-	def _cpu_getVisibility(self, state1, state2):
-		ensembles = state1.size / self._constants.cells
+	def getVisibility(self, state1, state2):
 		N1 = self.countParticles(state1)
 		N2 = self.countParticles(state2)
+		interaction = self._getInteraction(state1, state2)
 
+		ensembles = state1.size / self._constants.cells
 		coeff = self._constants.dV / ensembles
-		interaction = abs(self._creduce(state1.data * state2.data.conj())) * coeff
+		interaction = numpy.abs(self._creduce(interaction)) * coeff
 
 		return 2 * interaction / (N1 + N2)
 
 	def _gpu__prepare(self):
 		kernel_template = """
 			EXPORTED_FUNC void calculateDensity(GLOBAL_MEM SCALAR *res,
-				GLOBAL_MEM COMPLEX *state, int ensembles)
+				GLOBAL_MEM COMPLEX *state, int ensembles, SCALAR modifier)
 			{
 				DEFINE_INDEXES;
-				res[index] = squared_abs(state[index]) / ensembles;
+				res[index] = (squared_abs(state[index]) - modifier) / ensembles;
 			}
 
 			EXPORTED_FUNC void calculateInteraction(GLOBAL_MEM COMPLEX *interaction,
@@ -385,16 +386,26 @@ class ParticleStatistics(PairedCalculation):
 		self._calculateMu2 = self._program.calculateMu2
 		self._calculateEnergy2 = self._program.calculateEnergy2
 
-	def _gpu_getAverageDensity(self, state):
+	def _gpu__getDensity(self, state, coeff, modifier):
 		density = self._env.allocate(state.shape, self._constants.scalar.dtype)
-		ensembles = state.size / self._constants.cells
-
-		# This function does not return "real" density for Wigner case.
-		# See comment for CPU version for details.
-		self._calculateDensity(state.size, density, state.data, numpy.int32(ensembles))
-		density = self._reduce.sparse(density, final_length=self._constants.cells)
-		density.shape = self._constants.shape
+		self._calculateDensity(state.size, density, state.data, numpy.int32(coeff),
+			self._constants.scalar.cast(modifier))
 		return density
+
+	def _cpu__getDensity(self, state, coeff, modifier):
+		return (numpy.abs(state.data) ** 2 - modifier) / coeff
+
+	def getDensity(self, state, coeff=1):
+		modifier = self._constants.projector_modes / (2.0 * self._constants.V) \
+			if state.type == WIGNER else 0
+		return self._getDensity(state, coeff, modifier)
+
+	def getAverageDensity(self, state):
+		ensembles = state.size / self._constants.cells
+		density = self.getDensity(state, ensembles)
+		average_density = self._reduce.sparse(density, final_length=self._constants.cells)
+		average_density.shape = self._constants.shape
+		return average_density
 
 	def _gpu__countState(self, state, coeff, N):
 		if coeff == 1:
@@ -436,33 +447,13 @@ class ParticleStatistics(PairedCalculation):
 		return self._reduce(res) / (state1.size / self._constants.cells) * \
 			self._constants.dV / N * self._constants.hbar
 
-	def _gpu_getVisibility(self, state1, state2):
+	def _gpu__getInteraction(self, state1, state2):
 		interaction = self._env.allocate(state1.shape, self._constants.complex.dtype)
 		self._calculateInteraction(state1.size, interaction, state1.data, state2.data)
+		return interaction
 
-		N1 = self.countParticles(state1)
-		N2 = self.countParticles(state2)
-
-		coeff = self._constants.dV / (state1.size / self._constants.cells)
-		interaction = self._creduce(interaction) * coeff
-
-		return 2 * abs(interaction) / (N1 + N2)
-
-	def _gpu__getEnsembleData(self, state1, state2):
-		interaction = self._env.allocate(state1.shape, self._constants.complex.dtype)
-		self._calculateInteraction(state1.size, interaction, state1.data, state2.data)
-
-		n1 = self._env.allocate(state1.shape, self._constants.scalar.dtype)
-		n2 = self._env.allocate(state2.shape, self._constants.scalar.dtype)
-
-		self._calculateDensity(state1.size, n1, state1.data, numpy.int32(1))
-		self._calculateDensity(state2.size, n2, state2.data, numpy.int32(1))
-
-		return interaction, n1, n2
-
-	def _cpu__getEnsembleData(self, state1, state2):
-		return state1.data * state2.data.conj(), numpy.abs(state1.data) ** 2, \
-			numpy.abs(state2.data) ** 2
+	def _cpu__getInteraction(self, state1, state2):
+		return state1.data * state2.data.conj()
 
 	def getPhaseNoise(self, state1, state2):
 		ensembles = state1.size / self._constants.cells
@@ -471,17 +462,13 @@ class ParticleStatistics(PairedCalculation):
 		creduce = self._creduce
 		dV = self._constants.dV
 
-		i, n1, n2 = self._getEnsembleData(state1, state2)
-
-		n1 = get(reduce(n1, ensembles)) * dV
-		n2 = get(reduce(n2, ensembles)) * dV
-
-		# FIXME: this has to be done in centralized manner somewhere
-		if state1.type == WIGNER:
-			n1 -= self._projector_modes / 2
-			n2 -= self._projector_modes / 2
+		i = self._getInteraction(state1, state2)
+		n1 = self.getDensity(state1)
+		n2 = self.getDensity(state2)
 
 		i = get(creduce(i, ensembles)) * dV
+		n1 = get(reduce(n1, ensembles)) * dV
+		n2 = get(reduce(n2, ensembles)) * dV
 
 		Pperp = 2.0 * i / (n1 + n2)
 		Pperp /= numpy.abs(Pperp)
@@ -495,31 +482,19 @@ class ParticleStatistics(PairedCalculation):
 		creduce = self._creduce
 		dV = self._constants.dV
 
-		# FIXME: maybe it will be better to rearrange functions,
-		# in order to avoid unused return values
-		_, n1, n2 = self._getEnsembleData(state1, state2)
+		n1 = self.getDensity(state1)
+		n2 = self.getDensity(state2)
 
 		n1 = get(reduce(n1, ensembles)) * dV
 		n2 = get(reduce(n2, ensembles)) * dV
-
-		# FIXME: this has to be done in centralized manner somewhere
-		if state1.type == WIGNER:
-			n1 -= self._projector_modes / 2
-			n2 -= self._projector_modes / 2
 
 		Pz = (n1 - n2) / (n1 + n2)
 
 		return Pz.std()
 
 	def countParticles(self, state):
-		N = self._reduce(self.getAverageDensity(state)) * self._constants.dV
-		if state.type == WIGNER:
-			# Since returned density is not "real" density for Wigner case,
-			# we have to subtract vacuum particles. See comment in
-			# getAverageDensity() for details.
-			return N - self._projector_modes / 2
-		else:
-			return N
+		return self._reduce(self.getDensity(state,
+			coeff=state.size / self._constants.cells)) * self._constants.dV
 
 	def _countStateGeneric(self, state, coeff, N):
 		# TODO: work out the correct formula for Wigner function's E/mu
