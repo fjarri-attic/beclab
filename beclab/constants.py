@@ -135,6 +135,8 @@ class Constants:
 		#print "nz >> " + str(self.zmax * 2.0 / l_healing)
 		#print "nz << " + str(self.zmax * 2.0 / (model.a11 * a0))
 
+		_, self.projector_modes = getProjectorArray(self)
+
 		# cast all floating point values to current precision
 
 		def recursiveCast(cast, obj):
