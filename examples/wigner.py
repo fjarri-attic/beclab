@@ -29,20 +29,17 @@ def testWigner(gpu):
 	t2 = time.time()
 	print "Time spent: " + str(t2 - t1) + " s"
 
-	#times, Na, Nb, N = b.getData()
-	#XYPlot([XYData("test", times, (Na-Nb)/N, ymin=-1, ymax=1, xname="Time, s")]).save('test.pdf')
+	times, Na, Nb, N = b.getData()
+	XYPlot([XYData("test", times, (Na-Nb)/N, ymin=-1, ymax=1, xname="Time, s")]).save(
+		'population_wigner_' + str(env) + '.pdf')
 
-	#times, vis = a.getData()
-	#vis = XYData("noise", times, vis, ymin=0, ymax=1,
-	#	xname="Time, ms", yname="Visibility")
-	#vis = XYPlot([vis])
-	#vis.save('test.pdf')
-
-	#times, noise = n.getData()
-	#XYPlot([XYData("test", times * 1000, noise, ymin=0, xname="Time, ms")]).save(
-	#	'phase_noise_' + str(env) + '.pdf')
+	times, vis = a.getData()
+	vis = XYData("noise", times, vis, ymin=0, ymax=1,
+		xname="Time, ms", yname="Visibility")
+	vis = XYPlot([vis])
+	vis.save('visibility_wigner_' + str(env) + '.pdf')
 
 	env.release()
 
-#testWigner(False)
+testWigner(False)
 testWigner(True)
