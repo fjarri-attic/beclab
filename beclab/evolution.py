@@ -35,7 +35,7 @@ class SplitStepEvolution(PairedCalculation):
 		self._potentials = getPotentials(self._env, self._constants)
 		self._kvectors = getKVectors(self._env, self._constants)
 
-		self._projector_mask, _ = getProjectorMask(self._env, self._constants)
+		self._projector_mask = getProjectorMask(self._env, self._constants)
 
 		self._prepare()
 

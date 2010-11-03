@@ -149,7 +149,7 @@ class State(PairedCalculation):
 		randoms = self._random.random_normal(
 			self._constants.cells * self._constants.ensembles, scale=0.5)
 
-		projector_mask, _ = getProjectorMask(self._env, self._constants)
+		projector_mask = getProjectorMask(self._env, self._constants)
 		self._addVacuumParticles(randoms, projector_mask)
 
 		self.type = WIGNER
@@ -231,27 +231,10 @@ class ParticleStatistics(PairedCalculation):
 		self._potentials = getPotentials(env, constants)
 		self._kvectors = getKVectors(env, constants)
 
-		self._projector_mask, self._projector_modes = getProjectorMask(self._env, self._constants)
-
 		self._prepare()
 
 	def _cpu__prepare(self):
 		pass
-
-	def _cpu_getAverageDensity(self, state):
-		normalized_values = numpy.abs(state.data) ** 2
-
-		ensembles = state.size / self._constants.cells
-
-		# What we are returning here is not in fact the measurable density
-		# (in case of Wigner representation).
-		# In order to return density, we would have to calculate integral
-		# of \delta_P for each cell, which is not that simple in general case
-		# (although, it is simple for plane wave basis).
-		# So, we are just returning reduced data for countParticles(),
-		# which will subtract vacuum particles (which is a lot simpler)
-		density = self._reduce.sparse(normalized_values, self._constants.cells)
-		return density.reshape(self._constants.shape) / ensembles
 
 	def _cpu__countState(self, state, coeff, N):
 		kdata = self._env.allocate(state.shape, dtype=state.dtype)
