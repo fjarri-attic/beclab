@@ -100,7 +100,7 @@ class CLEnvironment:
 		self.queue.finish()
 
 	def fromDevice(self, buf, shape=None):
-		if shape is not None:
+		if shape is None:
 			shape = buf.shape
 
 		cpu_buf = numpy.empty(shape, dtype=buf.dtype)
@@ -108,7 +108,7 @@ class CLEnvironment:
 		return cpu_buf
 
 	def toDevice(self, buf, shape=None, async=False):
-		if shape is not None:
+		if shape is None:
 			shape = buf.shape
 
 		gpu_buf = _Buffer(self.context, shape, buf.dtype)
