@@ -454,10 +454,10 @@ class XYPlot:
 			xlabel=self.data_list[0].xname,
 			ylabel=self.data_list[0].yname)
 
-		colors = [None for i in xrange(len(self.data_list))]
-
 		if not legend:
-			colors = ["0.2" for i in xrange(len(self.data_list))]
+			colors = ["0.2"] * len(self.data_list)
+		else:
+			colors = [None] * len(self.data_list)
 
 		if gradient:
 			l = len(self.data_list)
