@@ -4,6 +4,8 @@
 	#define EXPORTED_FUNC __global__
 	#define SYNC __syncthreads()
 	#define SHARED_MEM __shared__
+
+	#define CUDA
 %else:
 	#define INTERNAL_FUNC
 	#define GLOBAL_MEM __global

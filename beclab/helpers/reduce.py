@@ -49,13 +49,26 @@ class GPUReduce:
 
 				// The following code will be executed inside a single warp, so no
 				// shared memory synchronization is necessary
+				%if log2_block_size > 0:
 				if (tid < ${warp_size}) {
-				%for reduction_pow in xrange(log2_warp_size, -1, -1):
-					%if block_size >= 2 ** (reduction_pow + 1):
-						shared_mem[tid] = shared_mem[tid] + shared_mem[tid + ${2 ** reduction_pow}];
+				#ifdef CUDA
+				// Fix for Fermi videocards, see Compatibility Guide 1.2.2
+				volatile ${typename} *smem = shared_mem;
+				#else
+				SHARED_MEM ${typename} *smem = shared_mem;
+				#endif
+				%for reduction_pow in xrange(min(log2_warp_size, log2_block_size - 1), -1, -1):
+					## nvcc considers 'volatile float2' and 'float2' to be incompatible
+					## works well with scalars though
+					%if typename.endswith('2'):
+						smem[tid].x += smem[tid + ${2 ** reduction_pow}].x;
+						smem[tid].y += smem[tid + ${2 ** reduction_pow}].y;
+					%else:
+						smem[tid] += smem[tid + ${2 ** reduction_pow}];
 					%endif
 				%endfor
 				}
+				%endif
 
 				if (tid == 0) output[bid] = shared_mem[0];
 			}
