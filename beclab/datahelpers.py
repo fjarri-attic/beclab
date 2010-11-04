@@ -418,7 +418,7 @@ class EvolutionPlot:
 class XYPlot:
 
 	def __init__(self, xydata_list, legend=True, gradient=False,
-		location="lower left", title=None):
+		location="lower left", title=None, legendsize='x-small'):
 
 		self.data_list = xydata_list
 
@@ -477,7 +477,7 @@ class XYPlot:
 		self.subplot.set_ylim(ymin=ymin, ymax=ymax)
 
 		if legend:
-			self.subplot.legend(loc=location, prop={'size': 'x-small'})
+			self.subplot.legend(loc=location, prop={'size': legendsize})
 
 		if title is not None:
 			self.subplot.set_title(title)
