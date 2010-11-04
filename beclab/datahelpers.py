@@ -334,7 +334,7 @@ class XYData(_Data):
 		self.yarray = yarray
 
 		fields = ['ymin', 'ymax', 'xname', 'yname', 'description',
-			'source', 'experimental']
+			'source', 'experimental', 'linestyle']
 		_Data.__init__(self, 'xy', fields, **kwds)
 
 	@classmethod
@@ -467,6 +467,8 @@ class XYPlot:
 			kwds = {'label': data.name}
 			if colors[i] is not None:
 				kwds['color'] = colors[i]
+			if data.linestyle is not None:
+				kwds['linestyle'] = data.linestyle
 
 			self.subplot.plot(data.xarray, data.yarray,
 				('o' if data.experimental else '-'), **kwds)
