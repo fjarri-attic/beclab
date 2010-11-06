@@ -45,7 +45,7 @@ from .evolution import SplitStepEvolution, SplitStepEvolution2, RungeKuttaEvolut
 from .pulse import Pulse
 from .collectors import AxialProjectionCollector, ParticleNumberCollector, \
 	SurfaceProjectionCollector, VisibilityCollector, SliceCollector, \
-	PhaseNoiseCollector, PzNoiseCollector
+	PhaseNoiseCollector, PzNoiseCollector, UncertaintyCollector
 
 # FIXME: temporary, just to run simulations on VPAC
 try:

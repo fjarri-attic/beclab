@@ -2,7 +2,7 @@ import numpy
 import math
 
 from helpers import *
-from .state import ParticleStatistics, Projection, BlochSphereProjection, Slice
+from .state import ParticleStatistics, Projection, BlochSphereProjection, Slice, Uncertainty
 from .evolution import TerminateEvolution
 from .pulse import Pulse
 
@@ -309,3 +309,24 @@ class BlochSphereAveragesCollector:
 			res.append(snapshot)
 
 		return res
+
+
+class UncertaintyCollector:
+
+	def __init__(self, env, constants):
+		self._unc = Uncertainty(env, constants)
+		self.times = []
+		self.Na_stddev = []
+		self.Nb_stddev = []
+		self.XiSquared = []
+
+	def __call__(self, t, cloud):
+		self.times.append(t)
+		self.Na_stddev.append(self._unc.getNstddev(cloud.a))
+		self.Nb_stddev.append(self._unc.getNstddev(cloud.b))
+		self.XiSquared.append(self._unc.getXiSquared(cloud.a, cloud.b))
+
+	def getData(self):
+		return [numpy.array(x) for x in
+			(self.times, self.Na_stddev, self.Nb_stddev, self.XiSquared)]
+
