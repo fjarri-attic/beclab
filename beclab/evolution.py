@@ -551,7 +551,7 @@ class SplitStepEvolution(PairedCalculation):
 
 	def run(self, cloud, time, callbacks=None, callback_dt=0, noise=True):
 
-		t = 0
+		starting_time = cloud.time
 		callback_t = 0
 
 		# in natural units
@@ -560,24 +560,25 @@ class SplitStepEvolution(PairedCalculation):
 		self._toKSpace(cloud)
 
 		try:
-			self._runCallbacks(0, cloud, callbacks)
+			self._runCallbacks(cloud.time, cloud, callbacks)
 
-			while t < time:
+			while cloud.time - starting_time < time:
 				self.propagate(cloud, dt, noise)
-				t += dt
+
+				cloud.time += dt
 				callback_t += dt
 
 				if callback_t > callback_dt:
-					self._runCallbacks(t, cloud, callbacks)
+					self._runCallbacks(cloud.time, cloud, callbacks)
 					callback_t = 0
 
 			if callback_dt > time:
-				self._runCallbacks(time, cloud, callbacks)
+				self._runCallbacks(cloud.time, cloud, callbacks)
 
 			self._toXSpace(cloud)
 
 		except TerminateEvolution:
-			return t
+			return cloud.time
 
 
 class RungeKuttaEvolution(PairedCalculation):
