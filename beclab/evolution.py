@@ -565,7 +565,6 @@ class SplitStepEvolution(PairedCalculation):
 			while cloud.time - starting_time < time:
 				self.propagate(cloud, dt, noise)
 
-				cloud.time += dt
 				callback_t += dt
 
 				if callback_t > callback_dt:
