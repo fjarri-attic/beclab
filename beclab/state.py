@@ -655,3 +655,80 @@ class Slice:
 		density = self._stats.getAverageDensity(state)
 		temp = self._env.fromDevice(density).transpose((2, 0, 1))
 		return temp[self._constants.nvx / 2,:,:]
+
+
+class Uncertainty:
+
+	def __init__(self, env, constants):
+		self._env = env
+		self._constants = constants
+		self._stats = ParticleStatistics(env, constants)
+		self._reduce = createReduce(env, constants.scalar.dtype)
+		self._creduce = createReduce(env, constants.complex.dtype)
+
+	def getNstddev(self, state):
+		ensembles = state.size / self._constants.cells
+		get = self._env.fromDevice
+		reduce = self._reduce
+		dV = self._constants.dV
+
+		n = self._stats.getDensity(state)
+		n = get(reduce(n, ensembles)) * dV
+
+		return numpy.std(n)
+
+	def getXiSquared(self, state1, state2):
+		"""Get squeezing coefficient; see Yun Li et al, Eur. Phys. J. B 68, 365-381 (2009)"""
+
+		ensembles = state1.size / self._constants.cells
+		get = self._env.fromDevice
+		reduce = self._reduce
+		creduce = self._creduce
+		dV = self._constants.dV
+
+		i = self._stats._getInteraction(state1, state2)
+		n1 = self._stats.getDensity(state1)
+		n2 = self._stats.getDensity(state2)
+
+		i = get(creduce(i, ensembles)) * dV
+		n1 = get(reduce(n1, ensembles)) * dV
+		n2 = get(reduce(n2, ensembles)) * dV
+
+		Si = [i.real, i.imag, 0.5 * (n1 - n2)] # S values for each trajectory
+		avgs = [x.mean() for x in Si] # <S_i>, i=x,y,z
+
+		# \Delta_{ii} = 2 \Delta S_i^2
+		deltas = numpy.array([[(x * y + y * x).mean() - 2 * x.mean() * y.mean() for x in Si] for y in Si])
+
+		S = numpy.sqrt(avgs[0] ** 2 + avgs[1] ** 2 + avgs[2] ** 2) # <S>
+		phi = numpy.arctan2(avgs[1], avgs[0]) # azimuthal angle of S
+		yps = numpy.arccos(avgs[2] / S) # polar angle of S
+
+		sin = numpy.sin
+		cos = numpy.cos
+
+		A = (sin(phi) ** 2 - cos(yps) ** 2 * cos(phi) ** 2) * 0.5 * deltas[0, 0] + \
+			(cos(phi) ** 2 - cos(yps) ** 2 * sin(phi) ** 2) * 0.5 * deltas[1, 1] - \
+			sin(yps) ** 2 * 0.5 * deltas[2, 2] - \
+			0.5 * (1 + cos(yps) ** 2) * sin(2 * phi) * deltas[0, 1] + \
+			0.5 * sin(2 * yps) * cos(phi) * deltas[2, 0] + \
+			0.5 * sin(2 * yps) * sin(phi) * deltas[1, 2]
+
+		B = cos(yps) * sin(2 * phi) * (0.5 * deltas[0, 0] - 0.5 * deltas[1, 1]) - \
+			cos(yps) * cos(2 * phi) * deltas[0, 1] - \
+			sin(yps) * sin(phi) * deltas[2, 0] + \
+			sin(yps) * cos(phi) * deltas[1, 2]
+
+		Sperp_squared = \
+			0.5 * (cos(yps) ** 2 * cos(phi) ** 2 + sin(phi) ** 2) * 0.5 * deltas[0, 0] + \
+			0.5 * (cos(yps) ** 2 * sin(phi) ** 2 + cos(phi) ** 2) * 0.5 * deltas[1, 1] + \
+			0.5 * sin(yps) ** 2 * 0.5 * deltas[2, 2] - \
+			0.25 * sin(yps) ** 2 * sin(2 * phi) * deltas[0, 1] - \
+			0.25 * sin(2 * yps) * cos(phi) * deltas[2, 0] - \
+			0.25 * sin(2 * yps) * sin(phi) * deltas[1, 2] - \
+			0.5 * numpy.sqrt(A ** 2 + B ** 2)
+
+		Na = n1.mean()
+		Nb = n2.mean()
+
+		return (Na + Nb) * Sperp_squared / (S ** 2)
