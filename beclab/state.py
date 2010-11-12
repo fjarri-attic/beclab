@@ -677,6 +677,29 @@ class Uncertainty:
 
 		return numpy.std(n)
 
+	def getSpins(self, state1, state2):
+		ensembles = state1.size / self._constants.cells
+		get = self._env.fromDevice
+		reduce = self._reduce
+		creduce = self._creduce
+		dV = self._constants.dV
+
+		i = self._stats._getInteraction(state1, state2)
+		n1 = self._stats.getDensity(state1)
+		n2 = self._stats.getDensity(state2)
+
+		i = get(creduce(i, ensembles)) * dV
+		n1 = get(reduce(n1, ensembles)) * dV
+		n2 = get(reduce(n2, ensembles)) * dV
+
+		# Si for each trajectory
+		Si = [i.real, i.imag, 0.5 * (n1 - n2)]
+		S = numpy.sqrt(Si[0] ** 2 + Si[1] ** 2 + Si[2] ** 2)
+		phi = numpy.arctan2(Si[1], Si[0])
+		yps = numpy.arccos(Si[2] / S)
+
+		return phi, yps
+
 	def getXiSquared(self, state1, state2):
 		"""Get squeezing coefficient; see Yun Li et al, Eur. Phys. J. B 68, 365-381 (2009)"""
 
