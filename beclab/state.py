@@ -463,17 +463,28 @@ class ParticleStatistics(PairedCalculation):
 		dV = self._constants.dV
 
 		i = self._getInteraction(state1, state2)
-		n1 = self.getDensity(state1)
-		n2 = self.getDensity(state2)
 
-		i = get(creduce(i, ensembles)) * dV
-		n1 = get(reduce(n1, ensembles)) * dV
-		n2 = get(reduce(n2, ensembles)) * dV
+		i = get(creduce(i, ensembles)) * dV # Complex numbers {S_xj + iS_yj, j = 1..N}
+		phi = i / numpy.abs(i) # normalizing
 
-		Pperp = 2.0 * i / (n1 + n2)
-		Pperp /= numpy.abs(Pperp)
+		# Center of the distribution can be shifted to pi or -pi,
+		# making mean() return incorrect values.
+		# The following approximate method will allow us to shift the center to zero
+		# It will work only if the maximum of the distribution is clearly
+		# distinguished; otherwise it can give anything as a result
 
-		return ((Pperp * (Pperp.mean()).conj()).imag).std()
+		Pperp = numpy.exp(1j * phi) # transforming Pperp to distribution on the unit circle
+		Pmean = Pperp.mean() # Center of masses is supposed to be close to the center of distribution
+
+		# Normalizing the direction to the center of masses
+		# Now angle(Pmean) ~ proper mean of Pperp
+		Pmean /= numpy.abs(Pmean)
+
+		# Shifting the distribution
+		Pcent = Pperp * Pmean.conj()
+		phi_centered = numpy.angle(Pcent)
+
+		return phi_centered.std()
 
 	def getPzNoise(self, state1, state2):
 		ensembles = state1.size / self._constants.cells
