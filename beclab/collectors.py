@@ -330,3 +330,17 @@ class UncertaintyCollector:
 		return [numpy.array(x) for x in
 			(self.times, self.Na_stddev, self.Nb_stddev, self.XiSquared)]
 
+
+class SpinCloudCollector:
+
+	def __init__(self, env, constants):
+		self._unc = Uncertainty(env, constants)
+		self.times = []
+		self.clouds = []
+
+	def __call__(self, t, cloud):
+		self.times.append(t)
+		self.clouds.append(self._unc.getSpins(cloud.a, cloud.b))
+
+	def getData(self):
+		return numpy.array(self.times), self.clouds
