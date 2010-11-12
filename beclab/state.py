@@ -456,6 +456,11 @@ class ParticleStatistics(PairedCalculation):
 		return state1.data * state2.data.conj()
 
 	def getPhaseNoise(self, state1, state2):
+		"""
+		Warning: this function considers spin distribution ellipse to be horizontal,
+		which is not always so.
+		"""
+
 		ensembles = state1.size / self._constants.cells
 		get = self._env.fromDevice
 		reduce = self._reduce
@@ -465,7 +470,7 @@ class ParticleStatistics(PairedCalculation):
 		i = self._getInteraction(state1, state2)
 
 		i = get(creduce(i, ensembles)) * dV # Complex numbers {S_xj + iS_yj, j = 1..N}
-		phi = i / numpy.abs(i) # normalizing
+		phi = numpy.angle(i) # normalizing
 
 		# Center of the distribution can be shifted to pi or -pi,
 		# making mean() return incorrect values.
