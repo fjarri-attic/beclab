@@ -361,8 +361,8 @@ class AnalyticNoiseCollector:
 		n1 = self._env.fromDevice(self._stats.getAverageDensity(cloud.a))
 		n2 = self._env.fromDevice(self._stats.getAverageDensity(cloud.b))
 
-		N1 = n1.sum()
-		N2 = n2.sum()
+		N1 = n1.sum() * self._constants.dV
+		N2 = n2.sum() * self._constants.dV
 		N = N1 + N2
 
 		n1 /= N1
