@@ -344,3 +344,37 @@ class SpinCloudCollector:
 
 	def getData(self):
 		return numpy.array(self.times), self.clouds
+
+class AnalyticNoiseCollector:
+	"""
+	According to Ueda and Kitagawa, http://link.aps.org/doi/10.1103/PhysRevA.47.5138, (5)
+	"""
+
+	def __init__(self, env, constants):
+		self._stats = ParticleStatistics(env, constants)
+		self.times = []
+		self.noise = []
+		self._constants = constants
+		self._env = env
+
+	def __call__(self, t, cloud):
+		n1 = self._env.fromDevice(self._stats.getAverageDensity(cloud.a))
+		n2 = self._env.fromDevice(self._stats.getAverageDensity(cloud.b))
+
+		N1 = n1.sum()
+		N2 = n2.sum()
+		N = N1 + N2
+
+		n1 /= N1
+		n2 /= N2
+
+		chi = 1.0 / (2.0 * self._constants.hbar) * (
+			self._constants.g[cloud.a.comp, cloud.a.comp] * (n1 * n1).sum() * self._constants.dV +
+			self._constants.g[cloud.b.comp, cloud.b.comp] * (n2 * n2).sum() * self._constants.dV -
+			2 * self._constants.g[cloud.a.comp, cloud.b.comp] * (n1 * n2).sum() * self._constants.dV)
+
+		self.times.append(t)
+		self.noise.append(numpy.sqrt(N) * chi * t)
+
+	def getData(self):
+		return [numpy.array(x) for x in (self.times, self.noise)]
