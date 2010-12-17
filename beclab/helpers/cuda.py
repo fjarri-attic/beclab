@@ -84,15 +84,14 @@ class _ProgramWrapper:
 
 class CUDAEnvironment:
 
-	def __init__(self):
+	def __init__(self, device_num=0):
 
 		cuda.init()
 
 		#self.context = pycuda.tools.make_default_context()
 		#self.device = self.context.get_device()
 
-		# FIXME: using second card for testing purposes
-		self.device = cuda.Device(0)
+		self.device = cuda.Device(device_num)
 		self.context = self.device.make_context()
 
 		self.stream = cuda.Stream()
