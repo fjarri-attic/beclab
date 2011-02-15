@@ -127,9 +127,9 @@ class Constants:
 		self.dt_evo = model.dt_evo
 
 		# natural units
-		self.t_rho = 1.0 / self.w_z
-		self.e_rho = self.hbar * self.w_z
-		self.l_rho = math.sqrt(self.hbar / (2.0 * self.m * self.w_z))
+		self.t_rho = 1.0 / self.w_x
+		self.e_rho = self.hbar * self.w_x
+		self.l_rho = math.sqrt(self.hbar / (2.0 * self.m * self.w_x))
 
 		#l_healing = 1.0 / math.sqrt(8.0 * math.pi * model.a11 * a0 * self.muTF() / g11)
 		#print "nz >> " + str(self.zmax * 2.0 / l_healing)
