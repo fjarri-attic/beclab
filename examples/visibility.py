@@ -45,3 +45,4 @@ for gpu, matrix_pulses in ((False, True), (False, False), (True, True), (True, F
 
 XYPlot(visibility_data).save('visibility.pdf')
 XYPlot(particles_data).save('population.pdf')
+
