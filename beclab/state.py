@@ -246,7 +246,6 @@ class ParticleStatistics(PairedCalculation):
 		self._plan.execute(data, kdata, inverse=True, batch=batch)
 
 		n = numpy.abs(data) ** 2
-		xk = data * kdata
 
 		g_by_hbar = self._constants.g_by_hbar[(state.comp, state.comp)]
 
@@ -254,17 +253,33 @@ class ParticleStatistics(PairedCalculation):
 			for e in xrange(batch):
 				start = e * self._constants.cells
 				stop = (e + 1) * self._constants.cells
+				kdata[start:stop] *= self._kvectors
+
+			self._plan.execute(kdata, batch=batch)
+			xk = data * kdata
+
+			for e in xrange(batch):
+				start = e * self._constants.cells
+				stop = (e + 1) * self._constants.cells
 				res[start:stop] = numpy.abs(n[start:stop] * (self._potentials +
 					n[start:stop] * (g_by_hbar / coeff)) +
-					xk[start:stop] * self._kvectors)
+					xk[start:stop])
 
 		else:
 			for e in xrange(batch):
 				start = e * self._constants.cells
 				stop = (e + 1) * self._constants.cells
+				kdata[start:stop,:,:] *= self._kvectors
+
+			self._plan.execute(kdata, batch=batch)
+			xk = data.conj() * kdata
+
+			for e in xrange(batch):
+				start = e * self._constants.cells
+				stop = (e + 1) * self._constants.cells
 				res[start:stop,:,:] = numpy.abs(n[start:stop,:,:] * (self._potentials +
 					n[start:stop,:,:] * (g_by_hbar / coeff)) +
-					xk[start:stop,:,:] * self._kvectors)
+					xk[start:stop,:,:])
 
 		return self._reduce(res) / batch * self._constants.dV / N * self._constants.hbar
 
@@ -284,14 +299,21 @@ class ParticleStatistics(PairedCalculation):
 
 		self._plan.execute(data, kdata, inverse=True, batch=batch)
 
+		for e in xrange(batch):
+			start = e * self._constants.cells
+			stop = (e + 1) * self._constants.cells
+			kdata[start:stop,:,:] *= self._kvectors
+
+		self._plan.execute(kdata, batch=batch)
 		xk = data.conj() * kdata
+
 		for e in xrange(batch):
 			start = e * self._constants.cells
 			stop = (e + 1) * self._constants.cells
 			res[start:stop,:,:] = numpy.abs(n[start:stop,:,:] * (self._potentials +
 				n[start:stop,:,:] * (g_by_hbar / coeff) +
 				second_n[start:stop,:,:] * (interaction_g_by_hbar / coeff)) +
-				xk[start:stop,:,:] * self._kvectors)
+				xk[start:stop,:,:])
 
 		return self._reduce(res) / batch * self._constants.dV / N * self._constants.hbar
 
@@ -322,20 +344,40 @@ class ParticleStatistics(PairedCalculation):
 				interaction[index] = complex_mul(a_state[index], conj(b_state[index]));
 			}
 
+			EXPORTED_FUNC void calculateDifferential(GLOBAL_MEM COMPLEX *kstate,
+				GLOBAL_MEM SCALAR *kvectors)
+			{
+				DEFINE_INDEXES;
+
+				SCALAR kvector = kvectors[cell_index];
+				COMPLEX k = complex_mul_scalar(kstate[index], kvector);
+				kstate[index] = k;
+			}
+
+			EXPORTED_FUNC void calculateDifferential2(GLOBAL_MEM COMPLEX *kstate1,
+				GLOBAL_MEM COMPLEX *kstate2, GLOBAL_MEM SCALAR *kvectors)
+			{
+				DEFINE_INDEXES;
+
+				SCALAR kvector = kvectors[cell_index];
+				COMPLEX k1 = complex_mul_scalar(kstate1[index], kvector);
+				COMPLEX k2 = complex_mul_scalar(kstate2[index], kvector);
+				kstate1[index] = k1;
+				kstate2[index] = k2;
+			}
+
 			%for name, coeff in (('Energy', 2), ('Mu', 1)):
 				EXPORTED_FUNC void calculate${name}(GLOBAL_MEM SCALAR *res,
 					GLOBAL_MEM COMPLEX *xstate, GLOBAL_MEM COMPLEX *kstate,
-					GLOBAL_MEM SCALAR *potentials, GLOBAL_MEM SCALAR *kvectors,
+					GLOBAL_MEM SCALAR *potentials,
 					SCALAR g_by_hbar)
 				{
 					DEFINE_INDEXES;
 
 					SCALAR potential = potentials[cell_index];
-					SCALAR kvector = kvectors[cell_index];
 
 					SCALAR n = squared_abs(xstate[index]);
-					COMPLEX differential =
-						complex_mul_scalar(complex_mul(xstate[index], kstate[index]), kvector);
+					COMPLEX differential = complex_mul(conj(xstate[index]), kstate[index]);
 					SCALAR nonlinear = n * (potential + g_by_hbar * n / ${coeff});
 
 					// differential.y will be equal to 0, because \psi * D \psi is a real number
@@ -345,22 +387,21 @@ class ParticleStatistics(PairedCalculation):
 				EXPORTED_FUNC void calculate${name}2(GLOBAL_MEM SCALAR *res,
 					GLOBAL_MEM COMPLEX *xstate1, GLOBAL_MEM COMPLEX *kstate1,
 					GLOBAL_MEM COMPLEX *xstate2, GLOBAL_MEM COMPLEX *kstate2,
-					GLOBAL_MEM SCALAR *potentials, GLOBAL_MEM SCALAR *kvectors,
+					GLOBAL_MEM SCALAR *potentials,
 					SCALAR g11_by_hbar, SCALAR g22_by_hbar,
 					SCALAR g12_by_hbar)
 				{
 					DEFINE_INDEXES;
 
 					SCALAR potential = potentials[cell_index];
-					SCALAR kvector = kvectors[cell_index];
 
 					SCALAR n1 = squared_abs(xstate1[index]);
 					SCALAR n2 = squared_abs(xstate2[index]);
 
 					COMPLEX differential1 =
-						complex_mul_scalar(complex_mul(xstate1[index], kstate1[index]), kvector);
+						complex_mul(conj(xstate1[index]), kstate1[index]);
 					COMPLEX differential2 =
-						complex_mul_scalar(complex_mul(xstate2[index], kstate2[index]), kvector);
+						complex_mul(conj(xstate2[index]), kstate2[index]);
 
 					SCALAR nonlinear1 = n1 * (potential +
 						g11_by_hbar * n1 / ${coeff} +
@@ -385,6 +426,9 @@ class ParticleStatistics(PairedCalculation):
 
 		self._calculateMu2 = self._program.calculateMu2
 		self._calculateEnergy2 = self._program.calculateEnergy2
+
+		self._calculateDifferential = self._program.calculateDifferential
+		self._calculateDifferential2 = self._program.calculateDifferential2
 
 	def _gpu__getDensity(self, state, coeff, modifier):
 		density = self._env.allocate(state.shape, self._constants.scalar.dtype)
@@ -416,7 +460,11 @@ class ParticleStatistics(PairedCalculation):
 		kstate = self._env.allocate(state.shape, dtype=state.dtype)
 		res = self._env.allocate(state.shape, dtype=self._constants.scalar.dtype)
 		self._plan.execute(state.data, kstate, inverse=True, batch=state.size / self._constants.cells)
-		func(state.size, res, state.data, kstate, self._potentials, self._kvectors,
+
+		self._calculateDifferential(state.size, kstate, self._kvectors)
+		self._plan.execute(kstate, batch=state.size / self._constants.cells)
+
+		func(state.size, res, state.data, kstate, self._potentials,
 			self._constants.scalar.cast(self._constants.g_by_hbar[(state.comp, state.comp)]))
 		return self._reduce(res) / (state.size / self._constants.cells) * \
 			self._constants.dV / N * self._constants.hbar
@@ -440,9 +488,14 @@ class ParticleStatistics(PairedCalculation):
 		else:
 			func = self._calculateEnergy2
 
+		self._calculateDifferential2(state1.size, kstate1, kstate2, self._kvectors)
+
+		self._plan.execute(kstate1, batch=state1.size / self._constants.cells)
+		self._plan.execute(kstate2, batch=state2.size / self._constants.cells)
+
 		func(state1.size, res, state1.data, kstate1,
-			state2.data, kstate2, self._potentials, self._kvectors,
-				g11_by_hbar, g22_by_hbar, g12_by_hbar)
+			state2.data, kstate2, self._potentials,
+			g11_by_hbar, g22_by_hbar, g12_by_hbar)
 
 		return self._reduce(res) / (state1.size / self._constants.cells) * \
 			self._constants.dV / N * self._constants.hbar
