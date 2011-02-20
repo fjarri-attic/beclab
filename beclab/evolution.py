@@ -275,6 +275,71 @@ class SplitStepEvolution(PairedCalculation):
 				b[index] = b0 + complex_mul_scalar(r_b, d22);
 			}
 
+			INTERNAL_FUNC void noiseFunc_Peter(COMPLEX *G, COMPLEX a0, COMPLEX b0, SCALAR dt)
+			{
+				<%
+					coeff = sqrt(1.0 / c.dV)
+					k111 = c.l111 / 6.0
+					k12 = c.l12 / 2.0
+					k22 = c.l22 / 4.0
+				%>
+
+				COMPLEX gamma111_1 = complex_mul_scalar(complex_mul(a0, a0),
+					(SCALAR)${sqrt(k111 / 2.0) * 3.0 * coeff});
+				COMPLEX gamma12_1 = complex_mul_scalar(b0,
+					(SCALAR)${sqrt(k12 / 2.0) * coeff});
+				COMPLEX gamma12_2 = complex_mul_scalar(a0,
+					(SCALAR)${sqrt(k12 / 2.0) * coeff});
+				COMPLEX gamma22_2 = complex_mul_scalar(b0,
+					(SCALAR)${sqrt(k22 / 2.0) * 2.0 * coeff});
+
+				G[0] = gamma111_1;
+				G[1] = gamma12_1;
+				G[2] = complex_ctr(0, 0);
+				G[3] = complex_ctr(0, 0);
+				G[4] = gamma12_2;
+				G[5] = gamma22_2;
+			}
+
+			EXPORTED_FUNC void addNoise_Peter(GLOBAL_MEM COMPLEX *a,
+				GLOBAL_MEM COMPLEX *b, SCALAR dt,
+				GLOBAL_MEM COMPLEX *randoms)
+			{
+				DEFINE_INDEXES;
+				COMPLEX G[6];
+				COMPLEX a0 = a[index];
+				COMPLEX b0 = b[index];
+
+				%for i in xrange(3):
+				COMPLEX Z${i} = randoms[index + ${c.cells * c.ensembles * i}];
+				%endfor
+
+				SCALAR sdt2 = sqrt(dt / 2);
+				SCALAR sdt = sqrt(dt);
+
+				noiseFunc(G, a0, b0, dt);
+
+				noiseFunc(G,
+					a0 + complex_mul_scalar(
+						complex_mul_scalar(G[0], Z0.y) +
+						complex_mul_scalar(G[1], Z1.y) +
+						complex_mul_scalar(G[2], Z2.y), sdt2),
+					b0 + complex_mul_scalar(
+						complex_mul_scalar(G[3], Z0.y) +
+						complex_mul_scalar(G[4], Z1.y) +
+						complex_mul_scalar(G[5], Z2.y), sdt2), dt);
+
+				a[index] = a0 + complex_mul_scalar(
+						complex_mul_scalar(G[0], Z0.x) +
+						complex_mul_scalar(G[1], Z1.x) +
+						complex_mul_scalar(G[2], Z2.x), sdt);
+
+				b[index] = b0 + complex_mul_scalar(
+						complex_mul_scalar(G[3], Z0.x) +
+						complex_mul_scalar(G[4], Z1.x) +
+						complex_mul_scalar(G[5], Z2.x), sdt);
+			}
+
 			EXPORTED_FUNC void projector(GLOBAL_MEM COMPLEX *a,
 				GLOBAL_MEM COMPLEX *b, GLOBAL_MEM SCALAR *projector_mask)
 			{
@@ -295,6 +360,7 @@ class SplitStepEvolution(PairedCalculation):
 		self._xpropagate_func = self._program.propagateXSpaceTwoComponent
 		self._addnoise_func = self._program.addNoise
 		self._addnoise_func2 = self._program.addNoise2
+		self._addnoise_func_peter = self._program.addNoise_Peter
 		self._projector_func = self._program.projector
 
 	def _toKSpace(self, cloud):
@@ -487,6 +553,12 @@ class SplitStepEvolution(PairedCalculation):
 		self._addnoise_func(cloud.a.size, cloud.a.data, cloud.b.data,
 			self._constants.scalar.cast(dt), randoms)
 
+	def _gpu__propagateNoisePeter(self, cloud, dt):
+		randoms = self._random.random_normal(size=cloud.a.size * 3)
+
+		self._addnoise_func_peter(cloud.a.size, cloud.a.data, cloud.b.data,
+			self._constants.scalar.cast(dt), randoms)
+
 	def _cpu__propagateNoise2(self, cloud, dt):
 		shape = self._constants.ens_shape
 		Z0 = [numpy.random.normal(scale=1, size=shape).astype(
@@ -532,7 +604,7 @@ class SplitStepEvolution(PairedCalculation):
 		self._xpropagate(cloud, dt)
 
 		if cloud.type == WIGNER and noise:
-			self._propagateNoise(cloud, dt)
+			self._propagateNoisePeter(cloud, dt)
 
 		cloud.time += dt
 
