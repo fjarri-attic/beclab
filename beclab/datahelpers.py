@@ -1,5 +1,7 @@
-import yaml
+import json
+import pickle
 import numpy
+import os.path
 
 import matplotlib
 matplotlib.use('Agg')
@@ -271,12 +273,6 @@ _CMAP_BWR_LIST = [
 
 _CMAP_BWR = ListedColormap(_CMAP_BWR_LIST, name="BlueWhiteRed")
 
-_DUMPERS = {
-	numpy.ndarray: lambda x: repr(x.tolist()),
-	numpy.float32: lambda x: float(x),
-	numpy.float64: lambda x: float(x),
-}
-
 
 class _Data:
 
@@ -286,36 +282,109 @@ class _Data:
 			if name not in fields:
 				raise Exception("Unknown keyword: " + name)
 
-		for name in fields:
-			self.__dict__[name] = None
-
 		self.__dict__.update(kwds)
 		self.format = format
 
-	def dump(self):
+	def _dump(self, to_python_types=False):
 
-		datatypes = [int, float, str, bool] + _DUMPERS.keys()
+		# forward declaration, to break the vicious cycle
+		# of transform() and serializers
+		serializers = {}
 
-		to_dump = {}
-		for name in dir(self):
-			if name.startswith('_'):
-				continue
+		def transform(obj):
+			t = type(obj)
+			if t in serializers:
+				return serializers[t](obj)
+			else:
+				raise ValueError("Cannot serialize values of type " + str(type(obj)))
 
-			val = getattr(self, name)
-			if type(val) in datatypes:
-				if type(val) in _DUMPERS:
-					val = _DUMPERS[type(val)](val)
-				to_dump[name] = val
+		serializers.update({
+			dict: lambda obj: dict((key, transform(obj[key])) for key in obj),
+			list: lambda obj: [transform(elem) for elem in obj],
+			numpy.ndarray: lambda obj: obj.tolist(),
+			numpy.float32: lambda obj: float(obj),
+			numpy.float64: lambda obj: float(obj),
+			int: lambda obj: obj,
+			float: lambda obj: obj,
+			str: lambda obj: obj,
+			bool: lambda obj: obj
+		})
 
-		return yaml.dump(to_dump, default_flow_style=False)
+		data = dict((name, getattr(self, name))
+			for name in dir(self) if not name.startswith('_') and
+				type(getattr(self, name)) in serializers)
 
-	def save(self, filename):
-		open(filename, "w").write(self.dump())
+		if to_python_types:
+			return transform(data)
+		else:
+			return data
+
+	def __getattr__(self, name):
+		return None
+
+	def save(self, filename, format=None):
+		if format is None:
+			name, ext = os.path.splitext(filename)
+			format = ext[1:]
+
+		if format not in ['pickle', 'json']:
+			raise ValueError('Unknown storage format: ' + format)
+
+		to_dump = self._dump(to_python_types=(format == 'json'))
+
+		with open(filename, 'w') as f:
+			if format == 'json':
+				json.dump(to_dump, f, indent=4)
+			else:
+				pickle.dump(to_dump, f, protocol=2)
 
 	@classmethod
-	def load(cls, filename):
-		string = open(filename).read()
-		data = yaml.load(string)
+	def load(cls, filename, format=None):
+
+		all_true = lambda lst, func: reduce(lambda x, y: x and y,
+			[func(elem) for elem in lst])
+
+		all_elems_are_lists = lambda lst: all_true(lst,
+			lambda elem: isinstance(elem, list))
+
+		all_elems_have_same_length = lambda lst: \
+			all_elems_are_lists(lst) and \
+			all_true(lst, lambda elem: len(elem) == len(lst[0]))
+
+		all_floats = lambda lst: all_true(lst, lambda elem: isinstance(elem, float))
+
+		def looksLikeNumpyArray(obj):
+			if isinstance(obj, list):
+				return all_floats(obj) or \
+					(all_elems_have_same_length(obj) and
+					all_true(obj, lambda elem: looksLikeNumpyArray(elem)))
+			else:
+				return False
+
+		def transform(obj):
+			print obj
+			if isinstance(obj, dict):
+				return dict((str(key), transform(obj[key])) for key in obj)
+			elif isinstance(obj, list):
+				if looksLikeNumpyArray(obj):
+					return numpy.array(obj)
+				else:
+					return obj
+			else:
+				return obj
+
+		if format is None:
+			name, ext = os.path.splitext(filename)
+			format = ext[1:]
+
+		if format not in ['pickle', 'json']:
+			raise ValueError('Unknown storage format: ' + format)
+
+		with open(filename) as f:
+			if format == 'json':
+				data = transform(json.load(f))
+			else:
+				data = pickle.load(f)
 
 		format = data.pop('format')
 		return cls._load(format, **data)
@@ -342,8 +411,8 @@ class XYData(_Data):
 		if format != 'xy':
 			raise Exception("Wrong data format: " + str(format))
 		name = kwds.pop('name')
-		xarray = numpy.array(eval(kwds.pop('xarray')))
-		yarray = numpy.array(eval(kwds.pop('yarray')))
+		xarray = kwds.pop('xarray')
+		yarray = kwds.pop('yarray')
 		return cls(name, xarray, yarray, **kwds)
 
 
@@ -365,7 +434,7 @@ class HeightmapData(_Data):
 		if format != 'heightmap':
 			raise Exception("Wrong data format: " + str(format))
 		name = kwds.pop('name')
-		heightmap = numpy.array(eval(kwds.pop('heightmap')))
+		heightmap = kwds.pop('heightmap')
 		return cls(name, heightmap, **kwds)
 
 
