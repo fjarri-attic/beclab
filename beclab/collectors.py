@@ -2,7 +2,7 @@ import numpy
 import math
 
 from helpers import *
-from .state import ParticleStatistics, Projection, BlochSphereProjection, Slice, Uncertainty
+from .state import ParticleStatistics, Projection, Slice, Uncertainty
 from .evolution import TerminateEvolution
 from .pulse import Pulse
 
@@ -239,76 +239,6 @@ class AxialProjectionCollector:
 
 	def getData(self):
 		return numpy.array(self.times), numpy.concatenate(self.snapshots).reshape(len(self.times), self.snapshots[0].size).transpose()
-
-
-class BlochSphereCollector:
-
-	def __init__(self, env, constants, amp_points=64, phase_points=128, amp_range=(0, math.pi),
-			phase_range=(0, math.pi * 2)):
-		self._bs = BlochSphereProjection(env, constants)
-		self._amp_points = amp_points
-		self._phase_points = phase_points
-		self._amp_range = amp_range
-		self._phase_range = phase_range
-
-		self.times = []
-		self.snapshots = []
-
-	def __call__(self, t, cloud):
-		res = self._bs.getProjection(cloud.a, cloud.b, self._amp_points, self._phase_points, self._amp_range, self._phase_range)
-
-		self.times.append(t)
-		self.snapshots.append(res)
-
-	def getData(self):
-		return self.times, self.snapshots
-
-
-class BlochSphereAveragesCollector:
-
-	def __init__(self, env, constants):
-		self._bs = BlochSphereProjection(env, constants)
-
-		self.times = []
-		self.avg_amps = []
-		self.avg_phases = []
-
-	def __call__(self, t, cloud):
-		avg_amp, avg_phase = self._bs.getAverages(cloud.a, cloud.b)
-
-		self.times.append(t)
-		self.avg_amps.append(avg_amp)
-		self.avg_phases.append(avg_phase)
-
-	def getData(self):
-		return self.times, self.avg_amps, self.avg_phases
-
-	@staticmethod
-	def getSnapshots(collectors):
-		snapshots_num = len(collectors[0].avg_amps)
-		points_num = len(collectors)
-
-		amp_min, amp_max = 0.0, math.pi
-		phase_min, phase_max = 0.0, 2.0 * math.pi
-		amp_points = 64
-		phase_points = 128
-
-		d_amp = (amp_max - amp_min) / (amp_points - 1)
-		d_phase = (phase_max - phase_min) / (phase_points - 1)
-
-		res = []
-		for i in xrange(snapshots_num):
-			snapshot = numpy.zeros((amp_points, phase_points))
-
-			for j in xrange(points_num):
-				amp = collectors[j].avg_amps[i]
-				phase = collectors[j].avg_phases[i]
-
-				snapshot[int(amp / d_amp), int(phase / d_phase)] += 1
-
-			res.append(snapshot)
-
-		return res
 
 
 class UncertaintyCollector:
