@@ -266,14 +266,18 @@ class SpinCloudCollector:
 	def __init__(self, env, constants):
 		self._unc = Uncertainty(env, constants)
 		self.times = []
-		self.clouds = []
+		self.phi = []
+		self.yps = []
 
 	def __call__(self, t, cloud):
 		self.times.append(t)
-		self.clouds.append(self._unc.getSpins(cloud.a, cloud.b))
+		phi, yps = self._unc.getSpins(cloud.a, cloud.b)
+		self.phi.append(phi)
+		self.yps.append(yps)
 
 	def getData(self):
-		return numpy.array(self.times), self.clouds
+		return [numpy.array(x) for x in (self.times, self.phi, self.yps)]
+
 
 class AnalyticNoiseCollector:
 	"""
