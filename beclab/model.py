@@ -34,10 +34,10 @@ class Model:
 
 	hf_freq = 6.834682610904290e9 # 5^2S_{1/2} hyperfine splitting frequency
 
-	# loss terms
+	# loss terms (according to M. Egorov, as of 28 Feb 2011)
 	gamma111 = 5.4e-42
-	gamma12 = 0.78e-19
-	gamma22 = 1.194e-19
+	gamma12 = 1.52e-20
+	gamma22 = 7.7e-20
 
 	# spatial lattice size
 	nvx = 16
