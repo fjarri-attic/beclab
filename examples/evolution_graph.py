@@ -5,6 +5,7 @@ import math
 from beclab import *
 
 def testEvolutionGraph(gpu):
+
 	# preparation
 	env = envs.cuda() if gpu else envs.cpu()
 	constants = Constants(Model(N=150000), double=False if gpu else True)

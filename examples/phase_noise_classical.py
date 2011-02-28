@@ -39,4 +39,4 @@ def testPhaseNoise(gpu):
 	env.release()
 
 testPhaseNoise(True)
-#testPhaseNoise(False)
+testPhaseNoise(False)

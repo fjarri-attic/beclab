@@ -5,10 +5,11 @@ import math
 from beclab import *
 
 def testAxial(gpu, matrix_pulses):
+
 	# preparation
-	env = Environment(gpu=gpu)
+	env = envs.cuda() if gpu else envs.cpu()
 	constants = Constants(Model(N=150000, detuning=-41),
-		double_precision=False if gpu else True)
+		double=False if gpu else True)
 
 	gs = GPEGroundState(env, constants)
 	evolution = SplitStepEvolution(env, constants)
@@ -28,7 +29,7 @@ def testAxial(gpu, matrix_pulses):
 
 	times, picture = a.getData()
 
-	return HeightmapPlot(
+	res = HeightmapPlot(
 		HeightmapData("test", picture,
 			xmin=0, xmax=100,
 			ymin=-constants.zmax * 1e6,
@@ -37,6 +38,10 @@ def testAxial(gpu, matrix_pulses):
 			xname="Time, ms", yname="z, $\\mu$m", zname="Spin projection")
 	)
 
-for gpu, matrix_pulses in ((False, True), (False, False), (True, True), (True, False)):
+	env.release()
+
+	return res
+
+for gpu, matrix_pulses in ((False, True), (False, False), (True, True),	(True, False)):
 	suffix = ("gpu" if gpu else "cpu") + "_" + ("ideal" if matrix_pulses else "nonideal") + "_pulses"
 	testAxial(gpu=gpu, matrix_pulses=matrix_pulses).save("axial_" + suffix + ".pdf")
