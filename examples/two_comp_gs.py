@@ -7,8 +7,8 @@ from beclab import *
 def testTwoCompGS(gpu):
 
 	# preparation
-	env = Environment(gpu=gpu)
-	constants = Constants(Model(N=150000), double_precision=False if gpu else True)
+	env = envs.cuda() if gpu else envs.cpu()
+	constants = Constants(Model(N=150000), double=False if gpu else True)
 	gs = GPEGroundState(env, constants)
 	sp = SliceCollector(env, constants, pulse=None)
 
@@ -31,6 +31,8 @@ def testTwoCompGS(gpu):
 		xname="Z, $\\mu$m", yname="Y, $\\mu$m",
 		ymin=-constants.ymax * 1e6, ymax=constants.ymax * 1e6, zmin=0)
 	b_plot = HeightmapPlot(b_data)
+
+	env.release()
 
 	return a_plot, b_plot
 

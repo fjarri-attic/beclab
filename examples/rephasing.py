@@ -55,4 +55,4 @@ def testRephasing(gpu):
 	env.release()
 
 testRephasing(True)
-#testRephasing(False)
+testRephasing(False)

@@ -8,8 +8,8 @@ from beclab.state import ParticleStatistics
 def testUncertainties(gpu):
 
 	# normal parameters
-	m = Model(N=40000, detuning=-41, nvx=8, nvy=8, nvz=64, ensembles=4, e_cut=1e6)
-	t = 1.0
+	m = Model(N=40000, detuning=-41, nvx=8, nvy=8, nvz=64, ensembles=16, e_cut=1e6)
+	t = 0.5
 	callback_dt = 0.002
 	noise = True
 
@@ -36,7 +36,6 @@ def testUncertainties(gpu):
 	evolution = SplitStepEvolution(env, constants)
 	pulse = Pulse(env, constants)
 	a = VisibilityCollector(env, constants, verbose=True)
-	b = ParticleNumberCollector(env, constants, verbose=True, pulse=pulse, matrix_pulse=True)
 	u = UncertaintyCollector(env, constants)
 
 	gs = GPEGroundState(env, constants)
@@ -56,12 +55,12 @@ def testUncertainties(gpu):
 	XYPlot([
 		XYData("|1>", times * 1000, na, ymin=0, xname="Time, ms", yname="$\\Delta$N"),
 		XYData("|2>", times * 1000, nb, ymin=0, xname="Time, ms", yname="$\\Delta$N")
-	]).save(	'N_stddev' + str(env) + '.pdf')
+	]).save('squeezing_N_stddev_' + str(env) + '.pdf')
 
-	XYPlot([XYData("test", times * 1000, numpy.log10(sp), xname="Time, ms", yname="log10($\\xi^2$)")]).save(
-		"XiSquared_" + str(env) + ".pdf")
+	XYPlot([XYData("test", times * 1000, numpy.log10(sp), xname="Time, ms", yname="log$_{10}$($\\xi^2$)")]).save(
+		"squeezing_xi_squared_" + str(env) + ".pdf")
 
 	env.release()
 
 testUncertainties(True)
-#testPhaseNoise(False)
+testUncertainties(False)

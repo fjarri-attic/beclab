@@ -5,8 +5,8 @@ import math
 from beclab import *
 
 def testVisibility(gpu, matrix_pulses):
-	constants = Constants(Model(N=30000, nvx=16, nvy=16, nvz=128),
-		double=False)
+	constants = Constants(Model(N=44000, nvx=8, nvy=8, nvz=64, e_cut=1e6),
+		double=False if gpu else True)
 	env = envs.cuda() if gpu else envs.cpu()
 	evolution = SplitStepEvolution(env, constants)
 
@@ -43,5 +43,5 @@ for gpu, matrix_pulses in ((False, True), (False, False), (True, True), (True, F
 	visibility_data.append(v)
 	particles_data.append(p)
 
-XYPlot(visibility_data).save('visibility.pdf')
-XYPlot(particles_data).save('population.pdf')
+XYPlot(visibility_data).save('visibility_noise_vis.pdf')
+XYPlot(particles_data).save('visibility_noise_population.pdf')
