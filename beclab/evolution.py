@@ -155,127 +155,7 @@ class SplitStepEvolution(PairedCalculation):
 				bb[index] = complex_mul(b, db);
 			}
 
-			INTERNAL_FUNC void noiseFuncSimplified(COMPLEX *G, COMPLEX a, COMPLEX b, SCALAR dt)
-			{
-				SCALAR n1 = squared_abs(a);
-				SCALAR n2 = squared_abs(b);
-
-				SCALAR coeff = (SCALAR)${sqrt(0.5 / c.dV)};
-				SCALAR d11 = sqrt((SCALAR)${9.0 * c.l111} * n1 * n1 +
-					(SCALAR)${c.l12} * n2) * coeff;
-				SCALAR d22 = sqrt((SCALAR)${c.l12} * n1 + (SCALAR)${4.0 * c.l22} * n2) * coeff;
-
-				G[0] = complex_ctr(d11, 0);
-				G[1] = complex_ctr(0, 0);
-				G[2] = complex_ctr(0, d11);
-				G[3] = complex_ctr(0, 0);
-				G[4] = complex_ctr(0, 0);
-				G[5] = complex_ctr(d22, 0);
-				G[6] = complex_ctr(0, 0);
-				G[7] = complex_ctr(0, d22);
-			}
-
 			INTERNAL_FUNC void noiseFunc(COMPLEX *G, COMPLEX a0, COMPLEX b0, SCALAR dt)
-			{
-				SCALAR n1 = squared_abs(a0);
-				SCALAR n2 = squared_abs(b0);
-
-				SCALAR coeff = (SCALAR)${0.5 / c.dV};
-				SCALAR a = ((SCALAR)${9.0 * c.l111} * n1 * n1 +
-					(SCALAR)${c.l12} * n2) * coeff;
-				SCALAR d = ((SCALAR)${c.l12} * n1 + (SCALAR)${4.0 * c.l22} * n2) * coeff;
-				COMPLEX t = complex_mul_scalar(complex_mul(a0, conj(b0)), (SCALAR)${c.l12});
-				SCALAR b = t.x;
-				SCALAR c = t.y;
-
-				SCALAR t1 = sqrt(a);
-				SCALAR t2 = sqrt(d - b * b / a);
-				SCALAR t3 = sqrt(a + a * c * c / (b * b - a * d));
-
-				G[0] = complex_ctr(t1, 0);
-				G[1] = complex_ctr(0, c / t2);
-				G[2] = complex_ctr(0, t3);
-				G[3] = complex_ctr(0, 0);
-				G[4] = complex_ctr(b / t1, -c / t1);
-				G[5] = complex_ctr(t2, b * c / (a * t2));
-				G[6] = complex_ctr(0, b / a * t3);
-				G[7] = complex_ctr(0, sqrt((d * a - b * b - c * c) / a));
-			}
-
-			EXPORTED_FUNC void addNoise(GLOBAL_MEM COMPLEX *a,
-				GLOBAL_MEM COMPLEX *b, SCALAR dt,
-				GLOBAL_MEM COMPLEX *randoms)
-			{
-				DEFINE_INDEXES;
-				COMPLEX G[8];
-				COMPLEX a0 = a[index];
-				COMPLEX b0 = b[index];
-
-				%for i in xrange(4):
-				COMPLEX Z${i} = randoms[index + ${c.cells * c.ensembles * i}];
-				%endfor
-
-				SCALAR sdt2 = sqrt(dt / 2);
-				SCALAR sdt = sqrt(dt);
-
-				noiseFunc(G, a0, b0, dt);
-
-				noiseFunc(G,
-					a0 + complex_mul_scalar(
-						complex_mul_scalar(G[0], Z0.y) +
-						complex_mul_scalar(G[1], Z1.y) +
-						complex_mul_scalar(G[2], Z2.y) +
-						complex_mul_scalar(G[3], Z3.y), sdt2),
-					b0 + complex_mul_scalar(
-						complex_mul_scalar(G[4], Z0.y) +
-						complex_mul_scalar(G[5], Z1.y) +
-						complex_mul_scalar(G[6], Z2.y) +
-						complex_mul_scalar(G[7], Z3.y), sdt2), dt);
-
-				a[index] = a0 + complex_mul_scalar(
-						complex_mul_scalar(G[0], Z0.x) +
-						complex_mul_scalar(G[1], Z1.x) +
-						complex_mul_scalar(G[2], Z2.x) +
-						complex_mul_scalar(G[3], Z3.x), sdt);
-
-				b[index] = b0 + complex_mul_scalar(
-						complex_mul_scalar(G[4], Z0.x) +
-						complex_mul_scalar(G[5], Z1.x) +
-						complex_mul_scalar(G[6], Z2.x) +
-						complex_mul_scalar(G[7], Z3.x), sdt);
-			}
-
-			EXPORTED_FUNC void addNoise2(GLOBAL_MEM COMPLEX *a,
-				GLOBAL_MEM COMPLEX *b, SCALAR dt,
-				GLOBAL_MEM COMPLEX *randoms)
-			{
-				DEFINE_INDEXES;
-
-				COMPLEX a0 = a[index];
-				COMPLEX b0 = b[index];
-
-				COMPLEX r_a = randoms[index];
-				COMPLEX r_b = randoms[index + ${c.cells * c.ensembles}];
-
-				SCALAR n_a = squared_abs(a0);
-				SCALAR n_b = squared_abs(b0);
-
-				SCALAR st = sqrt(dt / (SCALAR)${c.dV * 2});
-
-				// FIXME: Some magic here. l111 ~ 10^-42, while single precision float
-				// can only handle 10^-38.
-				SCALAR t_a = n_a * ${1.0e-10};
-
-				SCALAR d11 = sqrt(t_a * t_a * (SCALAR)${9.0 * c.l111 * 1e20} +
-					(SCALAR)${c.l12} * n_b) * st;
-				SCALAR d22 = sqrt((SCALAR)${c.l12} * n_a +
-					(SCALAR)${4.0 * c.l22} * n_b) * st;
-
-				a[index] = a0 + complex_mul_scalar(r_a, d11);
-				b[index] = b0 + complex_mul_scalar(r_b, d22);
-			}
-
-			INTERNAL_FUNC void noiseFunc_Peter(COMPLEX *G, COMPLEX a0, COMPLEX b0, SCALAR dt)
 			{
 				<%
 					coeff = sqrt(1.0 / c.dV)
@@ -301,7 +181,7 @@ class SplitStepEvolution(PairedCalculation):
 				G[5] = gamma22_2;
 			}
 
-			EXPORTED_FUNC void addNoise_Peter(GLOBAL_MEM COMPLEX *a,
+			EXPORTED_FUNC void addNoise(GLOBAL_MEM COMPLEX *a,
 				GLOBAL_MEM COMPLEX *b, SCALAR dt,
 				GLOBAL_MEM COMPLEX *randoms)
 			{
@@ -314,7 +194,7 @@ class SplitStepEvolution(PairedCalculation):
 				COMPLEX Z${i} = randoms[index + ${c.cells * c.ensembles * i}];
 				%endfor
 
-				SCALAR sdt2 = sqrt(dt / 2);
+				SCALAR sdt2 = sqrt(dt / (SCALAR)2.0);
 				SCALAR sdt = sqrt(dt);
 
 				noiseFunc(G, a0, b0, dt);
@@ -359,8 +239,6 @@ class SplitStepEvolution(PairedCalculation):
 		self._kpropagate_func = self._program.propagateKSpaceRealTime
 		self._xpropagate_func = self._program.propagateXSpaceTwoComponent
 		self._addnoise_func = self._program.addNoise
-		self._addnoise_func2 = self._program.addNoise2
-		self._addnoise_func_peter = self._program.addNoise_Peter
 		self._projector_func = self._program.projector
 
 	def _toKSpace(self, cloud):
@@ -445,142 +323,44 @@ class SplitStepEvolution(PairedCalculation):
 		a.data *= da
 		b.data *= db
 
-	def _noiseFunc(self, a_data, b_data, dt):
+	def _noiseFunc(self, a_data, b_data):
 		coeff = math.sqrt(1.0 / self._constants.dV)
+		k111 = self._constants.l111 / 6.0
+		k12 = self._constants.l12 / 2.0
+		k22 = self._constants.l22 / 4.0
 
-		n1 = numpy.abs(a_data) ** 2
-		n2 = numpy.abs(b_data) ** 2
-		l12 = self._constants.l12
-		l22 = self._constants.l22
-		l111 = self._constants.l111
-
-		a = l12 * n2 + (9.0 * l111) * n1 * n1
-		d = l12 * n1 + (4.0 * l22) * n2
-		t = l12 * a_data * numpy.conj(b_data)
-		b = numpy.real(t)
-		c = numpy.imag(t)
-
-		t1 = numpy.sqrt(a)
-		t2 = numpy.sqrt(d - (b ** 2) / a)
-		t3 = numpy.sqrt(a + a * (c ** 2) / (b ** 2 - a * d))
-
-		k1 = numpy.nan_to_num(c / t2)
-		k2 = numpy.nan_to_num(t3)
-		k3 = numpy.nan_to_num(b / t1)
-		k4 = numpy.nan_to_num(t2)
-		k5 = numpy.nan_to_num(-c / t1)
-		k6 = numpy.nan_to_num(b * c / (a * t2))
-		k7 = numpy.nan_to_num(b / a * t3)
-		k8 = numpy.nan_to_num(numpy.sqrt((d * a - b ** 2 - c ** 2) / a))
+		gamma111_1 = a_data ** 2 * (math.sqrt(k111 / 2.0) * 3.0 * coeff)
+		gamma12_1 = b_data * (math.sqrt(k12 / 2.0) * coeff)
+		gamma12_2 = a_data * (math.sqrt(k12 / 2.0) * coeff)
+		gamma22_2 = b_data * (math.sqrt(k22 / 2.0) * 2.0 * coeff)
 
 		zeros = numpy.zeros(a_data.shape, self._constants.scalar.dtype)
 
-		return \
-			coeff * t1 + 1j * zeros, \
-			zeros + 1j * coeff * k1, \
-			zeros + 1j * coeff * k2, \
-			zeros + 1j * zeros, \
-			coeff * (k3 + 1j * k5), \
-			coeff * (k4 + 1j * k6), \
-			coeff * (zeros + 1j * k7), \
-			coeff * (zeros + 1j * k8)
-
-	def _noiseFunc2(self, a_data, b_data, dt):
-
-		n1 = numpy.abs(a_data) ** 2
-		n2 = numpy.abs(b_data) ** 2
-		l12 = self._constants.l12
-		l22 = self._constants.l22
-		l111 = self._constants.l111
-
-		st = math.sqrt(1.0 / self._constants.dV)
-		d11 = numpy.sqrt(9.0 * l111 * (n1 ** 2) + l12 * n2) * st
-		d22 = numpy.sqrt(l12 * n1 + 4.0 * l22 * n2) * st
-
-		zeros = numpy.zeros(a_data.shape, self._constants.scalar.dtype)
-		czeros = zeros + 1j * zeros
-
-		return \
-			d11 + 1j * zeros, \
-			czeros, \
-			zeros + 1j * d11, \
-			czeros, \
-			czeros, \
-			d22 + 1j * zeros, \
-			czeros, \
-			zeros + 1j * d22
+		return gamma111_1, gamma12_1, zeros, zeros, gamma12_2, gamma22_2
 
 	def _cpu__propagateNoise(self, cloud, dt):
-
 		shape = self._constants.ens_shape
-		Z1 = [numpy.random.normal(scale=1, size=shape).astype(
-			self._constants.scalar.dtype) for i in xrange(4)]
-		Z0 = [numpy.random.normal(scale=1, size=shape).astype(
-			self._constants.scalar.dtype) for i in xrange(4)]
+		r_shape = tuple([3] + list(shape))
 
-		G101, G102, G103, G104, G201, G202, G203, G204 = self._noiseFunc2(cloud.a.data, cloud.b.data, dt)
-		G111, G112, G113, G114, G211, G212, G213, G214 = \
-			self._noiseFunc2(
-				cloud.a.data + math.sqrt(dt / 2) * (
-					G101 * Z1[0] + G102 * Z1[1] + G103 * Z1[2] + G104 * Z1[3]),
-				cloud.b.data + math.sqrt(dt / 2) * (
-					G201 * Z1[0] + G202 * Z1[1] + G203 * Z1[2] + G204 * Z1[3]), dt)
+		randoms = self._random.random_normal(size=cloud.a.size * 3).reshape(*r_shape)
 
-		G121, G122, G123, G124, G221, G222, G223, G224 = \
-			self._noiseFunc2(
-				cloud.a.data + math.sqrt(dt / 2) * (
-					G101 * Z1[0] + G102 * Z1[1] + G103 * Z1[2] + G104 * Z1[3]),
-				cloud.b.data + math.sqrt(dt / 2) * (
-					G201 * Z1[0] + G202 * Z1[1] + G203 * Z1[2] + G204 * Z1[3]), dt)
+		G00, G01, G02, G03, G04, G05 = self._noiseFunc(cloud.a.data, cloud.b.data)
+		G10, G11, G12, G13, G14, G15 = self._noiseFunc(
+			cloud.a.data + math.sqrt(dt / 2.0) * (
+				G00 * randoms[0].real + G01 * randoms[1].real + G02 * randoms[2].real),
+			cloud.b.data + math.sqrt(dt / 2.0) * (
+				G03 * randoms[0].real + G04 * randoms[1].real + G05 * randoms[2].real)
+		)
 
-		cloud.a.data += 0.5 * math.sqrt(dt) * (
-				(G111 + G121) * Z0[0] +
-				(G112 + G122) * Z0[1] +
-				(G113 + G123) * Z0[2] +
-				(G114 + G124) * Z0[3]
-			)
-
-		cloud.b.data += 0.5 * math.sqrt(dt) * (
-				(G211 + G221) * Z0[0] +
-				(G212 + G222) * Z0[1] +
-				(G213 + G223) * Z0[2] +
-				(G214 + G224) * Z0[3]
-			)
+		cloud.a.data += math.sqrt(dt) * (G10 * randoms[0].imag +
+			G11 * randoms[1].imag + G12 * randoms[2].imag)
+		cloud.b.data += math.sqrt(dt) * (G13 * randoms[0].imag +
+			G14 * randoms[1].imag + G15 * randoms[2].imag)
 
 	def _gpu__propagateNoise(self, cloud, dt):
-		randoms = self._random.random_normal(size=cloud.a.size * 4)
-
-		self._addnoise_func(cloud.a.size, cloud.a.data, cloud.b.data,
-			self._constants.scalar.cast(dt), randoms)
-
-	def _gpu__propagateNoisePeter(self, cloud, dt):
 		randoms = self._random.random_normal(size=cloud.a.size * 3)
 
-		self._addnoise_func_peter(cloud.a.size, cloud.a.data, cloud.b.data,
-			self._constants.scalar.cast(dt), randoms)
-
-	def _cpu__propagateNoise2(self, cloud, dt):
-		shape = self._constants.ens_shape
-		Z0 = [numpy.random.normal(scale=1, size=shape).astype(
-			self._constants.scalar.dtype) for i in xrange(4)]
-
-		n1 = numpy.abs(cloud.a.data) ** 2
-		n2 = numpy.abs(cloud.b.data) ** 2
-		l12 = self._constants.l12
-		l22 = self._constants.l22
-		l111 = self._constants.l111
-
-		st = math.sqrt(dt / self._constants.dV)
-		d11 = numpy.sqrt(9.0 * l111 * (n1 ** 2) + l12 * n2) * st
-		d22 = numpy.sqrt(l12 * n1 + 4.0 * l22 * n2) * st
-
-		cloud.a.data += d11 * (Z0[0] + 1j * Z0[1])
-		cloud.b.data += d22 * (Z0[2] + 1j * Z0[3])
-
-	def _gpu__propagateNoise2(self, cloud, dt):
-		randoms = self._random.random_normal(size=cloud.a.size * 2)
-
-		self._addnoise_func2(cloud.a.size, cloud.a.data, cloud.b.data,
+		self._addnoise_func(cloud.a.size, cloud.a.data, cloud.b.data,
 			self._constants.scalar.cast(dt), randoms)
 
 	def _finishStep(self, cloud, dt):
@@ -604,7 +384,7 @@ class SplitStepEvolution(PairedCalculation):
 		self._xpropagate(cloud, dt)
 
 		if cloud.type == WIGNER and noise:
-			self._propagateNoisePeter(cloud, dt)
+			self._propagateNoise(cloud, dt)
 
 		cloud.time += dt
 
