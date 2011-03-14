@@ -362,7 +362,6 @@ class _Data:
 				return False
 
 		def transform(obj):
-			print obj
 			if isinstance(obj, dict):
 				return dict((str(key), transform(obj[key])) for key in obj)
 			elif isinstance(obj, list):
