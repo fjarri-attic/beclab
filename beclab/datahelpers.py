@@ -274,13 +274,14 @@ _CMAP_BWR_LIST = [
 _CMAP_BWR = ListedColormap(_CMAP_BWR_LIST, name="BlueWhiteRed")
 
 
-class _Data:
+class Data:
 
 	def __init__(self, format, fields, **kwds):
 
-		for name in kwds:
-			if name not in fields:
-				raise Exception("Unknown keyword: " + name)
+		if fields is not None:
+			for name in kwds:
+				if name not in fields:
+					raise Exception("Unknown keyword: " + name)
 
 		self.__dict__.update(kwds)
 		self.format = format
@@ -389,7 +390,7 @@ class _Data:
 		return cls._load(format, **data)
 
 
-class XYData(_Data):
+class XYData(Data):
 
 	def __init__(self, name, xarray, yarray, **kwds):
 
@@ -403,7 +404,7 @@ class XYData(_Data):
 
 		fields = ['ymin', 'ymax', 'xname', 'yname', 'description',
 			'source', 'experimental', 'linestyle']
-		_Data.__init__(self, 'xy', fields, **kwds)
+		Data.__init__(self, 'xy', fields, **kwds)
 
 	@classmethod
 	def _load(cls, format, **kwds):
@@ -415,7 +416,7 @@ class XYData(_Data):
 		return cls(name, xarray, yarray, **kwds)
 
 
-class HeightmapData(_Data):
+class HeightmapData(Data):
 
 	def __init__(self, name, heightmap, **kwds):
 
@@ -426,7 +427,7 @@ class HeightmapData(_Data):
 
 		fields = ['xmin', 'xmax', 'ymin', 'ymax', 'description',
 			'source', 'zmin', 'zmax', 'xname', 'yname', 'zname']
-		_Data.__init__(self, 'heightmap', fields, **kwds)
+		Data.__init__(self, 'heightmap', fields, **kwds)
 
 	@classmethod
 	def _load(cls, format, **kwds):

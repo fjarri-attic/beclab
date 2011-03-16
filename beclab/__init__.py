@@ -50,6 +50,6 @@ from .collectors import AxialProjectionCollector, ParticleNumberCollector, \
 
 # FIXME: temporary, just to run simulations on VPAC
 try:
-	from .datahelpers import XYData, HeightmapData, XYPlot, HeightmapPlot, EvolutionPlot
+	from .datahelpers import Data, XYData, HeightmapData, XYPlot, HeightmapPlot, EvolutionPlot
 except Exception as e:
 	print "Failed to load datahelpers: " + str(e)
