@@ -25,6 +25,13 @@ class _KernelWrapper:
 		self._max_block_size = 2 ** log2(min(self._env.max_block_size,
 			self._env.max_registers / self._kernel.num_regs))
 
+	def _getSupportedGrid(self, x, y):
+		max_x = self._env.max_grid_size_x_pow2
+		if x > max_x:
+			return (max_x, y * x / max_x)
+		else:
+			return (x, y)
+
 	def __call__(self, size, *args):
 		max_block_size = self._max_block_size
 		block_size = min(size, max_block_size)
@@ -34,12 +41,7 @@ class _KernelWrapper:
 			grid = (1, 1)
 		else:
 			block = (block_size, 1, 1)
-			size /= block_size
-			max_grid_size_x = self._env.max_grid_size_x
-			if size > max_grid_size_x:
-				grid = (max_grid_size_x, size / max_grid_size_x)
-			else:
-				grid = (size, 1)
+			grid = self._getSupportedGrid(size / block_size, 1)
 
 		self._customCall(grid, block, *args)
 
@@ -56,6 +58,8 @@ class _KernelWrapper:
 			grid = (grid_x, 1)
 		else:
 			grid = (grid_x, global_size[1] / block[1])
+
+		grid = self._getSupportedGrid(*grid)
 
 		self._customCall(grid, block, *args)
 
@@ -100,6 +104,8 @@ class CUDAEnvironment:
 
 		self.max_grid_size_x = self.device.get_attribute(cuda.device_attribute.MAX_GRID_DIM_X)
 		self.max_grid_size_y = self.device.get_attribute(cuda.device_attribute.MAX_GRID_DIM_Y)
+
+		self.max_grid_size_x_pow2 = 2 ** log2(self.max_grid_size_x)
 
 		self.max_registers = self.device.get_attribute(cuda.device_attribute.MAX_REGISTERS_PER_BLOCK)
 
