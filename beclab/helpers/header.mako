@@ -99,6 +99,7 @@ INTERNAL_FUNC ${complex} cexp(${complex} a)
 	#define GLOBAL_SIZE_Y (blockDim.y * gridDim.y)
 
 	#define GLOBAL_ID_FLAT threadIdx.x + blockDim.x * blockIdx.x + gridDim.x * blockDim.x * blockIdx.y
+	#define BLOCK_ID_FLAT blockIdx.x + gridDim.x * blockIdx.y
 %else:
 	#define THREAD_ID_X get_local_id(0)
 	#define BLOCK_ID_X get_group_id(0)
@@ -111,6 +112,7 @@ INTERNAL_FUNC ${complex} cexp(${complex} a)
 	#define GLOBAL_SIZE_Y get_global_size(1)
 
 	#define GLOBAL_ID_FLAT get_global_id(0)
+	#define BLOCK_ID_FLAT get_num_groups(0)
 %endif
 
 ${prelude}
