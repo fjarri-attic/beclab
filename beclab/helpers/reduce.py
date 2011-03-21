@@ -29,7 +29,7 @@ class GPUReduce:
 				SHARED_MEM ${typename} shared_mem[${smem_size}];
 
 				int tid = THREAD_ID_X;
-				int bid = BLOCK_ID_X;
+				int bid = BLOCK_ID_FLAT;
 
 				// first reduction, after which the number of elements to reduce
 				// equals to number of threads in block
