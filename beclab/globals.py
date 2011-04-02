@@ -63,30 +63,38 @@ def log2(x):
 			res += pow
 	return res
 
+def tile3D(x, y, z):
+	nx = len(x)
+	ny = len(y)
+	nz = len(z)
+
+	xx = numpy.tile(x, ny * nz).reshape(nz, ny, nx)
+	yy = numpy.transpose(numpy.tile(y, nx * nz).reshape(nz, nx, ny), axes=(0, 2, 1))
+	zz = numpy.transpose(numpy.tile(z, ny * nx).reshape(nx, ny, nz), axes=(2, 1, 0))
+
+	return xx, yy, zz
+
 def getPotentials(env, constants):
 	"""Returns array with values of external potential energy (in hbar units)."""
 
 	potentials = numpy.empty(constants.shape, dtype=constants.scalar.dtype)
 
 	if constants.dim == 1:
-		for k in xrange(constants.nvz):
-			z = -constants.zmax + k * constants.dz
-
-			potentials[k] = constants.m * (
-				(constants.w_z * z) ** 2) / (2.0 * constants.hbar)
+		z = -constants.zmax + numpy.arange(constants.nvz) * constants.dz
+		potentials = constants.m * ((constants.w_z * z) ** 2) / (2.0 * constants.hbar)
 
 	else:
-		for i in xrange(constants.nvx):
-			for j in xrange(constants.nvy):
-				for k in xrange(constants.nvz):
-					x = -constants.xmax + i * constants.dx
-					y = -constants.ymax + j * constants.dy
-					z = -constants.zmax + k * constants.dz
+		i, j, k = tile3D(numpy.arange(constants.nvx), numpy.arange(constants.nvy),
+			numpy.arange(constants.nvz))
 
-					potentials[k, j, i] = constants.m * (
-						(constants.w_x * x) ** 2 +
-						(constants.w_y * y) ** 2 +
-						(constants.w_z * z) ** 2) / (2.0 * constants.hbar)
+		x = -constants.xmax + i * constants.dx
+		y = -constants.ymax + j * constants.dy
+		z = -constants.zmax + k * constants.dz
+
+		potentials = constants.m * (
+			(constants.w_x * x) ** 2 +
+			(constants.w_y * y) ** 2 +
+			(constants.w_z * z) ** 2) / (2.0 * constants.hbar)
 
 	return env.toDevice(potentials)
 
@@ -100,18 +108,18 @@ def getKVectors(env, constants):
 
 	kvectors = numpy.empty(constants.shape, dtype=constants.scalar.dtype)
 
-	# FIXME: use elementwise operations
 	if constants.dim == 1:
-		for k, kz in enumerate(kvalues(constants.dz, constants.nvz)):
-			kvectors[k] = constants.hbar * kz * kz / (2.0 * constants.m)
+		kz = kvalues(constants.dz, constants.nvz)
+		kvectors = constants.hbar * kz ** 2 / (2.0 * constants.m)
 
 	else:
-		for i, kx in enumerate(kvalues(constants.dx, constants.nvx)):
-			for j, ky in enumerate(kvalues(constants.dy, constants.nvy)):
-				for k, kz in enumerate(kvalues(constants.dz, constants.nvz)):
+		kx = kvalues(constants.dx, constants.nvx)
+		ky = kvalues(constants.dy, constants.nvy)
+		kz = kvalues(constants.dz, constants.nvz)
+		kx, ky, kz = tile3D(kx, ky, kz)
 
-					kvectors[k, j, i] = constants.hbar * \
-						(kx * kx + ky * ky + kz * kz) / (2.0 * constants.m)
+		kvectors = constants.hbar * \
+			(kx * kx + ky * ky + kz * kz) / (2.0 * constants.m)
 
 	return env.toDevice(kvectors)
 
@@ -123,20 +131,24 @@ def getProjectorArray(constants):
 
 	mask = numpy.empty(constants.shape, dtype=constants.scalar.dtype)
 
-	# FIXME: use elementwise operations
+	mask_func = lambda x: 0.0 if x > constants.e_cut else 1.0
+	mask_map = numpy.vectorize(mask_func)
+
 	if constants.dim == 1:
-		for k, kz in enumerate(kvalues(constants.dz, constants.nvz)):
-			e_k = (constants.hbar * kz) ** 2 / (2.0 * constants.m)
-			mask[k] = 0.0 if e_k > constants.e_cut else 1.0
+		kz = kvalues(constants.dz, constants.nvz)
+		e_k = (constants.hbar * kz) ** 2 / (2.0 * constants.m)
+		mask = mask_map(e_k)
 
 	else:
-		for i, kx in enumerate(kvalues(constants.dx, constants.nvx)):
-			for j, ky in enumerate(kvalues(constants.dy, constants.nvy)):
-				for k, kz in enumerate(kvalues(constants.dz, constants.nvz)):
-					e_k = (constants.hbar ** 2) * \
-						(kx * kx + ky * ky + kz * kz) / (2.0 * constants.m)
+		kx = kvalues(constants.dx, constants.nvx)
+		ky = kvalues(constants.dy, constants.nvy)
+		kz = kvalues(constants.dz, constants.nvz)
+		kx, ky, kz = tile3D(kx, ky, kz)
 
-					mask[k, j, i] = 0.0 if e_k > constants.e_cut else 1.0
+		e_k = (constants.hbar ** 2) * \
+			(kx * kx + ky * ky + kz * kz) / (2.0 * constants.m)
+
+		mask = mask_map(e_k)
 
 	modes = numpy.sum(mask)
 	#print "Projector modes: " + str(modes) + " out of " + str(constants.cells)
