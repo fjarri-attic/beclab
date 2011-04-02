@@ -389,6 +389,10 @@ class Data:
 		format = data.pop('format')
 		return cls._load(format, **data)
 
+	@classmethod
+	def _load(cls, format, **kwds):
+		return cls(format, kwds.keys(), **kwds)
+
 
 class XYData(Data):
 
