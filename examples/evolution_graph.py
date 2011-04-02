@@ -26,7 +26,7 @@ def testEvolutionGraph(gpu):
 	# render
 	times, a_xy, a_yz, b_xy, b_yz = a.getData()
 
-	times = [str(int(x * 1000 + 0.5)) for x in times]
+	times = [str(int(x * 1000)) for x in times]
 
 	def constructPlot(dataset, dl):
 		hms = []
