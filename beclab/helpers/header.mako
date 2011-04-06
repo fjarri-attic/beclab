@@ -56,6 +56,17 @@ INTERNAL_FUNC ${complex} complex_mul(${complex} a, ${complex} b)
 	return complex_ctr(mad(-a.y, b.y, a.x * b.x), mad(a.y, b.x, a.x * b.y));
 }
 
+INTERNAL_FUNC ${complex} complex_inv(${complex} a)
+{
+	${scalar} module = a.x * a.x + a.y * a.y;
+	return complex_ctr(a.x / module, - a.y / module);
+}
+
+INTERNAL_FUNC ${complex} complex_div(${complex} a, ${complex} b)
+{
+	return complex_mul(a, complex_inv(b));
+}
+
 INTERNAL_FUNC ${scalar} squared_abs(${complex} a)
 {
 	return a.x * a.x + a.y * a.y;
