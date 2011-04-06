@@ -77,19 +77,27 @@ INTERNAL_FUNC ${complex} conj(${complex} a)
 	return complex_ctr(a.x, -a.y);
 }
 
+INTERNAL_FUNC ${complex} cexp(${scalar} module, ${scalar} angle)
+{
+		${scalar} cos_a, sin_a;
+
+	%if cuda:
+		${"sincos" + ("f" if scalar == "float" else "")}(angle, &sin_a, &cos_a);
+	%else:
+		cos_a = native_cos(angle);
+		sin_a = native_sin(angle);
+	%endif
+		return complex_mul_scalar(complex_ctr(cos_a, sin_a), module);
+}
+
 INTERNAL_FUNC ${complex} cexp(${complex} a)
 {
-	${scalar} module = exp(a.x);
-	${scalar} angle = a.y;
-	${scalar} cos_a, sin_a;
+	return cexp(exp(a.x), a.y);
+}
 
-%if cuda:
-	${"sincos" + ("f" if scalar == "float" else "")}(angle, &sin_a, &cos_a);
-%else:
-	cos_a = native_cos(angle);
-	sin_a = native_sin(angle);
-%endif
-	return complex_mul_scalar(complex_ctr(cos_a, sin_a), module);
+INTERNAL_FUNC ${complex} csqrt(${complex} a)
+{
+	return cexp(sqrt(sqrt(a.x * a.x + a.y * a.y)), 0.5 * atan2(a.y, a.x));
 }
 
 %if not cuda:
