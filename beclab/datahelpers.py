@@ -444,7 +444,7 @@ class HeightmapData(Data):
 
 class HeightmapPlot:
 
-	def __init__(self, heightmap_data):
+	def __init__(self, heightmap_data, colorbar=True):
 		self.data = heightmap_data
 
 		self.fig = plt.figure()
@@ -454,7 +454,9 @@ class HeightmapPlot:
 			aspect='auto', extent=(self.data.xmin, self.data.xmax,
 			self.data.ymin, self.data.ymax), cmap=_CMAP_BWR,
 			vmin=self.data.zmin, vmax=self.data.zmax)
-		self.fig.colorbar(im, orientation='horizontal', shrink=0.8).set_label(self.data.zname)
+
+		if colorbar:
+			self.fig.colorbar(im, orientation='horizontal', shrink=0.8).set_label(self.data.zname)
 
 	def save(self, filename):
 		self.fig.savefig(filename)
