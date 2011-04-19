@@ -706,6 +706,10 @@ class Uncertainty:
 		n1 = get(reduce(n1, ensembles)) * dV
 		n2 = get(reduce(n2, ensembles)) * dV
 
+		return self._getXiSquared(i, n1, n2)
+
+	def _getXiSquared(self, i, n1, n2):
+
 		Si = [i.real, i.imag, 0.5 * (n1 - n2)] # S values for each trajectory
 		avgs = [x.mean() for x in Si] # <S_i>, i=x,y,z
 
