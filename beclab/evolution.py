@@ -438,14 +438,13 @@ class SplitStepEvolution2(PairedCalculation):
 	of paired GPEs.
 	"""
 
-	def __init__(self, env, constants, rabi_freq=0, detuning=0, starting_phase=0):
+	def __init__(self, env, constants, rabi_freq=0, detuning=0):
 		PairedCalculation.__init__(self, env)
 		self._env = env
 		self._constants = constants
 
 		self._detuning = 2 * math.pi * detuning
 		self._rabi_freq = 2 * math.pi * rabi_freq
-		self._starting_phase = starting_phase
 
 		self._plan = createFFTPlan(env, constants.shape, constants.complex.dtype)
 		self._random = createRandom(env, constants.double)
@@ -459,7 +458,7 @@ class SplitStepEvolution2(PairedCalculation):
 
 		self._projector_mask = getProjectorMask(self._env, self._constants)
 
-		#self._prepare()
+		self._prepare()
 
 	def _cpu__projector(self, cloud):
 		nvz = self._constants.nvz
@@ -508,7 +507,8 @@ class SplitStepEvolution2(PairedCalculation):
 
 			// Propagates state vector in x-space for evolution calculation
 			EXPORTED_FUNC void propagateXSpaceTwoComponent(GLOBAL_MEM COMPLEX *aa,
-				GLOBAL_MEM COMPLEX *bb, SCALAR dt, SCALAR t, GLOBAL_MEM SCALAR *potentials)
+				GLOBAL_MEM COMPLEX *bb, SCALAR dt, SCALAR t, GLOBAL_MEM SCALAR *potentials,
+				SCALAR phi)
 			{
 				DEFINE_INDEXES;
 
@@ -554,7 +554,7 @@ class SplitStepEvolution2(PairedCalculation):
 						-(-V - ${g22} * n_b - ${g12} * n_a));
 
 					k = (SCALAR)${rabi_freq};
-					f = (SCALAR)${detuning} * t + (SCALAR)${phi};
+					f = (SCALAR)${detuning} * t + phi;
 
 					// calculating exp([[N1, -ik exp(-if)/2], [-ik exp(if)/2, N2]])
 					rt = csqrt(
@@ -681,7 +681,7 @@ class SplitStepEvolution2(PairedCalculation):
 
 		self._program = self._env.compileProgram(kernels, self._constants,
 			COMP_1_minus1=COMP_1_minus1, COMP_2_1=COMP_2_1,
-			rabi_freq=self._rabi_freq, detuning=self._detuning, phi=self._phi)
+			rabi_freq=self._rabi_freq, detuning=self._detuning)
 		self._kpropagate_func = self._program.propagateKSpaceRealTime
 		self._xpropagate_func = self._program.propagateXSpaceTwoComponent
 		self._addnoise_func = self._program.addNoise
@@ -721,10 +721,9 @@ class SplitStepEvolution2(PairedCalculation):
 				data2[start:stop,:,:] *= kcoeff
 
 	def _gpu__xpropagate(self, cloud, dt, t):
+		cast = self._constants.scalar.cast
 		self._xpropagate_func(cloud.a.size, cloud.a.data, cloud.b.data,
-			self._constants.scalar.cast(dt),
-			self._constants.scalar.cast(t),
-			self._potentials)
+			cast(dt), cast(t), self._potentials, cast(self._phi))
 
 	def _cpu__xpropagate(self, cloud, dt, t):
 		a = cloud.a
@@ -887,11 +886,11 @@ class SplitStepEvolution2(PairedCalculation):
 			callback(t, cloud)
 		self._toKSpace(cloud)
 
-	def run(self, cloud, time, callbacks=None, callback_dt=0, noise=True):
+	def run(self, cloud, time, callbacks=None, callback_dt=0, noise=True, starting_phase=0):
 
-		self._phi = cloud.time * self._detuning + self._starting_phase
+		self._phi = starting_phase
 
-		self._prepare()
+		#self._prepare()
 
 		starting_time = cloud.time
 		callback_t = 0
