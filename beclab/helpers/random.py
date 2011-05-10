@@ -49,7 +49,7 @@ class CUDARandom:
 	def random_normal(self, size, scale=1.0, loc=0.0):
 		uniform = self.rand((size * 2,))
 		normal = self._env.allocate((size,), self._complex_dtype)
-		self._randomNormalKernel(size, normal, uniform, self._scalar_cast(loc), self._scalar_cast(scale))
+		self._randomNormalKernel(size, normal, uniform, self._scalar_cast(loc), self._scalar_cast(scale / numpy.sqrt(2.0)))
 		return normal
 
 
@@ -64,7 +64,7 @@ class FakeRandom:
 		return self._env.toDevice(self._random.rand(shape))
 
 	def random_normal(self, size, scale=1.0, loc=0.0):
-		return self._env.toDevice(self._random.random_normal(size, scale=scale, loc=loc))
+		return self._env.toDevice(self._random.random_normal(size, scale=scale / numpy.sqrt(2.0), loc=loc))
 
 
 class CPURandom:
@@ -78,8 +78,8 @@ class CPURandom:
 		return numpy.random.rand(*shape).astype(self._scalar_dtype)
 
 	def random_normal(self, size, scale=1.0, loc=0.0):
-		return (numpy.random.normal(loc=loc, scale=scale, size=size) +
-			1j * numpy.random.normal(loc=loc, scale=scale, size=size)).astype(self._complex_dtype)
+		return (numpy.random.normal(loc=loc, scale=scale / numpy.sqrt(2.0), size=size) +
+			1j * numpy.random.normal(loc=loc, scale=scale / numpy.sqrt(2.0), size=size)).astype(self._complex_dtype)
 
 
 def createRandom(env, double):

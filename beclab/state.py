@@ -147,7 +147,7 @@ class State(PairedCalculation):
 		self.createEnsembles()
 
 		randoms = self._random.random_normal(
-			self._constants.cells * self._constants.ensembles, scale=0.5)
+			self._constants.cells * self._constants.ensembles, scale=numpy.sqrt(0.5))
 
 		projector_mask = getProjectorMask(self._env, self._constants)
 		self._addVacuumParticles(randoms, projector_mask)
