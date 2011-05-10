@@ -46,9 +46,7 @@ class _KernelWrapper:
 		self._customCall(grid, block, *args)
 
 	def _customCall(self, grid, block, *args):
-		self._kernel.param_set(*args)
-		self._kernel.set_block_shape(*block)
-		self._kernel.launch_grid_async(grid[0], grid[1], self._stream)
+		self._kernel(*args, grid=grid, block=block, stream=self._stream)
 
 	def customCall(self, global_size, block, *args):
 		block = tuple(list(block) + [1] * (3 - len(block)))
