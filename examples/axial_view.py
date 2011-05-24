@@ -8,7 +8,7 @@ def testAxial(gpu, matrix_pulses):
 
 	# preparation
 	env = envs.cuda() if gpu else envs.cpu()
-	constants = Constants(Model(N=150000, detuning=-41),
+	constants = Constants(Model(N=150000, detuning=41),
 		double=False if gpu else True)
 
 	gs = GPEGroundState(env, constants)
