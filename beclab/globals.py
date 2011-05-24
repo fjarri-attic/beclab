@@ -96,7 +96,7 @@ def getPotentials(env, constants):
 			(constants.w_y * y) ** 2 +
 			(constants.w_z * z) ** 2) / (2.0 * constants.hbar)
 
-	return env.toDevice(potentials)
+	return env.toDevice(potentials.astype(constants.scalar.dtype))
 
 def getKVectors(env, constants):
 	"""
@@ -121,7 +121,7 @@ def getKVectors(env, constants):
 		kvectors = constants.hbar * \
 			(kx * kx + ky * ky + kz * kz) / (2.0 * constants.m)
 
-	return env.toDevice(kvectors)
+	return env.toDevice(kvectors.astype(constants.scalar.dtype))
 
 
 def getProjectorArray(constants):
@@ -153,7 +153,7 @@ def getProjectorArray(constants):
 	modes = numpy.sum(mask)
 	#print "Projector modes: " + str(modes) + " out of " + str(constants.cells)
 
-	return mask, modes
+	return mask.astype(constants.scalar.dtype), modes
 
 def getProjectorMask(env, constants):
 	mask, _ = getProjectorArray(constants)
