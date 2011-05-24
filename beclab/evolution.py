@@ -74,7 +74,7 @@ class SplitStepEvolution(PairedCalculation):
 				DEFINE_INDEXES;
 
 				SCALAR kvector = kvectors[cell_index];
-				SCALAR prop_angle = kvector * dt / 2;
+				SCALAR prop_angle = -kvector * dt / 2;
 				COMPLEX prop_coeff = complex_ctr(cos(prop_angle), sin(prop_angle));
 
 				COMPLEX a0 = a[index];
@@ -120,14 +120,12 @@ class SplitStepEvolution(PairedCalculation):
 					// can only handle 10^-38.
 					temp = n_a * (SCALAR)${1.0e-10};
 
-					// TODO: there must be no minus sign before imaginary part,
-					// but without it the whole thing diverges
 					pa = complex_ctr(
 						-(temp * temp * ${c.l111 * 1e20} + ${c.l12} * n_b) / 2,
-						-(-V - ${g11} * n_a - ${g12} * n_b));
+						-(V + ${g11} * n_a + ${g12} * n_b));
 					pb = complex_ctr(
 						-(${c.l22} * n_b + ${c.l12} * n_a) / 2,
-						-(-V - ${g22} * n_b - ${g12} * n_a));
+						-(V + ${g22} * n_b + ${g12} * n_a));
 
 					/*
 					pa += complex_ctr(
@@ -256,7 +254,7 @@ class SplitStepEvolution(PairedCalculation):
 			cloud.a.data, cloud.b.data, self._constants.scalar.cast(dt), self._kvectors)
 
 	def _cpu__kpropagate(self, cloud, dt):
-		kcoeff = numpy.exp(self._kvectors * (1j * dt / 2))
+		kcoeff = numpy.exp(self._kvectors * (-1j * dt / 2))
 		data1 = cloud.a.data
 		data2 = cloud.b.data
 		nvz = self._constants.nvz
@@ -295,17 +293,17 @@ class SplitStepEvolution(PairedCalculation):
 		l12 = self._constants.l12
 		l22 = self._constants.l22
 
-		p = self._potentials * 1j
+		p = -self._potentials * 1j
 		nvz = self._constants.nvz
 
 		for iter in xrange(self._constants.itmax):
 			n_a = numpy.abs(a.data) ** 2
 			n_b = numpy.abs(b.data) ** 2
 
-			pa = n_a * n_a * (-l111 / 2) + n_b * (-l12 / 2) + \
+			pa = n_a * n_a * (-l111 / 2) + n_b * (-l12 / 2) - \
 				1j * (n_a * g11_by_hbar + n_b * g12_by_hbar)
 
-			pb = n_b * (-l22 / 2) + n_a * (-l12 / 2) + \
+			pb = n_b * (-l22 / 2) + n_a * (-l12 / 2) - \
 				1j * (n_b * g22_by_hbar + n_a * g12_by_hbar)
 
 			for e in xrange(cloud.a.size / self._constants.cells):
@@ -495,7 +493,7 @@ class SplitStepEvolution2(PairedCalculation):
 				DEFINE_INDEXES;
 
 				SCALAR kvector = kvectors[cell_index];
-				SCALAR prop_angle = kvector * dt / 2;
+				SCALAR prop_angle = -kvector * dt / 2;
 				COMPLEX prop_coeff = complex_ctr(cos(prop_angle), sin(prop_angle));
 
 				COMPLEX a0 = a[index];
@@ -548,10 +546,10 @@ class SplitStepEvolution2(PairedCalculation):
 					// but without it the whole thing diverges
 					N1 = complex_ctr(
 						-(temp * temp * ${c.l111 * 1e20} + ${c.l12} * n_b) / 2,
-						-(-V - ${g11} * n_a - ${g12} * n_b));
+						-(V + ${g11} * n_a + ${g12} * n_b));
 					N2 = complex_ctr(
 						-(${c.l22} * n_b + ${c.l12} * n_a) / 2,
-						-(-V - ${g22} * n_b - ${g12} * n_a));
+						-(V + ${g22} * n_b + ${g12} * n_a));
 
 					k = (SCALAR)${rabi_freq};
 					f = (SCALAR)${detuning} * t + phi;
@@ -702,7 +700,7 @@ class SplitStepEvolution2(PairedCalculation):
 			cloud.a.data, cloud.b.data, self._constants.scalar.cast(dt), self._kvectors)
 
 	def _cpu__kpropagate(self, cloud, dt):
-		kcoeff = numpy.exp(self._kvectors * (1j * dt / 2))
+		kcoeff = numpy.exp(self._kvectors * (-1j * dt / 2))
 		data1 = cloud.a.data
 		data2 = cloud.b.data
 		nvz = self._constants.nvz
@@ -742,7 +740,7 @@ class SplitStepEvolution2(PairedCalculation):
 		l12 = self._constants.l12
 		l22 = self._constants.l22
 
-		p = self._potentials * 1j
+		p = -self._potentials * 1j
 		nvz = self._constants.nvz
 
 		m = numpy.empty((2, 2, a.data.size), dtype=a.data.dtype)
@@ -751,10 +749,10 @@ class SplitStepEvolution2(PairedCalculation):
 			n_a = numpy.abs(a.data) ** 2
 			n_b = numpy.abs(b.data) ** 2
 
-			N1 = n_a * n_a * (-l111 / 2) + n_b * (-l12 / 2) + \
+			N1 = n_a * n_a * (-l111 / 2) + n_b * (-l12 / 2) - \
 				1j * (n_a * g11_by_hbar + n_b * g12_by_hbar)
 
-			N2 = n_b * (-l22 / 2) + n_a * (-l12 / 2) + \
+			N2 = n_b * (-l22 / 2) + n_a * (-l12 / 2) - \
 				1j * (n_b * g22_by_hbar + n_a * g12_by_hbar)
 
 			for e in xrange(cloud.a.size / self._constants.cells):
