@@ -97,7 +97,7 @@ INTERNAL_FUNC ${complex} cexp(${complex} a)
 
 INTERNAL_FUNC ${complex} csqrt(${complex} a)
 {
-	return cexp(sqrt(sqrt(a.x * a.x + a.y * a.y)), 0.5 * atan2(a.y, a.x));
+	return cexp(sqrt(sqrt(a.x * a.x + a.y * a.y)), (SCALAR)0.5 * atan2(a.y, a.x));
 }
 
 %if not cuda:
