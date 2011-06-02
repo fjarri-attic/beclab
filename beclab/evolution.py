@@ -483,7 +483,7 @@ class SplitStepEvolution2(PairedCalculation):
 
 		kernels = """
 			<%!
-				from math import sqrt
+				from math import sqrt, pi
 			%>
 
 			// Propagates state vector in k-space for evolution calculation (i.e., in real time)
@@ -564,10 +564,10 @@ class SplitStepEvolution2(PairedCalculation):
 
 					// elements of eigenvector matrix ([1, 1], [ev10, ev11])
 					ev10 = complex_mul(
-						complex_ctr(sin(f) / k, -cos(f) / k),
+						cexp((SCALAR)1.0 / k, f + (SCALAR)${pi / 2}),
 						rt + N1 - N2);
 					ev11 = complex_mul(
-						complex_ctr(-sin(f) / k, cos(f) / k),
+						cexp((SCALAR)-1.0 / k, f + (SCALAR)${pi / 2}),
 						rt - N1 + N2);
 
 					// elements of inverse eigenvector matrix
