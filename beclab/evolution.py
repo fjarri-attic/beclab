@@ -121,11 +121,11 @@ class SplitStepEvolution(PairedCalculation):
 					temp = n_a * (SCALAR)${1.0e-10};
 
 					pa = complex_ctr(
-						-(temp * temp * ${c.l111 * 1e20} + ${c.l12} * n_b) / 2,
-						-(V + ${g11} * n_a + ${g12} * n_b));
+						-(temp * temp * (SCALAR)${c.l111 * 1e20} + (SCALAR)${c.l12} * n_b) / 2,
+						-(V + (SCALAR)${g11} * n_a + (SCALAR)${g12} * n_b));
 					pb = complex_ctr(
-						-(${c.l22} * n_b + ${c.l12} * n_a) / 2,
-						-(V + ${g22} * n_b + ${g12} * n_a));
+						-((SCALAR)${c.l22} * n_b + (SCALAR)${c.l12} * n_a) / 2,
+						-(V + (SCALAR)${g22} * n_b + (SCALAR)${g12} * n_a));
 
 					/*
 					pa += complex_ctr(
@@ -543,11 +543,11 @@ class SplitStepEvolution2(PairedCalculation):
 					temp = n_a * (SCALAR)${1.0e-10};
 
 					N1 = complex_ctr(
-						-(temp * temp * ${c.l111 * 1e20} + ${c.l12} * n_b) / 2,
-						-(V + ${g11} * n_a + ${g12} * n_b));
+						-(temp * temp * (SCALAR)${c.l111 * 1e20} + (SCALAR)${c.l12} * n_b) / 2,
+						-(V + (SCALAR)${g11} * n_a + (SCALAR)${g12} * n_b));
 					N2 = complex_ctr(
-						-(${c.l22} * n_b + ${c.l12} * n_a) / 2,
-						-(V + ${g22} * n_b + ${g12} * n_a));
+						-((SCALAR)${c.l22} * n_b + (SCALAR)${c.l12} * n_a) / 2,
+						-(V + (SCALAR)${g22} * n_b + (SCALAR)${g12} * n_a));
 
 					k = (SCALAR)${rabi_freq};
 					f = (SCALAR)${detuning} * t + phi;
