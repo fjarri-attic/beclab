@@ -290,12 +290,12 @@ class RK4Pulse(PairedCalculation):
 				SCALAR n_a = squared_abs(a);
 				SCALAR n_b = squared_abs(b);
 
-				COMPLEX ta = complex_mul_scalar(ka, kvector) - complex_mul_scalar(a, potential);
-				COMPLEX tb = complex_mul_scalar(kb, kvector) - complex_mul_scalar(b, potential);
+				COMPLEX ta = complex_mul_scalar(ka, kvector) + complex_mul_scalar(a, potential);
+				COMPLEX tb = complex_mul_scalar(kb, kvector) + complex_mul_scalar(b, potential);
 
 				SCALAR phase = t * (SCALAR)${detuning} + phi;
-				SCALAR sin_phase = ${c.w_rabi / 2} * sin(phase);
-				SCALAR cos_phase = ${c.w_rabi / 2} * cos(phase);
+				SCALAR sin_phase = (SCALAR)${c.w_rabi / 2} * sin(phase);
+				SCALAR cos_phase = (SCALAR)${c.w_rabi / 2} * cos(phase);
 
 				<%
 					# FIXME: remove component hardcoding
@@ -306,18 +306,18 @@ class RK4Pulse(PairedCalculation):
 
 				// FIXME: Some magic here. l111 ~ 10^-42, while single precision float
 				// can only handle 10^-38.
-				SCALAR temp = n_a * ${1.0e-10};
+				SCALAR temp = n_a * (SCALAR)${1.0e-10};
 
-				*a_res = complex_ctr(-ta.y, ta.x) +
+				*a_res = complex_ctr(ta.y, -ta.x) +
 					complex_mul(complex_ctr(
-						- temp * temp * ${c.l111 * 1.0e20} - n_b * ${c.l12 / 2},
-						- n_a * ${g11} - n_b * ${g12}), a) -
+						- temp * temp * (SCALAR)${c.l111 * 1.0e20} - n_b * (SCALAR)${c.l12 / 2},
+						- n_a * (SCALAR)${g11} - n_b * (SCALAR)${g12}), a) -
 					complex_mul(complex_ctr(sin_phase, cos_phase), b);
 
-				*b_res = complex_ctr(-tb.y, tb.x) +
+				*b_res = complex_ctr(tb.y, -tb.x) +
 					complex_mul(complex_ctr(
-						- n_a * ${c.l12 / 2} - n_b * ${c.l22 / 2},
-						- n_a * ${g12} - n_b * ${g22}), b) -
+						- n_a * (SCALAR)${c.l12 / 2} - n_b * (SCALAR)${c.l22 / 2},
+						- n_a * (SCALAR)${g12} - n_b * (SCALAR)${g22}), b) -
 					complex_mul(complex_ctr(-sin_phase, cos_phase), a);
 			}
 
@@ -358,7 +358,7 @@ class RK4Pulse(PairedCalculation):
 
 				propagationFunc(&ra, &rb, a_val, b_val, ka, kb, t, dt, kvector, potential, phi);
 
-				if(stage != 4)
+				if(stage != 3)
 				{
 					a_res[index] = a0 + complex_mul_scalar(ra, dt * val_coeffs[stage]);
 					b_res[index] = b0 + complex_mul_scalar(rb, dt * val_coeffs[stage]);
@@ -543,9 +543,9 @@ class RK4Pulse(PairedCalculation):
 		for e in xrange(batch):
 			start = e * nvz
 			stop = (e + 1) * nvz
-			a_res[start:stop,:,:] = 1j * (a_kdata[start:stop,:,:] * self._kvectors -
+			a_res[start:stop,:,:] = -1j * (a_kdata[start:stop,:,:] * self._kvectors +
 				a_data[start:stop,:,:] * self._potentials)
-			b_res[start:stop,:,:] = 1j * (b_kdata[start:stop,:,:] * self._kvectors -
+			b_res[start:stop,:,:] = -1j * (b_kdata[start:stop,:,:] * self._kvectors +
 				b_data[start:stop,:,:] * self._potentials)
 
 		a_res += (n_a * n_a * (-l111 / 2) + n_b * (-l12 / 2) -
