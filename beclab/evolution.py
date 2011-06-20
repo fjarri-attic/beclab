@@ -542,8 +542,6 @@ class SplitStepEvolution2(PairedCalculation):
 					// can only handle 10^-38.
 					temp = n_a * (SCALAR)${1.0e-10};
 
-					// TODO: there must be no minus sign before imaginary part,
-					// but without it the whole thing diverges
 					N1 = complex_ctr(
 						-(temp * temp * ${c.l111 * 1e20} + ${c.l12} * n_b) / 2,
 						-(V + ${g11} * n_a + ${g12} * n_b));
