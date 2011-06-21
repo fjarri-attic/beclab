@@ -801,8 +801,9 @@ class SplitStepEvolution2(PairedCalculation):
 		#a.data *= da
 		#b.data *= db
 
+		a_copy = a.data.copy()
 		a.data = m[0,0,:].reshape(a0.shape) * a.data + m[0,1,:].reshape(a0.shape) * b.data
-		b.data = m[1,0,:].reshape(a0.shape) * a.data + m[1,1,:].reshape(a0.shape) * b.data
+		b.data = m[1,0,:].reshape(a0.shape) * a_copy + m[1,1,:].reshape(a0.shape) * b.data
 
 	def _noiseFunc(self, a_data, b_data):
 		coeff = math.sqrt(1.0 / self._constants.dV)
