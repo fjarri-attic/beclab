@@ -14,16 +14,63 @@ class TerminateEvolution(Exception):
 	pass
 
 
-class SplitStepEvolution(PairedCalculation):
+class Evolution(PairedCalculation):
+
+	def __init__(self, env):
+		PairedCalculation.__init__(self, env)
+		self._env = env
+
+	def _runCallbacks(self, cloud, callbacks):
+		if callbacks is None:
+			return
+
+		self._toCanonicalSpace(cloud)
+		for callback in callbacks:
+			callback(cloud.time, cloud)
+		self._toEvolutionSpace(cloud)
+
+	def run(self, cloud, time, callbacks=None, callback_dt=0):
+
+		starting_time = cloud.time
+		ending_time = cloud.time + time
+		callback_t = 0
+
+		self._toEvolutionSpace(cloud)
+
+		try:
+			self._runCallbacks(cloud, callbacks)
+
+			while cloud.time - starting_time < time:
+				dt_used = self.propagate(cloud, cloud.time - starting_time, ending_time - cloud.time)
+
+				cloud.time += dt_used
+				callback_t += dt_used
+
+				if callback_t > callback_dt:
+					self._runCallbacks(cloud, callbacks)
+					callback_t = 0
+
+			if callback_dt > time:
+				self._runCallbacks(cloud, callbacks)
+
+			self._toCanonicalSpace(cloud)
+
+		except TerminateEvolution:
+			return cloud.time
+
+class SplitStepEvolution(Evolution):
 	"""
 	Calculates evolution of two-component BEC, using split-step propagation
 	of paired GPEs.
 	"""
 
-	def __init__(self, env, constants):
-		PairedCalculation.__init__(self, env)
-		self._env = env
+	def __init__(self, env, constants, dt=None, noise=True):
+		Evolution.__init__(self, env)
 		self._constants = constants
+
+		# FIXME: temporary stub; remove when implement constants/grid separation
+		self._dt = dt if dt is not None else self._constants.dt_evo
+		self._noise = noise
 
 		self._plan = createFFTPlan(env, constants.shape, constants.complex.dtype)
 		self._random = createRandom(env, constants.double)
@@ -361,85 +408,58 @@ class SplitStepEvolution(PairedCalculation):
 		self._addnoise_func(cloud.a.size, cloud.a.data, cloud.b.data,
 			self._constants.scalar.cast(dt), randoms)
 
-	def _finishStep(self, cloud, dt):
+	def _finishStep(self, cloud):
 		if self._midstep:
-			self._kpropagate(cloud, dt)
+			self._kpropagate(cloud, self._dt)
 			self._midstep = False
 
-	def propagate(self, cloud, dt, noise):
+	def _toCanonicalSpace(self, cloud):
+		self._finishStep(cloud)
+		self._toXSpace(cloud)
+
+	def _toEvolutionSpace(self, cloud):
+		self._toKSpace(cloud)
+
+	def propagate(self, cloud, _, remaining_time):
+
+		# FIXME: don't ignore remaining_time
 
 		# replace two dt/2 k-space propagation by one dt propagation,
 		# if there were no rendering between them
 		if self._midstep:
-			self._kpropagate(cloud, dt * 2)
+			self._kpropagate(cloud, self._dt * 2)
 		else:
-			self._kpropagate(cloud, dt)
+			self._kpropagate(cloud, self._dt)
 
-		if cloud.type == WIGNER and noise:
+		if cloud.type == WIGNER and self._noise:
 			self._projector(cloud)
 
 		self._toXSpace(cloud)
-		self._xpropagate(cloud, dt)
+		self._xpropagate(cloud, self._dt)
 
-		if cloud.type == WIGNER and noise:
-			self._propagateNoise(cloud, dt)
-
-		cloud.time += dt
+		if cloud.type == WIGNER and self._noise:
+			self._propagateNoise(cloud, self._dt)
 
 		self._midstep = True
 		self._toKSpace(cloud)
 
-	def _runCallbacks(self, t, cloud, callbacks):
-		if callbacks is None:
-			return
-
-		self._finishStep(cloud, self._constants.dt_evo)
-		self._toXSpace(cloud)
-		for callback in callbacks:
-			callback(t, cloud)
-		self._toKSpace(cloud)
-
-	def run(self, cloud, time, callbacks=None, callback_dt=0, noise=True):
-
-		starting_time = cloud.time
-		callback_t = 0
-
-		# in natural units
-		dt = self._constants.dt_evo
-
-		self._toKSpace(cloud)
-
-		try:
-			self._runCallbacks(cloud.time, cloud, callbacks)
-
-			while cloud.time - starting_time < time:
-				self.propagate(cloud, dt, noise)
-
-				callback_t += dt
-
-				if callback_t > callback_dt:
-					self._runCallbacks(cloud.time, cloud, callbacks)
-					callback_t = 0
-
-			if callback_dt > time:
-				self._runCallbacks(cloud.time, cloud, callbacks)
-
-			self._toXSpace(cloud)
-
-		except TerminateEvolution:
-			return cloud.time
+		return self._dt
 
 
-class SplitStepEvolution2(PairedCalculation):
+class SplitStepEvolution2(Evolution):
 	"""
 	Calculates evolution of two-component BEC, using split-step propagation
 	of paired GPEs.
 	"""
 
-	def __init__(self, env, constants, rabi_freq=0, detuning=0):
+	def __init__(self, env, constants, rabi_freq=0, detuning=0, dt=None, noise=True):
 		PairedCalculation.__init__(self, env)
 		self._env = env
 		self._constants = constants
+
+		# FIXME: temporary stub; remove when implement constants/grid separation
+		self._dt = dt if dt is not None else self._constants.dt_evo
+		self._noise = noise
 
 		self._detuning = 2 * math.pi * detuning
 		self._rabi_freq = 2 * math.pi * rabi_freq
@@ -845,74 +865,44 @@ class SplitStepEvolution2(PairedCalculation):
 		self._addnoise_func(cloud.a.size, cloud.a.data, cloud.b.data,
 			self._constants.scalar.cast(dt), randoms)
 
-	def _finishStep(self, cloud, dt):
+	def _finishStep(self, cloud):
 		if self._midstep:
-			self._kpropagate(cloud, dt)
+			self._kpropagate(cloud, self._dt)
 			self._midstep = False
 
-	def propagate(self, cloud, dt, noise, t):
+	def _toCanonicalSpace(self, cloud):
+		self._finishStep(cloud)
+		self._toXSpace(cloud)
+
+	def _toEvolutionSpace(self, cloud):
+		self._toKSpace(cloud)
+
+	def propagate(self, cloud, t, remaining_time):
 
 		# replace two dt/2 k-space propagation by one dt propagation,
 		# if there were no rendering between them
 		if self._midstep:
-			self._kpropagate(cloud, dt * 2)
+			self._kpropagate(cloud, self._dt * 2)
 		else:
-			self._kpropagate(cloud, dt)
+			self._kpropagate(cloud, self._dt)
 
 		if cloud.type == WIGNER and noise:
 			self._projector(cloud)
 
 		self._toXSpace(cloud)
-		self._xpropagate(cloud, dt, t)
+		self._xpropagate(cloud, self._dt, t)
 
 		if cloud.type == WIGNER and noise:
-			self._propagateNoise(cloud, dt)
-
-		cloud.time += dt
+			self._propagateNoise(cloud, self._dt)
 
 		self._midstep = True
 		self._toKSpace(cloud)
 
-	def _runCallbacks(self, t, cloud, callbacks):
-		if callbacks is None:
-			return
+		return self._dt
 
-		self._finishStep(cloud, self._constants.dt_evo)
-		self._toXSpace(cloud)
-		for callback in callbacks:
-			callback(t, cloud)
-		self._toKSpace(cloud)
-
-	def run(self, cloud, time, callbacks=None, callback_dt=0, noise=True, starting_phase=0):
+	def run(self, *args, **kwds):
+		if 'starting_phase' in kwds:
+			starting_phase = kwds.pop('starting_phase')
 
 		self._phi = starting_phase
-
-		#self._prepare()
-
-		starting_time = cloud.time
-		callback_t = 0
-
-		# in natural units
-		dt = self._constants.dt_evo
-
-		self._toKSpace(cloud)
-
-		try:
-			self._runCallbacks(cloud.time, cloud, callbacks)
-
-			while cloud.time - starting_time < time:
-				self.propagate(cloud, dt, noise, cloud.time - starting_time)
-
-				callback_t += dt
-
-				if callback_t > callback_dt:
-					self._runCallbacks(cloud.time, cloud, callbacks)
-					callback_t = 0
-
-			if callback_dt > time:
-				self._runCallbacks(cloud.time, cloud, callbacks)
-
-			self._toXSpace(cloud)
-
-		except TerminateEvolution:
-			return cloud.time
+		Evolution.run(self, *args, **kwds)
