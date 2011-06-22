@@ -3,7 +3,7 @@ import copy
 from .helpers import *
 from .globals import *
 from .constants import PSI_FUNC, WIGNER, COMP_1_minus1, COMP_2_1
-from .evolution import SplitStepEvolution2
+from .evolution import SplitStepEvolution
 
 
 class Pulse(PairedCalculation):
@@ -27,7 +27,7 @@ class Pulse(PairedCalculation):
 
 		c = copy.deepcopy(constants)
 		c.dt_evo = c.t_rabi / 1e3 if dt is None else dt
-		self._evolution = SplitStepEvolution2(env, c,
+		self._evolution = SplitStepEvolution(env, c,
 			rabi_freq=c.w_rabi / 2.0 / math.pi,
 			detuning=self._detuning / 2.0 / math.pi)
 
