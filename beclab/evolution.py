@@ -20,6 +20,12 @@ class Evolution(PairedCalculation):
 		PairedCalculation.__init__(self, env)
 		self._env = env
 
+	def _toCanonicalSpace(self, cloud):
+		pass
+
+	def _toEvolutionSpace(self, cloud):
+		pass
+
 	def _runCallbacks(self, cloud, callbacks):
 		if callbacks is None:
 			return
