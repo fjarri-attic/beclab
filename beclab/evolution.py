@@ -47,12 +47,12 @@ class Evolution(PairedCalculation):
 			self._runCallbacks(cloud, callbacks)
 
 			while cloud.time - starting_time < time:
-				dt_used = self.propagate(cloud, cloud.time - starting_time, ending_time - cloud.time)
+				dt_used = self.propagate(cloud, cloud.time - starting_time, callback_dt - callback_t)
 
 				cloud.time += dt_used
 				callback_t += dt_used
 
-				if callback_t > callback_dt:
+				if callback_t >= callback_dt:
 					self._runCallbacks(cloud, callbacks)
 					callback_t = 0
 
