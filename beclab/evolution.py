@@ -26,6 +26,9 @@ class Evolution(PairedCalculation):
 	def _toEvolutionSpace(self, cloud):
 		pass
 
+	def _collectMetrics(self, t):
+		pass
+
 	def _runCallbacks(self, cloud, callbacks):
 		if callbacks is None:
 			return
@@ -48,6 +51,7 @@ class Evolution(PairedCalculation):
 
 			while cloud.time - starting_time < time:
 				dt_used = self.propagate(cloud, cloud.time - starting_time, callback_dt - callback_t)
+				self._collectMetrics(cloud.time)
 
 				cloud.time += dt_used
 				callback_t += dt_used
@@ -1028,6 +1032,9 @@ class RK5IPEvolution(Evolution):
 		self._potentials = getPotentials(self._env, self._constants)
 		self._kvectors = getKVectors(self._env, self._constants)
 
+		self._dt_times = []
+		self._dts = []
+
 		self._prepare()
 
 	def _cpu__prepare(self):
@@ -1234,6 +1241,13 @@ class RK5IPEvolution(Evolution):
 
 	def propagate(self, cloud, t, remaining_time):
 		return self._propagate_rk5_dynamic(cloud.a, cloud.b, t, remaining_time)
+
+	def _collectMetrics(self, t):
+		self._dts.append(self._dt_used)
+		self._dt_times.append(t)
+
+	def getTimeSteps(self):
+		return numpy.array(self._dt_times), numpy.array(self._dts)
 
 	def run(self, *args, **kwds):
 		if 'starting_phase' in kwds:
