@@ -558,3 +558,697 @@ class SplitStepEvolution(Evolution):
 			self._phi = 0.0
 
 		Evolution.run(self, *args, **kwds)
+
+
+class RK4Evolution(Evolution):
+
+	def __init__(self, env, constants, rabi_freq=0, detuning=0, dt=None):
+		PairedCalculation.__init__(self, env)
+		self._env = env
+		self._constants = constants
+
+		# FIXME: temporary stub; remove when implement constants/grid separation
+		self._dt = dt if dt is not None else self._constants.dt_evo
+
+		self._detuning = 2 * math.pi * detuning
+		self._rabi_freq = 2 * math.pi * rabi_freq
+
+		self._plan = createFFTPlan(env, constants.shape, constants.complex.dtype)
+		self._random = createRandom(env, constants.double)
+
+		self._potentials = getPotentials(self._env, self._constants)
+		self._kvectors = getKVectors(self._env, self._constants)
+
+		self._prepare()
+
+	def _cpu__prepare(self):
+		pass
+
+	def _gpu__prepare(self):
+		kernels = """
+			<%!
+				from math import sqrt
+			%>
+
+			INTERNAL_FUNC void propagationFunc(COMPLEX *a_res, COMPLEX *b_res,
+				COMPLEX a, COMPLEX b,
+				COMPLEX ka, COMPLEX kb,
+				SCALAR t, SCALAR dt,
+				SCALAR kvector, SCALAR potential,
+				SCALAR phi)
+			{
+				SCALAR n_a = squared_abs(a);
+				SCALAR n_b = squared_abs(b);
+
+				COMPLEX ta = complex_mul_scalar(ka, kvector) + complex_mul_scalar(a, potential);
+				COMPLEX tb = complex_mul_scalar(kb, kvector) + complex_mul_scalar(b, potential);
+
+				SCALAR phase = t * (SCALAR)${detuning} + phi;
+				SCALAR sin_phase = (SCALAR)${rabi_freq / 2} * sin(phase);
+				SCALAR cos_phase = (SCALAR)${rabi_freq / 2} * cos(phase);
+
+				<%
+					# FIXME: remove component hardcoding
+					g11 = c.g_by_hbar[(COMP_1_minus1, COMP_1_minus1)]
+					g12 = c.g_by_hbar[(COMP_1_minus1, COMP_2_1)]
+					g22 = c.g_by_hbar[(COMP_2_1, COMP_2_1)]
+				%>
+
+				// FIXME: Some magic here. l111 ~ 10^-42, while single precision float
+				// can only handle 10^-38.
+				SCALAR temp = n_a * (SCALAR)${1.0e-10};
+
+				*a_res = complex_ctr(ta.y, -ta.x) +
+					complex_mul(complex_ctr(
+						- temp * temp * (SCALAR)${c.l111 * 1.0e20} - n_b * (SCALAR)${c.l12 / 2},
+						- n_a * (SCALAR)${g11} - n_b * (SCALAR)${g12}), a) -
+					complex_mul(complex_ctr(sin_phase, cos_phase), b);
+
+				*b_res = complex_ctr(tb.y, -tb.x) +
+					complex_mul(complex_ctr(
+						- n_a * (SCALAR)${c.l12 / 2} - n_b * (SCALAR)${c.l22 / 2},
+						- n_a * (SCALAR)${g12} - n_b * (SCALAR)${g22}), b) -
+					complex_mul(complex_ctr(-sin_phase, cos_phase), a);
+			}
+
+			EXPORTED_FUNC void calculateRK(GLOBAL_MEM COMPLEX *a, GLOBAL_MEM COMPLEX *b,
+				GLOBAL_MEM COMPLEX *a_copy, GLOBAL_MEM COMPLEX *b_copy,
+				GLOBAL_MEM COMPLEX *a_kdata, GLOBAL_MEM COMPLEX *b_kdata,
+				GLOBAL_MEM COMPLEX *a_res, GLOBAL_MEM COMPLEX *b_res,
+				SCALAR t, SCALAR dt,
+				GLOBAL_MEM SCALAR *potentials, GLOBAL_MEM SCALAR *kvectors,
+				SCALAR phi, int stage)
+			{
+				DEFINE_INDEXES;
+
+				SCALAR kvector = kvectors[cell_index];
+				SCALAR potential = potentials[cell_index];
+
+				COMPLEX ra = a_res[index];
+				COMPLEX rb = b_res[index];
+				COMPLEX ka = a_kdata[index];
+				COMPLEX kb = b_kdata[index];
+				COMPLEX a0 = a_copy[index];
+				COMPLEX b0 = b_copy[index];
+
+				SCALAR val_coeffs[4] = {0.5, 0.5, 1.0};
+				SCALAR res_coeffs[4] = {1.0 / 6.0, 1.0 / 3.0, 1.0 / 3.0, 1.0 / 6.0};
+
+				COMPLEX a_val, b_val;
+				if(stage == 0)
+				{
+					a_val = a0;
+					b_val = b0;
+				}
+				else
+				{
+					a_val = ra;
+					b_val = rb;
+				}
+
+				propagationFunc(&ra, &rb, a_val, b_val, ka, kb, t, dt, kvector, potential, phi);
+
+				if(stage != 3)
+				{
+					a_res[index] = a0 + complex_mul_scalar(ra, dt * val_coeffs[stage]);
+					b_res[index] = b0 + complex_mul_scalar(rb, dt * val_coeffs[stage]);
+				}
+
+				a[index] = a[index] + complex_mul_scalar(ra, dt * res_coeffs[stage]);
+				b[index] = b[index] + complex_mul_scalar(rb, dt * res_coeffs[stage]);
+			}
+		"""
+
+		self._program = self._env.compileProgram(kernels, self._constants,
+			detuning=self._detuning, rabi_freq=self._rabi_freq,
+			COMP_1_minus1=COMP_1_minus1, COMP_2_1=COMP_2_1)
+		self._calculateRK = self._program.calculateRK
+
+	def _cpu__propagationFunc(self, a_data, b_data, a_kdata, b_kdata, a_res, b_res, t, dt, phi):
+
+		batch = a_data.size / self._constants.cells
+		nvz = self._constants.nvz
+
+		# FIXME: remove hardcoding (g must depend on cloud.a.comp and cloud.b.comp)
+		g_by_hbar = self._constants.g_by_hbar
+		g11_by_hbar = g_by_hbar[(COMP_1_minus1, COMP_1_minus1)]
+		g12_by_hbar = g_by_hbar[(COMP_1_minus1, COMP_2_1)]
+		g22_by_hbar = g_by_hbar[(COMP_2_1, COMP_2_1)]
+
+		l111 = self._constants.l111
+		l12 = self._constants.l12
+		l22 = self._constants.l22
+
+		n_a = numpy.abs(a_data) ** 2
+		n_b = numpy.abs(b_data) ** 2
+
+		for e in xrange(batch):
+			start = e * nvz
+			stop = (e + 1) * nvz
+			a_res[start:stop,:,:] = -1j * (a_kdata[start:stop,:,:] * self._kvectors +
+				a_data[start:stop,:,:] * self._potentials)
+			b_res[start:stop,:,:] = -1j * (b_kdata[start:stop,:,:] * self._kvectors +
+				b_data[start:stop,:,:] * self._potentials)
+
+		a_res += (n_a * n_a * (-l111 / 2) + n_b * (-l12 / 2) -
+			1j * (n_a * g11_by_hbar + n_b * g12_by_hbar)) * a_data - \
+			0.5j * self._rabi_freq * \
+				numpy.exp(1j * (- t * self._detuning - phi)) * b_data
+
+		b_res += (n_b * (-l22 / 2) + n_a * (-l12 / 2) -
+			1j * (n_b * g22_by_hbar + n_a * g12_by_hbar)) * b_data - \
+			0.5j * self._rabi_freq * \
+				numpy.exp(1j * (t * self._detuning + phi)) * a_data
+
+	def _cpu__calculateRK(self, _, a_data, b_data, a_copy, b_copy, a_kdata, b_kdata,
+			a_res, b_res, t, dt, p, k, phi, stage):
+
+		val_coeffs = (0.5, 0.5, 1.0, 0.0)
+		res_coeffs = (1.0 / 6.0, 1.0 / 3.0, 1.0 / 3.0, 1.0 / 6.0)
+		t_coeffs = (0.0, 0.5, 0.5, 1.0)
+
+		if stage == 0:
+			a = a_data.copy()
+			b = b_data.copy()
+		else:
+			a = a_res.copy()
+			b = b_res.copy()
+
+		self._propagationFunc(a, b, a_kdata, b_kdata, a_res, b_res, t + t_coeffs[stage] * dt, dt, phi)
+
+		a_data += a_res * (dt * res_coeffs[stage])
+		b_data += b_res * (dt * res_coeffs[stage])
+
+		a_res[:,:,:] = a_copy + a_res * (dt * val_coeffs[stage])
+		b_res[:,:,:] = b_copy + b_res * (dt * val_coeffs[stage])
+
+	def propagate(self, cloud, t, remaining_time):
+
+		# replace two dt/2 k-space propagation by one dt propagation,
+		# if there were no rendering between them
+
+		batch = cloud.a.size / self._constants.cells
+
+		func = self._calculateRK
+		fft = self._plan.execute
+		cast = self._constants.scalar.cast
+		p = self._potentials
+		k = self._kvectors
+
+		dt = cast(self._dt)
+		t = cast(t)
+		phi = cast(self._phi)
+		size = cloud.a.size
+
+		self._env.copyBuffer(cloud.a.data, self._a_copy)
+		self._env.copyBuffer(cloud.b.data, self._b_copy)
+
+		for i in xrange(4):
+			fft(self._a_copy, self._a_kdata, inverse=True, batch=batch)
+			fft(self._b_copy, self._b_kdata, inverse=True, batch=batch)
+			func(size, cloud.a.data, cloud.b.data,
+				self._a_copy, self._b_copy, self._a_kdata, self._b_kdata,
+				self._a_res, self._b_res, t, dt, p, k, phi, numpy.int32(i))
+
+		return self._dt
+
+	def run(self, *args, **kwds):
+		if 'starting_phase' in kwds:
+			starting_phase = kwds.pop('starting_phase')
+			self._phi = starting_phase
+		else:
+			self._phi = 0.0
+
+		shape = args[0].a.shape
+		dtype = args[0].a.dtype
+
+		self._a_copy = self._env.allocate(shape, dtype=dtype)
+		self._b_copy = self._env.allocate(shape, dtype=dtype)
+		self._a_kdata = self._env.allocate(shape, dtype=dtype)
+		self._b_kdata = self._env.allocate(shape, dtype=dtype)
+		self._a_res = self._env.allocate(shape, dtype=dtype)
+		self._b_res = self._env.allocate(shape, dtype=dtype)
+
+		Evolution.run(self, *args, **kwds)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+class RK5Evolution(Evolution):
+
+	def __init__(self, env, constants, dt=1e-6, eps=1e-9, tiny=1e-3, detuning=0, rabi_freq=0):
+		Evolution.__init__(self, env)
+		self._constants = constants
+
+		# FIXME: implement adaptive time step propagation
+		self._dt = dt
+		self._eps = eps
+		self._tiny = tiny
+
+		self._detuning = 2 * math.pi * detuning
+		self._rabi_freq = 2 * math.pi * rabi_freq
+
+		self._plan = createFFTPlan(env, constants.shape, constants.complex.dtype)
+
+		self._potentials = getPotentials(self._env, self._constants)
+		self._kvectors = getKVectors(self._env, self._constants)
+
+		self._prepare()
+
+	def _cpu__prepare(self):
+		pass
+
+	def _propagationFunc(self, state1, state2, t):
+		res1 = numpy.empty_like(state1)
+		res2 = numpy.empty_like(state2)
+		self._propagationFuncInplace(state1, state2, res1, res2, t)
+		return res1, res2
+
+	def _propagationFuncInplace(self, state1, state2, res1, res2, t):
+
+		batch = 1 # FIXME: hardcoding
+		nvz = self._constants.nvz
+
+		# FIXME: remove hardcoding (g must depend on cloud.a.comp and cloud.b.comp)
+		g_by_hbar = self._constants.g_by_hbar
+		g11_by_hbar = g_by_hbar[(COMP_1_minus1, COMP_1_minus1)]
+		g12_by_hbar = g_by_hbar[(COMP_1_minus1, COMP_2_1)]
+		g22_by_hbar = g_by_hbar[(COMP_2_1, COMP_2_1)]
+
+		l111 = self._constants.l111
+		l12 = self._constants.l12
+		l22 = self._constants.l22
+
+		n_a = numpy.abs(state1) ** 2
+		n_b = numpy.abs(state2) ** 2
+
+		self._plan.execute(state1, self._a_kdata, batch=batch, inverse=True)
+		self._plan.execute(state1, self._b_kdata, batch=batch, inverse=True)
+
+		for e in xrange(batch):
+			start = e * nvz
+			stop = (e + 1) * nvz
+			res1[start:stop,:,:] = -1j * (self._a_kdata[start:stop,:,:] * self._kvectors +
+				state1[start:stop,:,:] * self._potentials)
+			res2[start:stop,:,:] = -1j * (self._b_kdata[start:stop,:,:] * self._kvectors +
+				state2[start:stop,:,:] * self._potentials)
+
+		res1 += (n_a * n_a * (-l111 / 2) + n_b * (-l12 / 2) -
+			1j * (n_a * g11_by_hbar + n_b * g12_by_hbar)) * state1 - \
+			0.5j * self._rabi_freq * \
+				numpy.exp(1j * (- t * self._detuning - self._phi)) * state2
+
+		res2 += (n_b * (-l22 / 2) + n_a * (-l12 / 2) -
+			1j * (n_b * g22_by_hbar + n_a * g12_by_hbar)) * state2 - \
+			0.5j * self._rabi_freq * \
+				numpy.exp(1j * (t * self._detuning + self._phi)) * state1
+
+	def _cpu__propagate_rk5(self, state1, state2, dt, t):
+
+		a = numpy.array([0, 0.2, 0.3, 0.6, 1, 0.875])
+		b = numpy.array([
+			[0, 0, 0, 0, 0],
+			[1.0 / 5, 0, 0, 0, 0],
+			[3.0 / 40, 9.0 / 40, 0, 0, 0],
+			[3.0 / 10, -9.0 / 10, 6.0 / 5, 0, 0],
+			[-11.0 / 54, 5.0 / 2, -70.0 / 27, 35.0 / 27, 0],
+			[1631.0 / 55296, 175.0 / 512, 575.0 / 13824, 44275.0 / 110592, 253.0 / 4096]
+		])
+		c = numpy.array([37.0 / 378, 0, 250.0 / 621, 125.0 / 594, 0, 512.0 / 1771])
+		cs = numpy.array([2825.0 / 27648, 0, 18575.0 / 48384.0, 13525.0 / 55296, 277.0 / 14336, 0.25])
+
+		k1s1, k1s2 = self._propagationFunc(state1, state2, t)
+		k1s1 *= dt
+		k1s2 *= dt
+
+		k2s1, k2s2 = self._propagationFunc(
+			state1 + b[1,0] * k1s1,
+			state2 + b[1,0] * k1s2, t + a[1] * dt)
+		k2s1 *= dt
+		k2s2 *= dt
+
+		k3s1, k3s2 = self._propagationFunc(
+			state1 + b[2,0] * k1s1 + b[2,1] * k2s1,
+			state2 + b[2,0] * k1s2 + b[2,1] * k2s2, t + a[2] * dt)
+		k3s1 *= dt
+		k3s2 *= dt
+
+		k4s1, k4s2 = self._propagationFunc(
+			state1 + b[3,0] * k1s1 + b[3,1] * k2s1 + b[3,2] * k3s1,
+			state2 + b[3,0] * k1s2 + b[3,1] * k2s2 + b[3,2] * k3s2, t + a[3] * dt)
+		k4s1 *= dt
+		k4s2 *= dt
+
+		k5s1, k5s2 = self._propagationFunc(
+			state1 + b[4,0] * k1s1 + b[4,1] * k2s1 + b[4,2] * k3s1 + b[4,3] * k4s1,
+			state2 + b[4,0] * k1s2 + b[4,1] * k2s2 + b[4,2] * k3s2 + b[4,3] * k4s2, t + a[4] * dt)
+		k5s1 *= dt
+		k5s2 *= dt
+
+		k6s1, k6s2 = self._propagationFunc(
+			state1 + b[5,0] * k1s1 + b[5,1] * k2s1 + b[5,2] * k3s1 + b[5,3] * k4s1 + b[5,4] * k5s1,
+			state2 + b[5,0] * k1s2 + b[5,1] * k2s2 + b[5,2] * k3s2 + b[5,3] * k4s2 + b[5,4] * k5s2, t + a[5] * dt)
+		k6s1 *= dt
+		k6s2 *= dt
+
+		y_s1 = state1 + c[0] * k1s1 + c[1] * k2s1 + c[2] * k3s1 + c[3] * k4s1 + c[4] * k5s1 + c[5] * k6s1
+		y_s2 = state2 + c[0] * k1s2 + c[1] * k2s2 + c[2] * k3s2 + c[3] * k4s2 + c[4] * k5s2 + c[5] * k6s2
+
+		ys_s1 = state1 + cs[0] * k1s1 + cs[1] * k2s1 + cs[2] * k3s1 + cs[3] * k4s1 + cs[4] * k5s1 + cs[5] * k6s1
+		ys_s2 = state2 + cs[0] * k1s2 + cs[1] * k2s2 + cs[2] * k3s2 + cs[3] * k4s2 + cs[4] * k5s2 + cs[5] * k6s2
+
+		delta_s1 = y_s1 - ys_s1
+		delta_s2 = y_s2 - ys_s2
+
+		return y_s1, y_s2, numpy.concatenate([delta_s1, delta_s2])
+
+	def _cpu__propagate_rk5_dynamic(self, state1, state2, t):
+
+		safety = 0.9
+		eps = self._eps # 1e-9
+		tiny = self._tiny # 1e-3
+
+		dt = self._dt
+
+		ds1, ds2 = self._propagationFunc(state1.data, state2.data, t)
+		yscal = numpy.concatenate([
+			numpy.abs(state1.data) + dt * numpy.abs(ds1),
+			numpy.abs(state2.data) + dt * numpy.abs(ds2)
+		]) + tiny
+
+		while True:
+			#print "Trying with step " + str(dt)
+			s1, s2, delta_1 = self._propagate_rk5(state1.data, state2.data, dt, t)
+			errmax = numpy.abs(delta_1 / yscal).max() / eps
+			#print "Error: " + str(errmax)
+			if errmax < 1.0:
+				#print "Seems ok"
+				break
+
+			# reducing step size and retying step
+			dt_temp = safety * dt * (errmax ** (-0.25))
+			dt = max(dt_temp, 0.1 * dt)
+
+		dt_used = dt
+
+		if errmax > (5.0 / safety) ** (-1.0 / 0.2):
+			self._dt = safety * dt * (errmax ** (-0.2))
+		else:
+			self._dt = 5.0 * dt
+
+		state1.data.flat[:] = s1.flat
+		state2.data.flat[:] = s2.flat
+
+		return dt_used
+
+	def propagate(self, cloud, t, remaining_time):
+		return self._propagate_rk5_dynamic(cloud.a, cloud.b, t)
+
+	def run(self, *args, **kwds):
+		if 'starting_phase' in kwds:
+			starting_phase = kwds.pop('starting_phase')
+			self._phi = starting_phase
+		else:
+			self._phi = 0.0
+
+		shape = args[0].a.shape
+		dtype = args[0].a.dtype
+
+		self._a_kdata = self._env.allocate(shape, dtype=dtype)
+		self._b_kdata = self._env.allocate(shape, dtype=dtype)
+
+		Evolution.run(self, *args, **kwds)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+class RK5IPEvolution(Evolution):
+
+	def __init__(self, env, constants, dt=1e-6, eps=1e-6, tiny=1e-3, detuning=0, rabi_freq=0):
+		Evolution.__init__(self, env)
+		self._constants = constants
+
+		# FIXME: implement adaptive time step propagation
+		self._dt = dt
+		self._eps = eps
+		self._tiny = tiny
+
+		self._detuning = 2 * math.pi * detuning
+		self._rabi_freq = 2 * math.pi * rabi_freq
+
+		self._plan = createFFTPlan(env, constants.shape, constants.complex.dtype)
+
+		self._potentials = getPotentials(self._env, self._constants)
+		self._kvectors = getKVectors(self._env, self._constants)
+
+		self._prepare()
+
+	def _cpu__prepare(self):
+		pass
+
+	def _propagationFunc(self, state1, state2, t, dt):
+		res1 = numpy.empty_like(state1)
+		res2 = numpy.empty_like(state2)
+		self._propagationFuncInplace(state1, state2, res1, res2, t, dt)
+		return res1, res2
+
+	def _propagationFuncInplace(self, state1, state2, res1, res2, t, dt):
+
+		batch = 1 # FIXME: hardcoding
+		nvz = self._constants.nvz
+
+		# FIXME: remove hardcoding (g must depend on cloud.a.comp and cloud.b.comp)
+		g_by_hbar = self._constants.g_by_hbar
+		g11_by_hbar = g_by_hbar[(COMP_1_minus1, COMP_1_minus1)]
+		g12_by_hbar = g_by_hbar[(COMP_1_minus1, COMP_2_1)]
+		g22_by_hbar = g_by_hbar[(COMP_2_1, COMP_2_1)]
+
+		l111 = self._constants.l111
+		l12 = self._constants.l12
+		l22 = self._constants.l22
+
+		x1 = self._a_kdata
+		x2 = self._b_kdata
+
+		self._fromIP(state1, state2, x1, x2, dt)
+
+		n_a = numpy.abs(x1) ** 2
+		n_b = numpy.abs(x2) ** 2
+
+		for e in xrange(batch):
+			start = e * nvz
+			stop = (e + 1) * nvz
+			res1[start:stop,:,:] = -1j * (x1[start:stop,:,:] * self._potentials)
+			res2[start:stop,:,:] = -1j * (x2[start:stop,:,:] * self._potentials)
+
+		res1 += (n_a * n_a * (-l111 / 2) + n_b * (-l12 / 2) -
+			1j * (n_a * g11_by_hbar + n_b * g12_by_hbar)) * x1 - \
+			0.5j * self._rabi_freq * \
+				numpy.exp(1j * (- t * self._detuning - self._phi)) * x2
+
+		res2 += (n_b * (-l22 / 2) + n_a * (-l12 / 2) -
+			1j * (n_b * g22_by_hbar + n_a * g12_by_hbar)) * x2 - \
+			0.5j * self._rabi_freq * \
+				numpy.exp(1j * (t * self._detuning + self._phi)) * x1
+
+		self._toIP(res1, res2, res1, res2, dt)
+
+	def _cpu__propagate_rk5(self, state1, state2, dt, t):
+
+		a = numpy.array([0, 0.2, 0.3, 0.6, 1, 0.875])
+		b = numpy.array([
+			[0, 0, 0, 0, 0],
+			[1.0 / 5, 0, 0, 0, 0],
+			[3.0 / 40, 9.0 / 40, 0, 0, 0],
+			[3.0 / 10, -9.0 / 10, 6.0 / 5, 0, 0],
+			[-11.0 / 54, 5.0 / 2, -70.0 / 27, 35.0 / 27, 0],
+			[1631.0 / 55296, 175.0 / 512, 575.0 / 13824, 44275.0 / 110592, 253.0 / 4096]
+		])
+		c = numpy.array([37.0 / 378, 0, 250.0 / 621, 125.0 / 594, 0, 512.0 / 1771])
+		cs = numpy.array([2825.0 / 27648, 0, 18575.0 / 48384.0, 13525.0 / 55296, 277.0 / 14336, 0.25])
+
+		k1s1, k1s2 = self._propagationFunc(state1, state2, t, 0)
+		k1s1 *= dt
+		k1s2 *= dt
+
+		k2s1, k2s2 = self._propagationFunc(
+			state1 + b[1,0] * k1s1,
+			state2 + b[1,0] * k1s2, t + a[1] * dt, a[1] * dt)
+		k2s1 *= dt
+		k2s2 *= dt
+
+		k3s1, k3s2 = self._propagationFunc(
+			state1 + b[2,0] * k1s1 + b[2,1] * k2s1,
+			state2 + b[2,0] * k1s2 + b[2,1] * k2s2, t + a[2] * dt, a[2] * dt)
+		k3s1 *= dt
+		k3s2 *= dt
+
+		k4s1, k4s2 = self._propagationFunc(
+			state1 + b[3,0] * k1s1 + b[3,1] * k2s1 + b[3,2] * k3s1,
+			state2 + b[3,0] * k1s2 + b[3,1] * k2s2 + b[3,2] * k3s2, t + a[3] * dt, a[3] * dt)
+		k4s1 *= dt
+		k4s2 *= dt
+
+		k5s1, k5s2 = self._propagationFunc(
+			state1 + b[4,0] * k1s1 + b[4,1] * k2s1 + b[4,2] * k3s1 + b[4,3] * k4s1,
+			state2 + b[4,0] * k1s2 + b[4,1] * k2s2 + b[4,2] * k3s2 + b[4,3] * k4s2, t + a[4] * dt, a[4] * dt)
+		k5s1 *= dt
+		k5s2 *= dt
+
+		k6s1, k6s2 = self._propagationFunc(
+			state1 + b[5,0] * k1s1 + b[5,1] * k2s1 + b[5,2] * k3s1 + b[5,3] * k4s1 + b[5,4] * k5s1,
+			state2 + b[5,0] * k1s2 + b[5,1] * k2s2 + b[5,2] * k3s2 + b[5,3] * k4s2 + b[5,4] * k5s2, t + a[5] * dt, a[5] * dt)
+		k6s1 *= dt
+		k6s2 *= dt
+
+		y_s1 = state1 + c[0] * k1s1 + c[1] * k2s1 + c[2] * k3s1 + c[3] * k4s1 + c[4] * k5s1 + c[5] * k6s1
+		y_s2 = state2 + c[0] * k1s2 + c[1] * k2s2 + c[2] * k3s2 + c[3] * k4s2 + c[4] * k5s2 + c[5] * k6s2
+
+		ys_s1 = state1 + cs[0] * k1s1 + cs[1] * k2s1 + cs[2] * k3s1 + cs[3] * k4s1 + cs[4] * k5s1 + cs[5] * k6s1
+		ys_s2 = state2 + cs[0] * k1s2 + cs[1] * k2s2 + cs[2] * k3s2 + cs[3] * k4s2 + cs[4] * k5s2 + cs[5] * k6s2
+
+		delta_s1 = y_s1 - ys_s1
+		delta_s2 = y_s2 - ys_s2
+
+		return y_s1, y_s2, numpy.concatenate([delta_s1, delta_s2])
+
+	def _cpu__propagate_rk5_dynamic(self, state1, state2, t, remaining_time):
+
+		safety = 0.9
+		eps = self._eps # 1e-9
+		tiny = self._tiny # 1e-3
+
+		dt = self._dt
+
+		ds1, ds2 = self._propagationFunc(state1.data, state2.data, t, 0)
+		yscal = numpy.concatenate([
+			numpy.abs(state1.data) + dt * numpy.abs(ds1),
+			numpy.abs(state2.data) + dt * numpy.abs(ds2)
+		]) + tiny
+
+		while True:
+			#print "Trying with step " + str(dt)
+			s1, s2, delta_1 = self._propagate_rk5(state1.data, state2.data, dt, t)
+			errmax = numpy.abs(delta_1 / yscal).max() / eps
+			#print "Error: " + str(errmax)
+			if errmax < 1.0:
+				if dt > remaining_time:
+					# Step is fine in terms of error, but bigger then necessary
+					dt = remaining_time
+					continue
+				else:
+					#print "Seems ok"
+					break
+
+			# reducing step size and retying step
+			dt_temp = safety * dt * (errmax ** (-0.25))
+			dt = max(dt_temp, 0.1 * dt)
+
+		self._dt_used = dt
+
+		if errmax > (5.0 / safety) ** (-1.0 / 0.2):
+			self._dt = safety * dt * (errmax ** (-0.2))
+		else:
+			self._dt = 5.0 * dt
+
+		state1.data.flat[:] = s1.flat
+		state2.data.flat[:] = s2.flat
+
+		self._fromIP(state1.data, state2.data, state1.data, state2.data, self._dt_used)
+
+		#print numpy.sum(numpy.abs(state1.data) ** 2) * self._constants.dV, \
+		#	numpy.sum(numpy.abs(state2.data) ** 2) * self._constants.dV
+
+		#raw_input()
+
+		return self._dt_used
+
+	def _toIP(self, s1, s2, res1, res2, dt):
+		if dt == 0.0:
+			res1.flat[:] = s1.flat[:]
+			res2.flat[:] = s2.flat[:]
+			return
+
+		self._plan.execute(s1, res1, inverse=True, batch=self._batch)
+		self._plan.execute(s2, res2, inverse=True, batch=self._batch)
+
+		kcoeff = numpy.exp(self._kvectors * (1j * dt))
+		nvz = self._constants.nvz
+
+		for e in xrange(self._batch):
+			start = e * nvz
+			stop = (e + 1) * nvz
+			res1[start:stop,:,:] *= kcoeff
+			res2[start:stop,:,:] *= kcoeff
+
+		self._plan.execute(res1, batch=self._batch)
+		self._plan.execute(res2, batch=self._batch)
+
+	def _fromIP(self, s1, s2, res1, res2, dt):
+		if dt == 0.0:
+			res1.flat[:] = s1.flat[:]
+			res2.flat[:] = s2.flat[:]
+			return
+
+		self._plan.execute(s1, res1, inverse=True, batch=self._batch)
+		self._plan.execute(s2, res2, inverse=True, batch=self._batch)
+
+		kcoeff = numpy.exp(self._kvectors * (-1j * dt))
+		nvz = self._constants.nvz
+
+		for e in xrange(self._batch):
+			start = e * nvz
+			stop = (e + 1) * nvz
+			res1[start:stop,:,:] *= kcoeff
+			res2[start:stop,:,:] *= kcoeff
+
+		self._plan.execute(res1, batch=self._batch)
+		self._plan.execute(res2, batch=self._batch)
+
+	def propagate(self, cloud, t, remaining_time):
+		return self._propagate_rk5_dynamic(cloud.a, cloud.b, t, remaining_time)
+
+	def run(self, *args, **kwds):
+		if 'starting_phase' in kwds:
+			starting_phase = kwds.pop('starting_phase')
+			self._phi = starting_phase
+		else:
+			self._phi = 0.0
+
+		self._dt_used = 0
+		shape = args[0].a.shape
+		dtype = args[0].a.dtype
+
+		self._batch = args[0].a.size / self._constants.cells
+
+		self._a_kdata = self._env.allocate(shape, dtype=dtype)
+		self._b_kdata = self._env.allocate(shape, dtype=dtype)
+
+		Evolution.run(self, *args, **kwds)
