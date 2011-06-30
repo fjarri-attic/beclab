@@ -1,3 +1,4 @@
+import numpy
 
 class PairedCalculation:
 	"""
@@ -9,6 +10,7 @@ class PairedCalculation:
 	def __init__(self, env):
 		self.__gpu = env.gpu
 		self.__createAliases()
+		self._env = env
 
 	def __findPrefixedMethods(self):
 		if self.__gpu:
@@ -55,3 +57,14 @@ def log2(x):
 			x >>= pow
 			res += pow
 	return res
+
+def tile3D(x, y, z):
+	nx = len(x)
+	ny = len(y)
+	nz = len(z)
+
+	xx = numpy.tile(x, ny * nz).reshape(nz, ny, nx)
+	yy = numpy.transpose(numpy.tile(y, nx * nz).reshape(nz, nx, ny), axes=(0, 2, 1))
+	zz = numpy.transpose(numpy.tile(z, ny * nx).reshape(nx, ny, nz), axes=(2, 1, 0))
+
+	return xx, yy, zz

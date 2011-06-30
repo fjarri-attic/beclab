@@ -24,14 +24,7 @@ class CPUEnvironment:
 		if dest is None:
 			return buf.copy()
 		else:
-			# FIXME: numpy does not seem to have special function
-			# for filling array with other array
-			if len(buf.shape) == 3:
-				dest[:,:,:] = buf
-			elif len(buf.shape) == 2:
-				dest[:,:] = buf
-			else:
-				dest[:] = buf
+			dest.flat[:] = buf.flat
 
 	def __str__(self):
 		return "CPU"

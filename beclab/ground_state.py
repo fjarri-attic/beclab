@@ -2,14 +2,13 @@
 Ground state calculation classes
 """
 
-import math
 import copy
 import numpy
 
 from .helpers import *
-from .globals import *
-from .state import ParticleStatistics, State, TwoComponentCloud
-from .constants import COMP_1_minus1, COMP_2_1
+from .wavefunction import Wavefunction, TwoComponentCloud
+from .meters import ParticleStatistics
+from .constants import getPotentials, UniformGrid, HarmonicGrid
 
 
 class TFGroundState(PairedCalculation):
@@ -18,11 +17,15 @@ class TFGroundState(PairedCalculation):
 	(kinetic energy == 0)
 	"""
 
-	def __init__(self, env, constants):
+	def __init__(self, env, constants, grid):
 		PairedCalculation.__init__(self, env)
-		self._env = env
-		self._constants = constants
-		self._potentials = getPotentials(env, constants)
+		self._constants = constants.copy()
+		self._grid = grid.copy()
+		self._potentials = getPotentials(env, constants, grid)
+		self._stats = ParticleStatistics(env, constants, grid)
+
+		if isinstance(grid, HarmonicGrid):
+			self._plan = createFHTPlan(env, constants, grid, 1)
 
 		self._prepare()
 
@@ -46,37 +49,54 @@ class TFGroundState(PairedCalculation):
 				else
 					data[index] = complex_ctr(0, 0);
 			}
+
+			EXPORTED_FUNC void multiplyByScalar(GLOBAL_MEM COMPLEX *data, SCALAR coeff)
+			{
+				DEFINE_INDEXES;
+				COMPLEX x = data[index];
+				data[index] = complex_mul_scalar(x, coeff);
+			}
 		"""
 
 		self._program = self._env.compileProgram(kernel_template, self._constants)
-		self._fillWithTFGroundState = self._program.fillWithTFGroundState
+		self._kernel_fillWithTFGroundState = self._program.fillWithTFGroundState
+		self._kernel_multiplyByScalar = self._program.multiplyByScalar
 
-	def _gpu__create(self, data, g, mu):
+	def _cpu__kernel_fillWithTFGroundState(self, _, data, potentials, mu_by_hbar, g_by_hbar):
+		mask_func = lambda x: 0.0 if x < 0 else x
+		mask_map = numpy.vectorize(mask_func)
+		self._env.copyBuffer(
+			numpy.sqrt(mask_map(mu_by_hbar - self._potentials) / g_by_hbar),
+			dest=data)
+
+	def _cpu__kernel_multiplyByScalar(self, _, data, coeff):
+		data *= coeff
+
+	def _create(self, data, g, mu):
 		cast = self._constants.scalar.cast
-		self._fillWithTFGroundState(data.size, data, self._potentials,
-			cast(mu / self._constants.hbar), cast(g / self._constants.hbar))
+		mu_by_hbar = cast(mu / self._constants.hbar)
+		g_by_hbar = cast(g / self._constants.hbar)
 
-	def _cpu__create(self, data, g, mu):
-		mu_by_hbar = mu / self._constants.hbar
-		g_by_hbar = g / self._constants.hbar
+		self._kernel_fillWithTFGroundState(data.size, data,
+			self._potentials, mu_by_hbar, g_by_hbar)
 
-		if self._constants.dim == 1:
-			for k in xrange(self._constants.nvz):
-				e = mu_by_hbar - self._potentials[k]
-				data[k] = math.sqrt(max(e / g_by_hbar, 0))
-		else:
-			for i in xrange(self._constants.nvx):
-				for j in xrange(self._constants.nvy):
-					for k in xrange(self._constants.nvz):
-						e = mu_by_hbar - self._potentials[k, j, i]
-						data[k, j, i] = math.sqrt(max(e / g_by_hbar, 0))
-
-	def create(self, comp=COMP_1_minus1, N=None):
-		res = State(self._env, self._constants, comp=comp)
-		g = self._constants.g[(comp, comp)]
-		mu = self._constants.muTF(comp=comp, N=N)
-
+	def create(self, N, comp=0):
+		res = Wavefunction(self._env, self._constants, self._grid, comp=comp)
+		g = self._constants.g[comp, comp]
+		mu = self._constants.muTF(N, dim=self._grid.dim, comp=comp)
 		self._create(res.data, g, mu)
+
+		# The total number of atoms is equal to the number requested
+		# only in the limit of infinite number of lattice points.
+		# So we have to renormalize the data, and we will do it in mode space
+		# because lattice spacing is uniform there
+		# (an because it is a primary space for harmonic grid).
+		res.toMSpace()
+		N_real = self._stats.getN(res)
+		coeff = numpy.sqrt(N / N_real)
+		self._kernel_multiplyByScalar(res.size, res.data, self._constants.scalar.cast(coeff))
+		res.toXSpace()
+
 		return res
 
 
@@ -321,7 +341,7 @@ class GPEGroundState(PairedCalculation):
 		if state2 is not None:
 			self._plan.execute(state2.data, inverse=True)
 
-	def _create(self, two_component=False, comp=COMP_1_minus1, ratio=0.5,
+	def _create(self, two_component=False, comp=0, ratio=0.5,
 			precision=1e-6, verbose=True):
 
 		assert not two_component or comp == COMP_1_minus1
@@ -409,6 +429,6 @@ class GPEGroundState(PairedCalculation):
 		state1, state2 = self._create(two_component=two_component, ratio=ratio, precision=precision)
 		return TwoComponentCloud(self._env, self._constants, a=state1, b=state2)
 
-	def createState(self, comp=COMP_1_minus1, precision=1e-6):
+	def createState(self, comp=0, precision=1e-6):
 		state1, state2 = self._create(two_component=False, comp=comp, precision=precision)
 		return state1

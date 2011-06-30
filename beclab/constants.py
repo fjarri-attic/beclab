@@ -3,177 +3,402 @@ Module, containing class with calculation constants
 """
 
 import copy
-import math
 import numpy
 
-from .globals import *
 from .helpers import *
 
-PSI_FUNC = 0
+# representations
+CLASSICAL = 0
 WIGNER = 1
 
-COMP_1_minus1 = 0
-COMP_2_1 = 1
+_DEFAULTS = {
+	# scattering lengths for |1,-1> and |2,1>, in Bohr radii
+	# source:
+	# private communication with Servaas Kokkelmans and the paper
+	# B. J. Verhaar, E. G. M. van Kempen, and S. J. J.
+	# M. F. Kokkelmans, Phys. Rev. A 79, 032711 (2009).
+	'a11': 100.4,
+	'a22': 95.68,
+	'a12': 98.13,
+
+	# mass of one particle (rubidium-87)
+	'm': 1.443160648e-25,
+
+	# Trap frequencies
+	'fx': 97.6,
+	'fy': 97.6,
+	'fz': 11.96,
+
+	# loss terms (according to M. Egorov, as of 28 Feb 2011; for 44k atoms)
+	'gamma111': 5.4e-42,
+	'gamma12': 1.52e-20,
+	'gamma22': 7.7e-20,
+
+	# number of iterations for mid-step of split-step evolution
+	'itmax': 3,
+}
+
+def getPotentials(env, constants, grid):
+	"""Returns array with values of external potential energy (in hbar units)."""
+
+	if grid.dim == 1:
+		z = grid.z_full
+
+		potentials = constants.m * ((constants.wz * z) ** 2) / (2.0 * constants.hbar)
+	else:
+		x, y, z = grid.x_full, grid.y_full, grid.z_full
+
+		potentials = constants.m * (
+			(constants.wx * x) ** 2 +
+			(constants.wy * y) ** 2 +
+			(constants.wz * z) ** 2) / (2.0 * constants.hbar)
+
+	if env is not None:
+		return env.toDevice(potentials)
+	else:
+		return potentials
+
+def getPlaneWaveEnergy(env, constants, grid):
+	"""
+	Returns array with values of k-space energy
+	(coefficients for kinetic term) in hbar units
+	"""
+	assert isinstance(grid, UniformGrid)
+
+	if grid.dim == 1:
+		E = constants.hbar * grid.kz_full ** 2 / (2.0 * constants.m)
+	else:
+		E = constants.hbar * \
+			(grid.kx_full ** 2 + grid.ky_full ** 2 + grid.kz_full ** 2) / (2.0 * constants.m)
+
+	if env is not None:
+		return env.toDevice(E)
+	else:
+		return E
+
+def getHarmonicEnergy(env, constants, grid):
+	"""
+	Returns array with energy values in harmonic mode space in hbar units
+	"""
+
+	assert isinstance(grid, HarmonicGrid)
+
+	if grid.dim == 3:
+		mx, my, mz = grid.mx_full, grid.my_full, grid.mz_full
+		wx, wy, wz = constants.wx, constants.wy, constants.wz
+		E = (wx * (mx + 0.5) + wy * (my + 0.5) + wz * (mz + 0.5))
+	else:
+		E = (constants.wz * (grid.mz_full + 0.5))
+
+	if env is None:
+		return E
+	else:
+		return env.toDevice(E)
+
+def getProjectorMask(env, constants, grid):
+	if isinstance(grid, UniformGrid):
+		E = getPlaneWaveEnergy(None, constants, grid)
+	else:
+		E = getHarmonicEnergy(None, constants, grid)
+
+	mask_func = lambda x: 0.0 if x > constants.e_cut else 1.0
+	mask_map = numpy.vectorize(mask_func)
+
+	mask = mask_map(E * constants.hbar)
+	modes = numpy.sum(mask)
+
+	return env.toDevice(mask)
+
+
+class UniformGrid:
+
+	def __init__(self, env, shape, box_size):
+
+		self._env = env
+
+		assert (isinstance(shape, int) and isinstance(size, float)) or \
+			(len(shape) == len(box_size))
+
+		if isinstance(shape, int):
+			shape = (shape,)
+			box_size = (box_size,)
+
+		assert len(shape) in [1, 3]
+
+		self.dim = len(shape)
+		self.shape = shape
+		self.mshape = shape
+
+		# spatial step and grid for every component of shape
+		d_space = [box_size[i] / (shape[i] - 1) for i in xrange(self.dim)]
+		grid_space = [
+			-box_size[i] / 2.0 + d_space[i] * numpy.arange(shape[i])
+			for i in xrange(self.dim)
+		]
+
+		# number of cells and cell volume
+		dV = 1.0
+		self.size = 1
+		for i in xrange(self.dim):
+			dV *= d_space[i]
+			self.size *= self.shape[i]
+		self.msize = self.size
+
+		self.V = dV * self.size
+
+		kvalues = lambda dx, N: numpy.fft.fftfreq(N, dx) * 2.0 * numpy.pi
+
+		if self.dim == 3:
+			self.dx = d_space[2]
+			self.dy = d_space[1]
+			self.dz = d_space[0]
+
+			# 1D grids
+			self.x = grid_space[2]
+			self.y = grid_space[1]
+			self.z = grid_space[0]
+
+			# tiled grid arrays to use in elementwise numpy operations
+			self.x_full, self.y_full, self.z_full = tile3D(self.x, self.y, self.z)
+
+			self.kx = kvalues(self.dx, self.shape[2])
+			self.ky = kvalues(self.dy, self.shape[1])
+			self.kz = kvalues(self.dz, self.shape[0])
+
+			self.kx_full, self.ky_full, self.kz_full = tile3D(self.kx, self.ky, self.kz)
+
+			# coefficients for integration;
+			# multiplying border coefficients by 0.5, according to simple trapezoidal rule
+			# (although function is zero there anyway, so it doesn't really matter)
+			dx = [0.5] + [1.0] * (self.shape[2] - 2) + [0.5]
+			dy = [0.5] + [1.0] * (self.shape[1] - 2) + [0.5]
+			dz = [0.5] + [1.0] * (self.shape[0] - 2) + [0.5]
+			dx, dy, dz = tile3D(dx, dy, dz)
+			self.dV = self._env.toDevice(dx * dy * dz * dV)
+
+		else:
+			# using 'z' axis for 1D, because it seems more natural
+			self.dz = d_space[0]
+			self.z = grid_space[0]
+			self.z_full = self.x
+
+			self.kz = kvalues(self.dz, self.shape[0])
+			self.kz_full = self.kz
+
+			dz = [0.5] + [1.0] * (self.shape[0] - 2) + [0.5]
+			self.dV = self._env.toDevice(dz * dV)
+
+	@classmethod
+	def forN(cls, env, constants, N, shape, border=1.2):
+		"""Create suitable lattice for trapped cloud of N atoms"""
+
+		# calculating approximate diameter of the cloud based on
+		# Thomas-Fermi chemical potential for the first component
+		dim = len(shape)
+		mu1 = constants.muTF(N, dim=dim, comp=1)
+		diameter = lambda w: 2.0 * border * numpy.sqrt(2.0 * mu1 / (constants.m * w ** 2))
+
+		if dim == 3:
+			box_size = (diameter(constants.wz), diameter(constants.wy), diameter(constants.wx))
+		else:
+			box_size = (diameter(constants.wz),)
+
+		return cls(env, shape, box_size)
+
+	def copy(self):
+		return copy.deepcopy(self)
+
+	def __eq__(self, other):
+		return self.shape == other.shape and self.size == other.size
+
+
+class HarmonicGrid:
+
+	def __init__(self, env, constants, mshape):
+
+		self._env = env
+
+		if isinstance(mshape, int):
+			mshape = (mshape,)
+
+		assert len(mshape) in [1, 3]
+
+		self.dim = len(mshape)
+		self.mshape = mshape
+
+		if self.dim == 3:
+			mx = numpy.arange(mshape[2])
+			my = numpy.arange(mshape[1])
+			mz = numpy.arange(mshape[0])
+			self.mx_full, self.my_full, self.mz_full = tile3D(mx, my, mz)
+		else:
+			self.mz_full = numpy.arange(mshape[0])
+
+		self.msize = 1
+		for i in xrange(self.dim):
+			self.msize *= mshape[i]
+
+		if self.dim == 3:
+			wx = constants.wx
+			wy = constants.wy
+		wz = constants.wz
+
+		# natural lengths for harmonic oscillator
+		if self.dim == 3:
+			self.lx = numpy.sqrt(constants.hbar / (wx * constants.m))
+			self.ly = numpy.sqrt(constants.hbar / (wy * constants.m))
+		self.lz = numpy.sqrt(constants.hbar / (wz * constants.m))
+
+		# Spatial grids for collectors which work in x-space
+		# and for nonlinear terms in GPEs
+		# We have to create a set of grid for every transformation order used
+		self.shapes = {}
+		self.dVs = {}
+
+		if self.dim == 3:
+			self.xs = {}
+			self.ys = {}
+			self.zs = {}
+			self.xs_full = {}
+			self.ys_full = {}
+			self.zs_full = {}
+			self.dxs = {}
+			self.dys = {}
+			self.dzs = {}
+		else:
+			self.zs = {}
+			self.zs_full = {}
+			self.dzs = {}
+
+		# Build coefficients for integration in x-space using simple trapezoidal rule
+		ds = lambda pts: numpy.array(
+			[(pts[1] - pts[0]) / 2] +
+			((pts[2:] - pts[:-2]) / 2.0).tolist() +
+			[(pts[-1] - pts[-2]) / 2])
+
+		for l in (1, 2, 3, 4):
+			if self.dim == 3:
+				# non-uniform grid used in Gauss-Hermite quadrature
+				self.xs[l], _ = getHarmonicGrid(mshape[2], l)
+				self.ys[l], _ = getHarmonicGrid(mshape[1], l)
+				self.zs[l], _ = getHarmonicGrid(mshape[0], l)
+
+				self.shapes[l] = (len(self.zs[l]), len(self.ys[l]), len(self.xs[l]))
+
+				self.xs[l] *= self.lx
+				self.ys[l] *= self.ly
+				self.zs[l] *= self.lz
+
+				# tiled grid arrays to use in elementwise numpy operations
+				self.xs_full[l], self.ys_full[l], self.zs_full[l] = \
+					tile3D(self.xs[l], self.ys[l], self.zs[l])
+
+				# Coefficients for integration
+				self.dxs[l] = ds(self.xs[l])
+				self.dys[l] = ds(self.ys[l])
+				self.dzs[l] = ds(self.zs[l])
+
+				dx, dy, dz = tile3D(self.dxs[l], self.dys[l], self.dzs[l])
+				self.dVs[l] = self._env.toDevice(dx * dy * dz)
+
+			else:
+				self.zs[l], _ = getHarmonicGrid(mshape[0], l)
+				self.zs[l] *= self.lz
+
+				self.shapes[l] = (len(self.zs[l]),)
+
+				self.zs_full[l] = self.zs[l]
+
+				# dVs for debugging (integration in x-space)
+				self.dzs[l] = ds(self.zs[l])
+				self.dVs[l] = self._env.toDevice(self.dzs[l])
+
+			# Create aliases for 1st order arrays,
+			# making it look like UniformGrid
+			# (high orders are used only inside evolution classes anyway)
+			self.shape = self.shapes[1]
+			self.dV = self.dVs[1]
+
+			self.size = 1
+			for i in xrange(self.dim):
+				self.size *= self.shape[i]
+
+			if self.dim == 3:
+				self.x = self.xs[1]
+				self.y = self.ys[1]
+				self.x_full = self.xs_full[1]
+				self.y_full = self.ys_full[1]
+				self.dx = self.dxs[1]
+				self.dy = self.dys[1]
+
+			self.z = self.zs[1]
+			self.z_full = self.zs_full[1]
+			self.dz = self.dzs[1]
+
+	def copy(self):
+		return copy.deepcopy(self)
 
 
 class Constants:
-	"""Calculation constants, in natural units"""
 
-	def __init__(self, model, double=False):
+	hbar = 1.054571628e-34 # Planck constant
+	r_bohr = 5.2917720859e-11 # Bohr radius
 
-		self.hbar = 1.054571628e-34 # Planck constant
-		self.m = model.m
-		a0 = 5.2917720859e-11 # Bohr radius
+	def __init__(self, double=True, **kwds):
 
-		model = copy.deepcopy(model)
 		self.double = double
-
 		precision = double_precision if double else single_precision
 		self.scalar = precision.scalar
 		self.complex = precision.complex
 
-		self.ensembles = model.ensembles
+		self.__dict__.update(_DEFAULTS)
 
-		self.l111 = model.gamma111
-		self.l12 = model.gamma12
-		self.l22 = model.gamma22
+		for key in kwds.keys():
+			assert key in _DEFAULTS
+		self.__dict__.update(kwds)
 
-		g11 = 4.0 * math.pi * (self.hbar ** 2) * model.a11 * a0 / self.m
-		g12 = 4.0 * math.pi * (self.hbar ** 2) * model.a12 * a0 / self.m
-		g22 = 4.0 * math.pi * (self.hbar ** 2) * model.a22 * a0 / self.m
+		self.wx = 2.0 * numpy.pi * self.fx
+		self.wy = 2.0 * numpy.pi * self.fy
+		self.wz = 2.0 * numpy.pi * self.fz
 
-		self.g = {
-			(COMP_1_minus1, COMP_1_minus1): g11,
-			(COMP_1_minus1, COMP_2_1): g12,
-			(COMP_2_1, COMP_1_minus1): g12,
-			(COMP_2_1, COMP_2_1): g22
-		}
+		g11 = 4.0 * numpy.pi * (self.hbar ** 2) * self.a11 * self.r_bohr / self.m
+		g12 = 4.0 * numpy.pi * (self.hbar ** 2) * self.a12 * self.r_bohr / self.m
+		g22 = 4.0 * numpy.pi * (self.hbar ** 2) * self.a22 * self.r_bohr / self.m
+		self.g = numpy.array([[g11, g12], [g12, g22]])
 
-		self.N = model.N
+	def getEffectiveArea(self, grid):
+		if grid.dim == 3:
+			return 1.0
 
-		# trap frequencies
-		self.w_x = 2.0 * math.pi * model.fx
-		self.w_y = 2.0 * math.pi * model.fy
-		self.w_z = 2.0 * math.pi * model.fz
+		l_rho = numpy.sqrt(self.hbar / (2.0 * self.m * self.wx))
+		return 4.0 * numpy.pi * (l_rho ** 2)
 
-		if model.nvx == 1 and model.nvy == 1:
-			self.dim = 1
-			self.nvz = model.nvz
-			self.shape = (self.nvz,)
-			self.ens_shape = (self.nvz * self.ensembles,)
-			self.cells = self.nvz
+	def muTF(self, N, dim=3, comp=0):
+		g = self.g[comp, comp]
 
-			l_rho = math.sqrt(self.hbar / (2.0 * self.m * self.w_x))
-			eff_area = 4.0 * math.pi * (l_rho ** 2)
-
-			for key in self.g:
-				self.g[key] /= eff_area
-
-			self.l111 /= eff_area ** 2
-			self.l12 /= eff_area
-			self.l22 /= eff_area
-
-		elif model.nvx == 1:
-			raise Exception("2D clouds are not supported at the time")
+		if dim == 1:
+			return self._muTF1D(N, g)
 		else:
-			self.dim = 3
-			self.nvx = model.nvx
-			self.nvy = model.nvy
-			self.nvz = model.nvz
-			self.cells = self.nvx * self.nvy * self.nvz
-			self.shape = (self.nvz, self.nvy, self.nvx)
-			self.ens_shape = (self.nvz * self.ensembles, self.nvy, self.nvx)
+			return self._muTF3D(N, g)
 
-		# prefix "w_" stands for radial frequency, "f_" for common frequency
-
-		self.w_detuning = 2.0 * math.pi * model.detuning
-		self.w_rabi = 2.0 * math.pi * model.rabi_freq
-		self.t_rabi = 1.0 / model.rabi_freq
-
-		# g itself is too small for single precision
-		self.g_by_hbar = dict((key, self.g[key] / self.hbar) for key in self.g)
-
-		mu1 = self.muTF(comp=COMP_1_minus1)
-
-		self.e_cut = model.e_cut * mu1
-
-		if self.dim > 2: self.xmax = model.border * math.sqrt(2.0 * mu1 / (self.m * self.w_x ** 2))
-		if self.dim > 2: self.ymax = model.border * math.sqrt(2.0 * mu1 / (self.m * self.w_y ** 2))
-		self.zmax = model.border * math.sqrt(2.0 * mu1 / (self.m * self.w_z ** 2))
-
-		# space step
-		if self.dim > 2: self.dx = 2.0 * self.xmax / (self.nvx - 1)
-		if self.dim > 2: self.dy = 2.0 * self.ymax / (self.nvy - 1)
-		self.dz = 2.0 * self.zmax / (self.nvz - 1)
-
-		if self.dim == 1:
-			self.dV = self.dz
-		else:
-			self.dV = self.dx * self.dy * self.dz
-
-		self.V = self.dV * self.cells
-
-		if self.dim > 2: self.nvx_pow = log2(self.nvx)
-		if self.dim > 2: self.nvy_pow = log2(self.nvy)
-		self.nvz_pow = log2(self.nvz)
-
-		# k step
-		if self.dim > 2: self.dkx = math.pi / self.xmax
-		if self.dim > 2: self.dky = math.pi / self.ymax
-		self.dkz = math.pi / self.zmax
-
-		self.itmax = model.itmax
-		self.dt_steady = model.dt_steady
-		self.dt_evo = model.dt_evo
-
-		# natural units
-		self.t_rho = 1.0 / self.w_x
-		self.e_rho = self.hbar * self.w_x
-		self.l_rho = math.sqrt(self.hbar / (2.0 * self.m * self.w_x))
-
-		#l_healing = 1.0 / math.sqrt(8.0 * math.pi * model.a11 * a0 * self.muTF() / g11)
-		#print "nz >> " + str(self.zmax * 2.0 / l_healing)
-		#print "nz << " + str(self.zmax * 2.0 / (model.a11 * a0))
-
-		_, self.projector_modes = getProjectorArray(self)
-
-		# cast all floating point values to current precision
-
-		def recursiveCast(cast, obj):
-			if isinstance(obj, dict):
-				return dict([(key, recursiveCast(cast, obj[key])) for key in obj])
-			elif isinstance(obj, list):
-				return [recursiveCast(cast, elem) for elem in obj]
-			elif isinstance(obj, float):
-				return cast(obj)
-			else:
-				return obj
-
-		# By doing this, we can lose some small constants (they are turned into 0s)
-		# So I decided to transform them in-place, only if it is necessary to pass
-		# them in "real world" (opposed to using inside a template)
-		# As a result, no more single precision for CPU (it worked even slower
-		# than double precision anyway)
-		#self.__dict__ = recursiveCast(self.scalar.cast, self.__dict__)
-
-	def muTF(self, comp=COMP_1_minus1, N=None):
+	def _muTF3D(self, N, g):
 		"""get TF-approximated chemical potential"""
-		if N is None:
-			N = self.N
-
-		g = self.g[(comp, comp)]
-
-		if self.dim == 3:
-			return self._muTF3D(g, N)
-		else:
-			return self._muTF1D(g, N)
-
-	def _muTF3D(self, g, N):
-		w = (self.w_x * self.w_y * self.w_z) ** (1.0 / 3)
-		return ((15 * N / (8.0 * math.pi)) ** 0.4) * \
+		w = (self.wx * self.wy * self.wz) ** (1.0 / 3)
+		return ((15 * N / (8.0 * numpy.pi)) ** 0.4) * \
 			((self.m * w * w / 2) ** 0.6) * \
 			(g ** 0.4)
 
-	def _muTF1D(self, g, N):
+	def _muTF1D(self, N, g):
+		"""get TF-approximated chemical potential"""
 		return ((0.75 * g * N) ** (2.0 / 3)) * \
-			((self.m * self.w_z * self.w_z / 2) ** (1.0 / 3))
+			((self.m * self.wx * self.wx / 2) ** (1.0 / 3))
+
+	def __eq__(self, other):
+		for key in _DEFAULTS.keys() + ['double']:
+			if getattr(self, key) != getattr(other, key):
+				return False
+
+		return True
+
+	def copy(self):
+		return copy.deepcopy(self)
