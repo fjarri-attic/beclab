@@ -97,17 +97,17 @@ class ParticleStatistics(PairedCalculation):
 					nonlinear2 + differential2.x;
 			}
 
-			EXPORTED_FUNC void multiply(GLOBAL_MEM COMPLEX *data, GLOBAL_MEM SCALAR *coeffs,
+			EXPORTED_FUNC void multiplyScalars(GLOBAL_MEM SCALAR *data, GLOBAL_MEM SCALAR *coeffs,
 				int ensembles)
 			{
 				DEFINE_INDEXES;
 				SCALAR coeff_val = coeffs[index];
-				COMPLEX data_val;
+				SCALAR data_val;
 
 				for(int i = 0; i < ensembles; i++)
 				{
 					data_val = data[index + i * ${g.size}];
-					data[index + i * ${g.size}] = complex_mul_scalar(data_val, coeff_val);
+					data[index + i * ${g.size}] = data_val * coeff_val;
 				}
 			}
 		"""
@@ -118,7 +118,7 @@ class ParticleStatistics(PairedCalculation):
 		self._kernel_invariant = self._program.invariant
 		self._kernel_invariant2comp = self._program.invariant2comp
 		self._kernel_density = self._program.density
-		self._kernel_multiply = self._program.multiply
+		self._kernel_multiplyScalars = self._program.multiplyScalars
 
 	def _cpu__kernel_calculateInteraction(self, _, res, data0, data1):
 		self._env.copyBuffer(data0 * data1.conj(), dest=res)
@@ -126,7 +126,7 @@ class ParticleStatistics(PairedCalculation):
 	def _cpu__kernel_density(self, _, density, data, coeff, modifier):
 		self._env.copyBuffer((numpy.abs(data) ** 2 - modifier) / coeff, dest=density)
 
-	def _cpu__kernel_multiply(self, _, res, coeffs, ensembles):
+	def _cpu__kernel_multiplyScalars(self, _, res, coeffs, ensembles):
 		res.flat *= numpy.tile(coeffs.flat, ensembles)
 
 	def getVisibility(self, psi0, psi1):
@@ -163,7 +163,7 @@ class ParticleStatistics(PairedCalculation):
 	def getAveragePopulation(self, psi):
 		density = self.getAverageDensity(psi)
 		if not psi.in_mspace:
-			self._kernel_multiply(density.size, density, self._dV, numpy.int32(psi.shape[0]))
+			self._kernel_multiplyScalars(density.size, density, self._dV, numpy.int32(psi.shape[0]))
 		return density
 
 	def _getInvariant(self, psi, coeff, N):
