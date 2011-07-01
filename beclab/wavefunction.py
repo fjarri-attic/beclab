@@ -52,7 +52,7 @@ class Wavefunction(PairedCalculation):
 				COMPLEX src_val = src[index];
 
 				for(int i = 0; i < ensembles; i++)
-					dest[index + i * ${g.cells}] = src_val;
+					dest[index + i * ${g.size}] = src_val;
 			}
 
 			EXPORTED_FUNC void addVacuumParticles(GLOBAL_MEM COMPLEX *modespace_data,
@@ -63,7 +63,7 @@ class Wavefunction(PairedCalculation):
 				COMPLEX val = modespace_data[index];
 
 				val = val + randoms[index]; // add noise
-				val = complex_mul(val, mask_elem); // remove high-energy components
+				val = complex_mul_scalar(val, mask_elem); // remove high-energy components
 
 				modespace_data[index] = val;
 			}
@@ -72,7 +72,7 @@ class Wavefunction(PairedCalculation):
 		self._program = self._env.compileProgram(kernel_template, self._constants, self._grid)
 		self._kernel_fillWithZeros = self._program.fillWithZeros
 		self._kernel_fillEnsembles = self._program.fillEnsembles
-		self._kernel_addPlaneWaves = self._program.addPlaneWaves
+		self._kernel_addVacuumParticles = self._program.addVacuumParticles
 
 	def _cpu__kernel_addVacuumParticles(self, _, modespace_data, randoms, mask):
 		tile = (self.shape[0],) + (1,) * (self._grid.dim - 1)

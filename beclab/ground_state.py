@@ -41,7 +41,7 @@ class TFGroundState(PairedCalculation):
 			{
 				DEFINE_INDEXES;
 
-				SCALAR potential = potentials[cell_index];
+				SCALAR potential = potentials[index];
 
 				SCALAR e = mu_by_hbar - potential;
 				if(e > 0)
@@ -58,7 +58,7 @@ class TFGroundState(PairedCalculation):
 			}
 		"""
 
-		self._program = self._env.compileProgram(kernel_template, self._constants)
+		self._program = self._env.compileProgram(kernel_template, self._constants, self._grid)
 		self._kernel_fillWithTFGroundState = self._program.fillWithTFGroundState
 		self._kernel_multiplyByScalar = self._program.multiplyByScalar
 

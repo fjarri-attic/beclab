@@ -50,7 +50,7 @@ class ParticleStatistics(PairedCalculation):
 			EXPORTED_FUNC void invariant(GLOBAL_MEM SCALAR *res,
 				GLOBAL_MEM COMPLEX *xstate, GLOBAL_MEM COMPLEX *kstate,
 				GLOBAL_MEM SCALAR *potentials,
-				SCALAR g_by_hbar)
+				SCALAR g_by_hbar, int coeff)
 			{
 				DEFINE_INDEXES;
 
@@ -58,7 +58,7 @@ class ParticleStatistics(PairedCalculation):
 
 				SCALAR n = squared_abs(xstate[index]);
 				COMPLEX differential = complex_mul(conj(xstate[index]), kstate[index]);
-				SCALAR nonlinear = n * (potential + g_by_hbar * n / ${coeff});
+				SCALAR nonlinear = n * (potential + g_by_hbar * n / coeff);
 
 				// differential.y will be equal to 0, because \psi * D \psi is a real number
 				res[index] = nonlinear + differential.x;
@@ -69,7 +69,7 @@ class ParticleStatistics(PairedCalculation):
 				GLOBAL_MEM COMPLEX *xstate2, GLOBAL_MEM COMPLEX *kstate2,
 				GLOBAL_MEM SCALAR *potentials,
 				SCALAR g11_by_hbar, SCALAR g22_by_hbar,
-				SCALAR g12_by_hbar)
+				SCALAR g12_by_hbar, int coeff)
 			{
 				DEFINE_INDEXES;
 
@@ -84,19 +84,33 @@ class ParticleStatistics(PairedCalculation):
 					complex_mul(conj(xstate2[index]), kstate2[index]);
 
 				SCALAR nonlinear1 = n1 * (potential +
-					g11_by_hbar * n1 / ${coeff} +
-					g12_by_hbar * n2 / ${coeff});
+					g11_by_hbar * n1 / coeff +
+					g12_by_hbar * n2 / coeff);
 				SCALAR nonlinear2 = n2 * (potential +
-					g12_by_hbar * n1 / ${coeff} +
-					g22_by_hbar * n2 / ${coeff});
+					g12_by_hbar * n1 / coeff +
+					g22_by_hbar * n2 / coeff);
 
 				// differential.y will be equal to 0, because \psi * D \psi is a real number
 				res[index] = nonlinear1 + differential1.x +
 					nonlinear2 + differential2.x;
 			}
+
+			EXPORTED_FUNC void multiply(GLOBAL_MEM COMPLEX *data, GLOBAL_MEM SCALAR *coeffs,
+				int ensembles)
+			{
+				DEFINE_INDEXES;
+				SCALAR coeff_val = coeffs[index];
+				COMPLEX data_val;
+
+				for(int i = 0; i < ensembles; i++)
+				{
+					data_val = data[index + i * ${g.size}];
+					data[index + i * ${g.size}] = complex_mul_scalar(data_val, coeff_val);
+				}
+			}
 		"""
 
-		self._program = self._env.compileProgram(kernel_template, self._constants)
+		self._program = self._env.compileProgram(kernel_template, self._constants, self._grid)
 
 		self._kernel_interaction = self._program.interaction
 		self._kernel_invariant = self._program.invariant
