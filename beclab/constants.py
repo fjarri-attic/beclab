@@ -176,9 +176,9 @@ class UniformGrid:
 			# coefficients for integration;
 			# multiplying border coefficients by 0.5, according to simple trapezoidal rule
 			# (although function is zero there anyway, so it doesn't really matter)
-			dx = [0.5] + [1.0] * (self.shape[2] - 2) + [0.5]
-			dy = [0.5] + [1.0] * (self.shape[1] - 2) + [0.5]
-			dz = [0.5] + [1.0] * (self.shape[0] - 2) + [0.5]
+			dx = numpy.array([0.5] + [1.0] * (self.shape[2] - 2) + [0.5])
+			dy = numpy.array([0.5] + [1.0] * (self.shape[1] - 2) + [0.5])
+			dz = numpy.array([0.5] + [1.0] * (self.shape[0] - 2) + [0.5])
 			dx, dy, dz = tile3D(dx, dy, dz)
 			self.dV = dx * dy * dz * dV
 
@@ -186,12 +186,12 @@ class UniformGrid:
 			# using 'z' axis for 1D, because it seems more natural
 			self.dz = d_space[0]
 			self.z = grid_space[0]
-			self.z_full = self.x
+			self.z_full = self.z
 
 			self.kz = kvalues(self.dz, self.shape[0])
 			self.kz_full = self.kz
 
-			dz = [0.5] + [1.0] * (self.shape[0] - 2) + [0.5]
+			dz = numpy.array([0.5] + [1.0] * (self.shape[0] - 2) + [0.5])
 			self.dV = dz * dV
 
 	@classmethod
