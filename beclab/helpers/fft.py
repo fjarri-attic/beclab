@@ -5,8 +5,7 @@ class NumpyPlan3D:
 
 	def __init__(self, shape, scale):
 		self._shape = shape
-		self._scale_coeff = numpy.sqrt(scale[0] * scale[1] * scale[2] /
-			(shape[0] * shape[1] * shape[2]))
+		self._scale = scale
 
 	def execute(self, data_in, data_out=None, inverse=False, batch=1):
 		if data_out is None:
@@ -14,10 +13,10 @@ class NumpyPlan3D:
 
 		if inverse:
 			func = numpy.fft.ifftn
-			coeff = 1.0 / self._scale_coeff
+			coeff = 1.0 / self._scale
 		else:
 			func = numpy.fft.fftn
-			coeff = self._scale_coeff
+			coeff = self._scale
 
 		shape = self._shape
 		data_out.flat[:] = func(data_in.reshape(batch, *shape), axes=(1, 2, 3)).flat
@@ -28,7 +27,7 @@ class NumpyPlan1D:
 
 	def __init__(self, shape, scale):
 		self._shape = shape
-		self._scale_coeff = numpy.sqrt(scale[0] / shape[0])
+		self._scale = scale
 
 	def execute(self, data_in, data_out=None, inverse=False, batch=1):
 		if data_out is None:
@@ -36,10 +35,10 @@ class NumpyPlan1D:
 
 		if inverse:
 			func = numpy.fft.ifft
-			coeff = 1.0 / self._scale_coeff
+			coeff = 1.0 / self._scale
 		else:
 			func = numpy.fft.fft
-			coeff = self._scale_coeff
+			coeff = self._scale
 
 		shape = self._shape
 		data_out.flat[:] = func(data_in.reshape(batch, *shape)).flat
@@ -51,9 +50,9 @@ def createFFTPlan(env, constants, grid):
 	shape = grid.shape
 	dtype = constants.complex.dtype
 	if grid.dim == 1:
-		scale = (grid.dz,)
+		scale = numpy.sqrt(grid.dz / grid.shape[0])
 	else:
-		scale = (grid.dz, grid.dy, grid.dx)
+		scale = numpy.sqrt(grid.dz * grid.dy * grid.dx / grid.size)
 
 	if env.gpu:
 		if env.cuda:
