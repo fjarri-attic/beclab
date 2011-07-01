@@ -356,7 +356,7 @@ class Constants:
 	hbar = 1.054571628e-34 # Planck constant
 	r_bohr = 5.2917720859e-11 # Bohr radius
 
-	def __init__(self, double=True, **kwds):
+	def __init__(self, double=True, use_effective_area=False, **kwds):
 
 		self.double = double
 		precision = double_precision if double else single_precision
@@ -373,15 +373,18 @@ class Constants:
 		self.wy = 2.0 * numpy.pi * self.fy
 		self.wz = 2.0 * numpy.pi * self.fz
 
-		g11 = 4.0 * numpy.pi * (self.hbar ** 2) * self.a11 * self.r_bohr / self.m
-		g12 = 4.0 * numpy.pi * (self.hbar ** 2) * self.a12 * self.r_bohr / self.m
-		g22 = 4.0 * numpy.pi * (self.hbar ** 2) * self.a22 * self.r_bohr / self.m
-		self.g = numpy.array([[g11, g12], [g12, g22]])
+		g = lambda a: 4.0 * numpy.pi * (self.hbar ** 2) * a * self.r_bohr / self.m
+		self.g = numpy.array([
+			[g(self.a11), g(self.a12)],
+			[g(self.a12), g(self.a22)]
+		])
 
-	def getEffectiveArea(self, grid):
-		if grid.dim == 3:
-			return 1.0
+		if use_effective_area:
+			S = self.getEffectiveArea()
+			self.g /= S
+			# FIXME: add same technique for loss terms
 
+	def getEffectiveArea(self):
 		l_rho = numpy.sqrt(self.hbar / (2.0 * self.m * self.wx))
 		return 4.0 * numpy.pi * (l_rho ** 2)
 
@@ -403,7 +406,7 @@ class Constants:
 	def _muTF1D(self, N, g):
 		"""get TF-approximated chemical potential"""
 		return ((0.75 * g * N) ** (2.0 / 3)) * \
-			((self.m * self.wx * self.wx / 2) ** (1.0 / 3))
+			((self.m * self.wz * self.wz / 2) ** (1.0 / 3))
 
 	def __eq__(self, other):
 		for key in _DEFAULTS.keys() + ['double']:
