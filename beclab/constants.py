@@ -110,7 +110,7 @@ def getProjectorMask(env, constants, grid):
 	mask_func = lambda x: 0.0 if x > constants.e_cut else 1.0
 	mask_map = numpy.vectorize(mask_func)
 
-	mask = mask_map(E * constants.hbar)
+	mask = mask_map(E * constants.hbar).astype(constants.scalar.dtype)
 	modes = numpy.sum(mask)
 
 	return env.toDevice(mask)
@@ -118,9 +118,9 @@ def getProjectorMask(env, constants, grid):
 
 class UniformGrid:
 
-	def __init__(self, env, shape, box_size):
+	def __init__(self, env, constants, shape, box_size):
 
-		self._env = env
+		self._constants = constants.copy()
 
 		assert (isinstance(shape, int) and isinstance(size, float)) or \
 			(len(shape) == len(box_size))
@@ -180,7 +180,7 @@ class UniformGrid:
 			dy = [0.5] + [1.0] * (self.shape[1] - 2) + [0.5]
 			dz = [0.5] + [1.0] * (self.shape[0] - 2) + [0.5]
 			dx, dy, dz = tile3D(dx, dy, dz)
-			self.dV = self._env.toDevice(dx * dy * dz * dV)
+			self.dV = dx * dy * dz * dV
 
 		else:
 			# using 'z' axis for 1D, because it seems more natural
@@ -192,7 +192,7 @@ class UniformGrid:
 			self.kz_full = self.kz
 
 			dz = [0.5] + [1.0] * (self.shape[0] - 2) + [0.5]
-			self.dV = self._env.toDevice(dz * dV)
+			self.dV = dz * dV
 
 	@classmethod
 	def forN(cls, env, constants, N, shape, border=1.2):
@@ -209,10 +209,13 @@ class UniformGrid:
 		else:
 			box_size = (diameter(constants.wz),)
 
-		return cls(env, shape, box_size)
+		return cls(env, constants, shape, box_size)
 
 	def copy(self):
 		return copy.deepcopy(self)
+
+	def get_dV(self, env):
+		return env.toDevice(self.dV.astype(self._constants.scalar.dtype))
 
 	def __eq__(self, other):
 		return self.shape == other.shape and self.size == other.size
@@ -222,7 +225,7 @@ class HarmonicGrid:
 
 	def __init__(self, env, constants, mshape):
 
-		self._env = env
+		self._constants = constants.copy()
 
 		if isinstance(mshape, int):
 			mshape = (mshape,)
@@ -305,7 +308,7 @@ class HarmonicGrid:
 				self.dzs[l] = ds(self.zs[l])
 
 				dx, dy, dz = tile3D(self.dxs[l], self.dys[l], self.dzs[l])
-				self.dVs[l] = self._env.toDevice(dx * dy * dz)
+				self.dVs[l] = dx * dy * dz
 
 			else:
 				self.zs[l], _ = getHarmonicGrid(mshape[0], l)
@@ -317,7 +320,7 @@ class HarmonicGrid:
 
 				# dVs for debugging (integration in x-space)
 				self.dzs[l] = ds(self.zs[l])
-				self.dVs[l] = self._env.toDevice(self.dzs[l])
+				self.dVs[l] = self.dzs[l]
 
 			# Create aliases for 1st order arrays,
 			# making it look like UniformGrid
@@ -343,6 +346,9 @@ class HarmonicGrid:
 
 	def copy(self):
 		return copy.deepcopy(self)
+
+	def get_dV(self, env, order=1):
+		return env.toDevice(self.dVs[order].astype(self._constants.scalar.dtype))
 
 
 class Constants:

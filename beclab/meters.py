@@ -26,6 +26,8 @@ class ParticleStatistics(PairedCalculation):
 		elif isinstance(grid, UniformGrid):
 			self._energy = getPlaneWaveEnergy(env, constants, grid)
 
+		self._dV = grid.get_dV(env)
+
 		self._prepare()
 
 	def _cpu__prepare(self):
@@ -131,7 +133,7 @@ class ParticleStatistics(PairedCalculation):
 		N0 = self.getN(psi0)
 		N1 = self.getN(psi1)
 		interaction = self._getInteraction(psi0, psi1)
-		self._kernel_multiply(interaction.size, interaction, self._grid.dV)
+		self._kernel_multiply(interaction.size, interaction, self._dV)
 
 		ensembles = psi0.shape[0]
 		interaction = numpy.abs(self._creduce(interaction)) / ensembles
@@ -161,7 +163,7 @@ class ParticleStatistics(PairedCalculation):
 	def getAveragePopulation(self, psi):
 		density = self.getAverageDensity(psi)
 		if not psi.in_mspace:
-			self._kernel_multiply(density.size, density, self._grid.dV, numpy.int32(psi.shape[0]))
+			self._kernel_multiply(density.size, density, self._dV, numpy.int32(psi.shape[0]))
 		return density
 
 	def _getInvariant(self, psi, coeff, N):
@@ -186,7 +188,7 @@ class ParticleStatistics(PairedCalculation):
 			psi.data, mdata,
 			self._potentials, self._energy,
 			g, numpy.int32(coeff))
-		self._kernel_multiply(res.size, res, self._grid.dV)
+		self._kernel_multiply(res.size, res, self._dV)
 		return self._reduce(res) / psi.shape[0] / N * self._constants.hbar
 
 	def _getInvariant2comp(self, psi0, psi1, coeff, N):
@@ -218,7 +220,7 @@ class ParticleStatistics(PairedCalculation):
 			mdata0, mdata1,
 			self._potentials, self._energy,
 			g00, g01, g11, numpy.int32(coeff))
-		self._kernel_multiply(res.size, res, self._grid.dV)
+		self._kernel_multiply(res.size, res, self._dV)
 		return self._reduce(res) / psi0.shape[0] / N * self._constants.hbar
 
 	def _getInteraction(self, psi0, psi1):
