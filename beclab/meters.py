@@ -156,8 +156,8 @@ class ParticleStatistics(PairedCalculation):
 	def getAverageDensity(self, psi):
 		ensembles = psi.shape[0]
 		density = self.getDensity(psi, coeff=ensembles)
-		average_density = self._reduce.sparse(density, final_length=self._grid.size)
-		average_density.shape = self._grid.shape
+		average_density = self._reduce.sparse(density, final_length=self._grid.size,
+			final_shape=self._grid.shape)
 		return average_density
 
 	def getAveragePopulation(self, psi):

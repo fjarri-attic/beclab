@@ -154,18 +154,22 @@ class GPUReduce:
 		else:
 			return data_in
 
-	def sparse(self, array, final_length=1):
+	def sparse(self, array, final_length=1, final_shape=None):
 		if final_length == 1:
 			return self(array)
 
 		reduce_power = array.size / final_length
 
+		# TODO: check that final_shape contains necessary amount of elements
+		if final_shape is None:
+			final_shape = (final_length,)
+
 		if reduce_power == 1:
-			res = self._env.allocate((final_length,), array.dtype)
+			res = self._env.allocate(final_shape, array.dtype)
 			self._env.copyBuffer(array, res)
 			return res
 		if reduce_power < self._warp_size / 2:
-			res = self._env.allocate((final_length,), array.dtype)
+			res = self._env.allocate(final_shape, array.dtype)
 			func = self._small_kernels[reduce_power]
 			func(final_length, res, array)
 			return res
@@ -184,13 +188,18 @@ class CPUReduce:
 
 		return array.reshape(final_length, array.size / final_length).sum(1)
 
-	def sparse(self, array, final_length=1):
+	def sparse(self, array, final_length=1, final_shape=None):
 
 		if final_length == 1:
 			return self(array)
 
+		# TODO: check that final_shape contains necessary amount of elements
+		if final_shape is None:
+			final_shape = (final_length,)
+
 		reduce_power = array.size / final_length
-		return self(array.reshape(reduce_power, final_length).T, final_length=final_length)
+		return self(array.reshape(reduce_power, final_length).T,
+			final_length=final_length).reshape(final_shape)
 
 
 def createReduce(env, dtype):
