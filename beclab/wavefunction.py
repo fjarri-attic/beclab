@@ -101,10 +101,6 @@ class Wavefunction(PairedCalculation):
 			self.data = self._data = self._mdata = self._env.allocate(self.shape, dtype)
 
 		else:
-			self._mdata = self._env.allocate(self._grid.mshape, dtype)
-			self._data = self._env.allocate(self._grid.shape, dtype)
-			self.data = self._data
-
 			self._shape = (ensembles,) + self._grid.shape
 			self._mshape = (ensembles,) + self._grid.mshape
 			self.shape = self._mshape if self.in_mspace else self._shape
@@ -112,6 +108,10 @@ class Wavefunction(PairedCalculation):
 			self._size = self._grid.size
 			self._msize = self._grid.msize
 			self.size = self._msize if self.in_mspace else self._size
+
+			self._mdata = self._env.allocate(self._mshape, dtype)
+			self._data = self._env.allocate(self._shape, dtype)
+			self.data = self._data
 
 		if data is None:
 			self._kernel_fillWithZeros(self.size, self.data)
