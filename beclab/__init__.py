@@ -1,7 +1,7 @@
 from . import helpers
 
 _PRELUDE = """
-#define DEFINE_INDEXES unsigned int index = GLOBAL_ID_FLAT, cell_index = index % ${g.cells}, ensemble = index / %{g.cells}
+#define DEFINE_INDEXES unsigned int index = GLOBAL_ID_FLAT, cell_index = index % ${g.size}, ensemble = index / ${g.size}
 """
 
 def getEnvWrapper(env_class):
