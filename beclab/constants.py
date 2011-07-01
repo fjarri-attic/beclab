@@ -53,6 +53,8 @@ def getPotentials(env, constants, grid):
 			(constants.wy * y) ** 2 +
 			(constants.wz * z) ** 2) / (2.0 * constants.hbar)
 
+	potentials = potentials.astype(constants.scalar.dtype)
+
 	if env is not None:
 		return env.toDevice(potentials)
 	else:
@@ -70,6 +72,8 @@ def getPlaneWaveEnergy(env, constants, grid):
 	else:
 		E = constants.hbar * \
 			(grid.kx_full ** 2 + grid.ky_full ** 2 + grid.kz_full ** 2) / (2.0 * constants.m)
+
+	E = E.astype(constants.scalar.dtype)
 
 	if env is not None:
 		return env.toDevice(E)
@@ -89,6 +93,8 @@ def getHarmonicEnergy(env, constants, grid):
 		E = (wx * (mx + 0.5) + wy * (my + 0.5) + wz * (mz + 0.5))
 	else:
 		E = (constants.wz * (grid.mz_full + 0.5))
+
+	E = E.astype(constants.scalar.dtype)
 
 	if env is None:
 		return E
