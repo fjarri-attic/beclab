@@ -90,7 +90,7 @@ class TFGroundState(PairedCalculation):
 		# only in the limit of infinite number of lattice points.
 		# So we have to renormalize the data, and we will do it in mode space
 		# because lattice spacing is uniform there
-		# (an because it is a primary space for harmonic grid).
+		# (and because it is a primary space for harmonic grid).
 		res.toMSpace()
 		N_real = self._stats.getN(res)
 		coeff = numpy.sqrt(N / N_real)
