@@ -49,10 +49,7 @@ def createFFTPlan(env, constants, grid):
 
 	shape = grid.shape
 	dtype = constants.complex.dtype
-	if grid.dim == 1:
-		scale = numpy.sqrt(grid.dz / grid.shape[0])
-	else:
-		scale = numpy.sqrt(grid.dz * grid.dy * grid.dx / grid.size)
+	scale = numpy.sqrt(grid.dV_uniform / grid.size)
 
 	if env.gpu:
 		if env.cuda:
