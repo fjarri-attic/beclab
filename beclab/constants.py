@@ -115,6 +115,17 @@ def getProjectorMask(env, constants, grid):
 
 	return env.toDevice(mask)
 
+def getIntegrationCoefficients(pts):
+	"""
+	Returns integration coefficients for simple trapezoidal rule.
+	Works for non-uniform grids.
+	"""
+	return numpy.array(
+		[(pts[1] - pts[0]) / 2] +
+		((pts[2:] - pts[:-2]) / 2.0).tolist() +
+		[(pts[-1] - pts[-2]) / 2])
+
+	#return numpy.array([0.5] + [1.0] * (N - 2) + [0.5])
 
 class UniformGrid:
 
@@ -143,21 +154,18 @@ class UniformGrid:
 		]
 
 		# number of cells and cell volume
-		dV = 1.0
+		self.dV_uniform = 1.0
 		self.size = 1
 		for i in xrange(self.dim):
-			dV *= d_space[i]
+			self.dV_uniform *= d_space[i]
 			self.size *= self.shape[i]
 		self.msize = self.size
 
-		self.V = dV * self.size
+		self.V = self.dV_uniform * self.size
 
 		kvalues = lambda dx, N: numpy.fft.fftfreq(N, dx) * 2.0 * numpy.pi
 
 		if self.dim == 3:
-			self.dx = d_space[2]
-			self.dy = d_space[1]
-			self.dz = d_space[0]
 
 			# 1D grids
 			self.x = grid_space[2]
@@ -167,32 +175,29 @@ class UniformGrid:
 			# tiled grid arrays to use in elementwise numpy operations
 			self.x_full, self.y_full, self.z_full = tile3D(self.x, self.y, self.z)
 
-			self.kx = kvalues(self.dx, self.shape[2])
-			self.ky = kvalues(self.dy, self.shape[1])
-			self.kz = kvalues(self.dz, self.shape[0])
+			self.kx = kvalues(d_space[2], self.shape[2])
+			self.ky = kvalues(d_space[1], self.shape[1])
+			self.kz = kvalues(d_space[0], self.shape[0])
 
 			self.kx_full, self.ky_full, self.kz_full = tile3D(self.kx, self.ky, self.kz)
 
-			# coefficients for integration;
-			# multiplying border coefficients by 0.5, according to simple trapezoidal rule
-			# (although function is zero there anyway, so it doesn't really matter)
-			dx = numpy.array([0.5] + [1.0] * (self.shape[2] - 2) + [0.5])
-			dy = numpy.array([0.5] + [1.0] * (self.shape[1] - 2) + [0.5])
-			dz = numpy.array([0.5] + [1.0] * (self.shape[0] - 2) + [0.5])
-			dx, dy, dz = tile3D(dx, dy, dz)
-			self.dV = dx * dy * dz * dV
+			# coefficients for integration
+			self.dx = getIntegrationCoefficients(self.x)
+			self.dy = getIntegrationCoefficients(self.y)
+			self.dz = getIntegrationCoefficients(self.z)
+			dx, dy, dz = tile3D(self.dx, self.dy, self.dz)
+			self.dV = dx * dy * dz
 
 		else:
 			# using 'z' axis for 1D, because it seems more natural
-			self.dz = d_space[0]
 			self.z = grid_space[0]
 			self.z_full = self.z
 
-			self.kz = kvalues(self.dz, self.shape[0])
+			self.kz = kvalues(d_space[0], self.shape[0])
 			self.kz_full = self.kz
 
-			dz = numpy.array([0.5] + [1.0] * (self.shape[0] - 2) + [0.5])
-			self.dV = dz * dV
+			self.dz = getIntegrationCoefficients(self.z)
+			self.dV = dz
 
 	@classmethod
 	def forN(cls, env, constants, N, shape, border=1.2):
@@ -279,12 +284,6 @@ class HarmonicGrid:
 			self.zs_full = {}
 			self.dzs = {}
 
-		# Build coefficients for integration in x-space using simple trapezoidal rule
-		ds = lambda pts: numpy.array(
-			[(pts[1] - pts[0]) / 2] +
-			((pts[2:] - pts[:-2]) / 2.0).tolist() +
-			[(pts[-1] - pts[-2]) / 2])
-
 		for l in (1, 2, 3, 4):
 			if self.dim == 3:
 				# non-uniform grid used in Gauss-Hermite quadrature
@@ -303,11 +302,14 @@ class HarmonicGrid:
 					tile3D(self.xs[l], self.ys[l], self.zs[l])
 
 				# Coefficients for integration
-				self.dxs[l] = ds(self.xs[l])
-				self.dys[l] = ds(self.ys[l])
-				self.dzs[l] = ds(self.zs[l])
+				self.dxs[l] = getIntegrationCoefficients(self.xs[l])
+				self.dys[l] = getIntegrationCoefficients(self.ys[l])
+				self.dzs[l] = getIntegrationCoefficients(self.zs[l])
 
-				dx, dy, dz = tile3D(self.dxs[l], self.dys[l], self.dzs[l])
+				dx, dy, dz = tile3D(
+					self.dxs[l],
+					self.dys[l],
+					self.dzs[l])
 				self.dVs[l] = dx * dy * dz
 
 			else:
@@ -319,7 +321,7 @@ class HarmonicGrid:
 				self.zs_full[l] = self.zs[l]
 
 				# dVs for debugging (integration in x-space)
-				self.dzs[l] = ds(self.zs[l])
+				self.dzs[l] = getIntegrationCoefficients(self.zs[l])
 				self.dVs[l] = self.dzs[l]
 
 			# Create aliases for 1st order arrays,
