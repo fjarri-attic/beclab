@@ -81,6 +81,14 @@ def getHarmonicGrid(N, l):
 	else:
 		points = ((N - 1) * (l + 1) + 2) / 2
 
+	# TODO: Population calculated in mode and in x-space is slightly different
+	# The more points we take in addition to minimum necessary for precise
+	# G.-H. quadrature, the less is the difference.
+	# Looks like it is not a bug, just inability to integrate Hermite function
+	# in x-space precisely (oscillates too fast maybe?).
+	# But this still requres investigation.
+	#points += 10
+
 	roots, weights = my_h_roots(points)
 
 	return roots * numpy.sqrt(2.0 / (l + 1)), \
