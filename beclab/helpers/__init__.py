@@ -9,7 +9,7 @@ from .random import createRandom
 def createFHTPlan(env, constants, grid, order):
 
 	if grid.dim == 3:
-		return FHT3D(grid.mshape, order, (grid.lz, grid.ly, grid.lx))
+		return FHT3D(env, constants, grid.mshape, order, (grid.lz, grid.ly, grid.lx))
 	else:
-		return FHT1D(grid.mshape[0], order, grid.lz)
+		return FHT1D(env, constants, grid.mshape[0], order, grid.lz)
 

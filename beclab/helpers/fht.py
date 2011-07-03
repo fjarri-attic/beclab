@@ -3,7 +3,7 @@ import unittest, itertools
 import fractions
 from numpy.polynomial import Hermite as H
 
-from .misc import tile3D
+from .misc import tile3D, PairedCalculation
 
 
 def factorial(n):
@@ -115,29 +115,64 @@ def getPMatrix(N, l):
 
 	return res
 
-class FHT1D:
+class FHT1D(PairedCalculation):
 
-	def __init__(self, N, order, scale=1):
+	def __init__(self, env, constants, N, order, scale=1):
 		"""
 		N: the maximum number of harmonics
 		(i.e. transform returns decomposition on eigenfunctions with numbers 0 .. N)
 		order: the order of transformed function (i.e. for f = Psi^2 l = 2)
 		(f() cannot have mixed order, i.e. no f() = Psi^2 + Psi)
 		"""
+		PairedCalculation.__init__(self, env)
 
 		self.N = N
 		self.order = order
-		self.grid_x, self._weights_x = getHarmonicGrid(N, order)
-		self.P = getPMatrix(self.N, self.order)
-		self.scale_coeff = numpy.sqrt(scale)
+		_, w = getHarmonicGrid(N, order)
+
+		self._scalar_dtype = constants.scalar.dtype
+		self._complex_dtype = constants.complex.dtype
+
+		self._weights_x = self._env.toDevice(w.astype(self._scalar_dtype))
+		self._xshape = (len(w),)
+
+		P = getPMatrix(self.N, self.order).astype(self._scalar_dtype)
+		self._P = self._env.toDevice(P)
+		self._P_tr = self._env.toDevice(P.transpose())
+
+		self._fwd_scale = constants.scalar.cast(numpy.sqrt(scale))
+		self._inv_scale = constants.scalar.cast(1.0 / numpy.sqrt(scale))
+
+		self._allocateXi(1)
+
+		self._prepare()
+
+	def _allocateXi(self, batch):
+		if not hasattr(self, '_Xi') or self._Xi.shape[0] != batch:
+			self._Xi = self._env.allocate((batch,) + self._xshape, self._complex_dtype)
+
+	def _cpu__prepare(self):
+		pass
+
+	def _gpu__prepare(self):
+		pass
+
+	def _cpu__kernel_dot(self, _, res, m1, m2, scale):
+		self._env.copyBuffer(numpy.dot(m1, m2), dest=res)
+		res *= scale
+
+	def _cpu__kernel_multiply(self, _, res, data, coeffs, batch):
+		self._env.copyBuffer(data.flat * numpy.tile(coeffs.flat, batch), dest=res)
 
 	def execute(self, data, result, inverse=False, batch=1):
 		if inverse:
-			result.flat[:] = (numpy.dot(data.reshape(batch, self.N), self.P) / self.scale_coeff).flat
+			assert data.shape == (batch, self.N)
+			self._kernel_dot(None, result, data, self._P, self._inv_scale)
 		else:
-			M = len(self._weights_x)
-			Xi = (numpy.tile(self._weights_x, batch) * data.reshape(batch * M)).reshape(batch, M)
-			result.flat[:] = (numpy.dot(Xi, self.P.transpose()) * self.scale_coeff).flat
+			assert data.shape == (batch,) + self._xshape
+			self._allocateXi(batch)
+			self._kernel_multiply(None, self._Xi, data, self._weights_x, batch)
+			self._kernel_dot(None, result, self._Xi, self._P_tr, self._fwd_scale)
 
 
 class FHT3D:
