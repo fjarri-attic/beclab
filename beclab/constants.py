@@ -197,7 +197,7 @@ class UniformGrid:
 			self.kz_full = self.kz
 
 			self.dz = getIntegrationCoefficients(self.z)
-			self.dV = dz
+			self.dV = self.dz
 
 	@classmethod
 	def forN(cls, env, constants, N, shape, border=1.2):
