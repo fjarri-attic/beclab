@@ -88,14 +88,19 @@ class TFGroundState(PairedCalculation):
 
 		# The total number of atoms is equal to the number requested
 		# only in the limit of infinite number of lattice points.
-		# So we have to renormalize the data, and we will do it in mode space
-		# because lattice spacing is uniform there
-		# (and because it is a primary space for harmonic grid).
-		res.toMSpace()
+		# So we have to renormalize the data.
+		#
+		# We can do it in x- or mode-space.
+		# For uniform grid it does not matter. For harmonic grid there will be
+		# some difference (see comment in getHarmonicGrid() in fht.py).
+		# Doing it in x-space because all losses, interaction and noise are
+		# calculated in x-space, and kinetic + potential operator is less significant.
+		#res.toMSpace()
 		N_real = self._stats.getN(res)
 		coeff = numpy.sqrt(N / N_real)
 		self._kernel_multiplyByScalar(res.size, res.data, self._constants.scalar.cast(coeff))
 		res.toXSpace()
+		#res.toXSpace()
 
 		return res
 
