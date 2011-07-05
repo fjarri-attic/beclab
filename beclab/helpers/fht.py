@@ -140,7 +140,10 @@ class FHT1D(PairedCalculation):
 
 		P = getPMatrix(self.N, self.order).astype(self._scalar_dtype)
 		self._P = self._env.toDevice(P)
-		self._P_tr = self._env.toDevice(P.transpose())
+
+		# flatten and reshape make memory linear again
+		# (transpose() just swaps strides)
+		self._P_tr = self._env.toDevice(P.transpose().flatten().reshape(50, 50))
 
 		self._fwd_scale = constants.scalar.cast(numpy.sqrt(scale))
 		self._inv_scale = constants.scalar.cast(1.0 / numpy.sqrt(scale))
