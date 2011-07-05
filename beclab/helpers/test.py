@@ -139,48 +139,67 @@ class ReduceTest(unittest.TestCase):
 
 	def testFullReduce(self):
 
-		for dtype in (numpy.float32, numpy.complex64):
-			data = getTestArray((1024 * 1024,), dtype, 1)
-			d_data = self.env.toDevice(data)
-			reduce = createReduce(self.env, dtype)
+		for size in (140, 512 * 512 + 150, 512 * 231):
+			for dtype in (numpy.float32, numpy.complex64):
+				data = getTestArray((size,), dtype, 1)
+				d_data = self.env.toDevice(data)
+				reduce = createReduce(self.env, dtype)
 
-			# FIXME: for some reason, error here is very high
-			# is it because of the many additions?
-			self.assert_(diff(reduce(d_data), numpy.sum(data)) < 1e-3)
+				# FIXME: for some reason, error here is very high
+				# is it because of the many additions?
+				self.assert_(diff(reduce(d_data), numpy.sum(data)) < 1e-3)
 
 	def testPartialReduce(self):
 		ref_env = CPUEnvironment()
 
-		for dtype in (numpy.float32, numpy.complex64):
-			data = getTestArray((1024 * 1024,), dtype, 1)
-			d_data = self.env.toDevice(data)
-			ref_data = ref_env.toDevice(data)
+		tests = (
+			(128, 16),
+			(128, 1024 * 8),
+			(50, 531),
+			(40, 24),
+			(457, 389)
+		)
 
-			reduce = createReduce(self.env, dtype)
-			ref_reduce = createReduce(ref_env, dtype)
+		for final_length, multiplier in tests:
+			for dtype in (numpy.float32, numpy.complex64):
+				data = getTestArray((final_length * multiplier,), dtype, 1)
+				d_data = self.env.toDevice(data)
+				ref_data = ref_env.toDevice(data)
 
-			d_result = reduce(d_data, final_length=128)
-			ref_result = ref_reduce(ref_data, final_length=128)
+				reduce = createReduce(self.env, dtype)
+				ref_reduce = createReduce(ref_env, dtype)
 
-			self.assert_(diff(self.env.fromDevice(d_result),
-				ref_env.fromDevice(ref_result)) < 1e-3)
+				d_result = reduce(d_data, final_length=final_length)
+				ref_result = ref_reduce(ref_data, final_length=final_length)
+
+				self.assert_(diff(self.env.fromDevice(d_result),
+					ref_env.fromDevice(ref_result)) < 1e-3)
 
 	def testSparseReduce(self):
 		ref_env = CPUEnvironment()
 
-		for dtype in (numpy.float32, numpy.complex64):
-			data = getTestArray((1024 * 1024,), dtype, 1)
-			d_data = self.env.toDevice(data)
-			ref_data = ref_env.toDevice(data)
+		tests = (
+			(128, 16),
+			(128, 1024 * 8),
+			(50, 531),
+			(40, 24),
+			(457, 389)
+		)
 
-			reduce = createReduce(self.env, dtype)
-			ref_reduce = createReduce(ref_env, dtype)
+		for final_length, multiplier in tests:
+			for dtype in (numpy.float32, numpy.complex64):
+				data = getTestArray((final_length * multiplier,), dtype, 1)
+				d_data = self.env.toDevice(data)
+				ref_data = ref_env.toDevice(data)
 
-			d_result = reduce.sparse(d_data, final_length=128)
-			ref_result = ref_reduce.sparse(ref_data, final_length=128)
+				reduce = createReduce(self.env, dtype)
+				ref_reduce = createReduce(ref_env, dtype)
 
-			self.assert_(diff(self.env.fromDevice(d_result),
-				ref_env.fromDevice(ref_result)) < 1e-3)
+				d_result = reduce.sparse(d_data, final_length=final_length)
+				ref_result = ref_reduce.sparse(ref_data, final_length=final_length)
+
+				self.assert_(diff(self.env.fromDevice(d_result),
+					ref_env.fromDevice(ref_result)) < 1e-3)
 
 
 if __name__ == '__main__':
