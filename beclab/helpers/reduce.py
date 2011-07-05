@@ -24,17 +24,22 @@ class GPUReduce:
 			%>
 
 			EXPORTED_FUNC void reduceKernel${block_size}(
-				GLOBAL_MEM ${typename}* output, const GLOBAL_MEM ${typename}* input)
+				GLOBAL_MEM ${typename}* output, const GLOBAL_MEM ${typename}* input,
+				int blocks_per_part, int last_block_size)
 			{
 				SHARED_MEM ${typename} shared_mem[${smem_size}];
 
 				int tid = THREAD_ID_X;
 				int bid = BLOCK_ID_FLAT;
 
-				// first reduction, after which the number of elements to reduce
-				// equals to number of threads in block
-				shared_mem[tid] = input[tid + 2 * bid * ${block_size}] +
-					input[tid + 2 * bid * ${block_size} + ${block_size}];
+				int part_length = (blocks_per_part - 1) * blockDim.x + last_block_size;
+				int part_num = BLOCK_ID_FLAT / blocks_per_part;
+				int index_in_part = blockDim.x * (BLOCK_ID_FLAT % blocks_per_part) + tid;
+
+				if(bid % blocks_per_part == blocks_per_part - 1 && tid >= last_block_size)
+					shared_mem[tid] = ${construct_zero};
+				else
+					shared_mem[tid] = input[part_length * part_num + index_in_part];
 
 				SYNC;
 
@@ -102,7 +107,8 @@ class GPUReduce:
 		program = self._env.compile(kernel_template, double=type.precision.double,
 			typename=type.name, warp_size=self._warp_size,
 			max_block_size=self._max_block_size,
-			log2=log2, block_sizes=block_sizes, reduce_powers=reduce_powers)
+			log2=log2, block_sizes=block_sizes, reduce_powers=reduce_powers,
+			construct_zero="0" if type.dtype in (numpy.float32, numpy.float64) else "complex_ctr(0, 0)")
 
 		self._kernels = {}
 		for block_size in block_sizes:
@@ -118,6 +124,7 @@ class GPUReduce:
 
 		length = array.size
 		assert length >= final_length, "Array size cannot be less than final size"
+		assert length % final_length == 0
 
 		reduce_kernels = self._kernels
 
@@ -126,25 +133,39 @@ class GPUReduce:
 			self._env.copyBuffer(array, res)
 			return res
 
-		# we can reduce maximum block size * 2 times a pass
-		max_reduce_power = self._max_block_size * 2
+		# we can reduce maximum 'block size' times a pass
+		max_reduce_power = self._max_block_size
 
 		data_in = array
 
 		while length > final_length:
 
+			part_length = length / final_length
+
 			if length / final_length >= max_reduce_power:
-				reduce_power = max_reduce_power
+				block_size = max_reduce_power
+				blocks_per_part = (part_length - 1) / block_size + 1
+				blocks_num = blocks_per_part * final_length
+				last_block_size = part_length - (blocks_per_part - 1) * block_size
+				new_length = blocks_num
 			else:
-				reduce_power = length / final_length
+				block_size = 2 ** (log2(length / final_length - 1) + 1)
+				blocks_per_part = 1
+				blocks_num = final_length
+				last_block_size = length / final_length
+				new_length = final_length
 
-			data_out = self._env.allocate((data_in.size / reduce_power,), array.dtype)
+			#print length, part_length, block_size, blocks_per_part, blocks_num, last_block_size
 
-			func = reduce_kernels[reduce_power / 2]
+			grid_size = blocks_num * block_size
+			data_out = self._env.allocate((new_length,), array.dtype)
 
-			func.customCall((length / 2,), (reduce_power / 2,), data_out, data_in)
+			func = reduce_kernels[block_size]
 
-			length /= reduce_power
+			func.customCall((grid_size,), (block_size,), data_out, data_in,
+				numpy.int32(blocks_per_part), numpy.int32(last_block_size))
+
+			length = new_length
 
 			data_in = data_out
 
