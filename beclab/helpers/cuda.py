@@ -28,7 +28,7 @@ class _KernelWrapper:
 	def _getSupportedGrid(self, x, y):
 		max_x = self._env.max_grid_size_x_pow2
 		if x > max_x:
-			return (max_x, y * x / max_x)
+			return (max_x, (y * x - 1) / max_x + 1)
 		else:
 			return (x, y)
 
@@ -41,7 +41,7 @@ class _KernelWrapper:
 			grid = (1, 1)
 		else:
 			block = (block_size, 1, 1)
-			grid = self._getSupportedGrid(size / block_size, 1)
+			grid = self._getSupportedGrid((size - 1) / block_size + 1, 1)
 
 		self._customCall(grid, block, *args)
 
