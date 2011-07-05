@@ -36,25 +36,31 @@ class ParticleStatistics(PairedCalculation):
 	def _gpu__prepare(self):
 		kernel_template = """
 			EXPORTED_FUNC void interaction(GLOBAL_MEM COMPLEX *interaction,
-				GLOBAL_MEM COMPLEX *a_state, GLOBAL_MEM COMPLEX *b_state)
+				GLOBAL_MEM COMPLEX *a_state, GLOBAL_MEM COMPLEX *b_state, int ensembles)
 			{
 				DEFINE_INDEXES;
+				if(ensemble >= ensembles)
+					return;
 				interaction[index] = complex_mul(a_state[index], conj(b_state[index]));
 			}
 
 			EXPORTED_FUNC void density(GLOBAL_MEM SCALAR *res,
-				GLOBAL_MEM COMPLEX *state, int ensembles, SCALAR modifier)
+				GLOBAL_MEM COMPLEX *state, int ensembles, SCALAR modifier, int size)
 			{
 				DEFINE_INDEXES;
+				if(ensemble >= ensembles)
+					return;
 				res[index] = (squared_abs(state[index]) - modifier) / ensembles;
 			}
 
 			EXPORTED_FUNC void invariant(GLOBAL_MEM SCALAR *res,
 				GLOBAL_MEM COMPLEX *xstate, GLOBAL_MEM COMPLEX *kstate,
 				GLOBAL_MEM SCALAR *potentials,
-				SCALAR g_by_hbar, int coeff)
+				SCALAR g_by_hbar, int coeff, int ensembles)
 			{
 				DEFINE_INDEXES;
+				if(ensemble >= ensembles)
+					return;
 
 				SCALAR potential = potentials[cell_index];
 
@@ -71,9 +77,11 @@ class ParticleStatistics(PairedCalculation):
 				GLOBAL_MEM COMPLEX *xstate2, GLOBAL_MEM COMPLEX *kstate2,
 				GLOBAL_MEM SCALAR *potentials,
 				SCALAR g11_by_hbar, SCALAR g22_by_hbar,
-				SCALAR g12_by_hbar, int coeff)
+				SCALAR g12_by_hbar, int coeff, int ensembles)
 			{
 				DEFINE_INDEXES;
+				if(ensemble >= ensembles)
+					return;
 
 				SCALAR potential = potentials[cell_index];
 
@@ -101,6 +109,9 @@ class ParticleStatistics(PairedCalculation):
 				int ensembles)
 			{
 				DEFINE_INDEXES;
+				if(ensemble >= ensembles)
+					return;
+
 				SCALAR coeff_val = coeffs[index];
 				SCALAR data_val;
 

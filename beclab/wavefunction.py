@@ -41,6 +41,9 @@ class Wavefunction(PairedCalculation):
 			EXPORTED_FUNC void fillWithZeros(GLOBAL_MEM COMPLEX *res)
 			{
 				DEFINE_INDEXES;
+				if(index >= ${g.size})
+					return;
+
 				res[index] = complex_ctr(0, 0);
 			}
 
@@ -49,8 +52,10 @@ class Wavefunction(PairedCalculation):
 				GLOBAL_MEM COMPLEX *dest, int ensembles)
 			{
 				DEFINE_INDEXES;
-				COMPLEX src_val = src[index];
+				if(index >= ${g.size})
+					return;
 
+				COMPLEX src_val = src[index];
 				for(int i = 0; i < ensembles; i++)
 					dest[index + i * ${g.size}] = src_val;
 			}
@@ -59,6 +64,9 @@ class Wavefunction(PairedCalculation):
 				GLOBAL_MEM COMPLEX *randoms, GLOBAL_MEM SCALAR *mask)
 			{
 				DEFINE_INDEXES;
+				if(index >= ${g.size})
+					return;
+
 				SCALAR mask_elem = mask[cell_index];
 				COMPLEX val = modespace_data[index];
 
