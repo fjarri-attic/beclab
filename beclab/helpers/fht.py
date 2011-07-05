@@ -160,24 +160,75 @@ class FHT1D(PairedCalculation):
 		pass
 
 	def _gpu__prepare(self):
-		pass
+		kernel_template = """
+			EXPORTED_FUNC void multiplyComplexScalar(
+				GLOBAL_MEM COMPLEX *result, GLOBAL_MEM COMPLEX *data,
+				GLOBAL_MEM SCALAR *coeffs, int batch)
+			{
+				DEFINE_INDEXES;
+				if(index >= ${g.size})
+					return;
 
-	def _cpu__kernel_dot(self, _, res, m1, m2, scale):
+				SCALAR coeff_val = coeffs[index];
+				COMPLEX data_val;
+
+				for(int i = 0; i < batch; i++)
+				{
+					data_val = data[index + i * ${g.size}];
+					result[index + i * ${g.size}] = complex_mul_scalar(data_val, coeff_val);
+				}
+			}
+
+			EXPORTED_FUNC void matrixMulComplexScalar(GLOBAL_MEM COMPLEX *result,
+				GLOBAL_MEM COMPLEX *m1, GLOBAL_MEM SCALAR *m2,
+				int w1, int h1, int w2, SCALAR scale)
+			{
+				int output_index = GLOBAL_ID_FLAT;
+				if(output_index >= h1 * w2)
+					return;
+
+				COMPLEX sum = complex_ctr(0, 0);
+				int target_x = output_index % w2;
+				int target_y = output_index / w2;
+
+				for(int i = 0; i < w1; i++)
+					sum = sum + complex_mul_scalar(m1[target_y * w1 + i], m2[i * w2 + target_x]);
+
+				result[output_index] = complex_mul_scalar(sum, scale);
+			}
+		"""
+
+		self._program = self._env.compileProgram(kernel_template, self._constants, self._grid)
+
+		self._kernel_multiplyComplexScalar = self._program.multiplyComplexScalar
+		self._kernel_matrixMulComplexScalar = self._program.matrixMulComplexScalar
+
+	def _cpu__kernel_matrixMulComplexScalar(self, size, res, m1, m2, w1, h1, w2, scale):
 		self._env.copyBuffer(numpy.dot(m1, m2), dest=res)
 		res *= scale
 
-	def _cpu__kernel_multiply(self, _, res, data, coeffs, batch):
+	def _cpu__kernel_multiplyComplexScalar(self, size, res, data, coeffs, batch):
 		self._env.copyBuffer(data.flat * numpy.tile(coeffs.flat, batch), dest=res)
 
 	def execute(self, data, result, inverse=False, batch=1):
 		if inverse:
 			assert data.shape == (batch, self.N)
-			self._kernel_dot(None, result, data, self._P, self._inv_scale)
+
+			self._kernel_matrixMulComplexScalar(batch * self._xshape[0],
+				result, data, self._P,
+				numpy.int32(self.N), numpy.int32(batch), numpy.int32(self._xshape[0]),
+				self._inv_scale
+			)
 		else:
 			assert data.shape == (batch,) + self._xshape
 			self._allocateXi(batch)
-			self._kernel_multiply(None, self._Xi, data, self._weights_x, batch)
-			self._kernel_dot(None, result, self._Xi, self._P_tr, self._fwd_scale)
+			self._kernel_multiplyComplexScalar(self._xshape[0], self._Xi, data,
+				self._weights_x, numpy.int32(batch))
+
+			self._kernel_matrixMulComplexScalar(batch * self.N,
+				result, self._Xi, self._P_tr,
+				numpy.int32(self._xshape[0]), numpy.int32(batch), numpy.int32(self.N),
+				self._fwd_scale)
 
 
 class FHT3D:
