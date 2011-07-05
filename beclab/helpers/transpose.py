@@ -51,11 +51,13 @@ EXPORTED_FUNC void transposeKernel(GLOBAL_MEM ${typename}* odata, const GLOBAL_M
 
 	for(int n = 0; n < num; ++n)
 	{
-		block[index_block] = idata[index_in];
+		if(xIndex < width && yIndex < height)
+			block[index_block] = idata[index_in];
 
 		SYNC;
 
-		odata[index_out] = block[index_transpose];
+		if(xBlock + lid_y < width && yBlock + lid_x < height)
+			odata[index_out] = block[index_transpose];
 
 		index_in += size;
 		index_out += size;
@@ -86,10 +88,10 @@ class GPUTranspose:
 		height: Height of each matrix, must be a multiple of HALF_WARP_SIZE
 		num: number of matrices in the batch
 		"""
-		assert width % self._half_warp_size == 0
-		assert height % self._half_warp_size == 0
+		full_width = ((width - 1) / self._half_warp_size + 1) * self._half_warp_size
+		full_height = ((height - 1) / self._half_warp_size + 1) * self._half_warp_size
 
-		global_size = (width, height)
+		global_size = (full_width, full_height)
 		self._func.customCall(global_size, self._local_size,
 			odata, idata, numpy.int32(width),
 			numpy.int32(height), numpy.int32(batch))
