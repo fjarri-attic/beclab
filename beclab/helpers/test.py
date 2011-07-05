@@ -93,9 +93,13 @@ class FFTTest(unittest.TestCase):
 
 class TransposeTest(unittest.TestCase):
 
-	testcases = itertools.product(((16, 16), (32, 16), (2048, 128)),
-		(numpy.complex64, numpy.float32),
-		(1, 4, 8))
+	testcases = itertools.product(
+		(
+			(16, 16), (32, 16), (512, 64),
+			(3, 5), (3, 32), (15, 32), (379, 133)
+		),
+		(numpy.float32, numpy.complex64),
+		(1, 3, 15, 16, 17))
 
 	def testDoubleTranspose(self):
 		for shape, dtype, batch in self.testcases:
