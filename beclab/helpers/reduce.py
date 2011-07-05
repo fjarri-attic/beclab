@@ -189,11 +189,12 @@ class GPUReduce:
 			res = self._env.allocate(final_shape, array.dtype)
 			self._env.copyBuffer(array, res)
 			return res
-		if reduce_power < self._warp_size / 2:
-			res = self._env.allocate(final_shape, array.dtype)
-			func = self._small_kernels[reduce_power]
-			func(final_length, res, array)
-			return res
+		# TODO: we can improve performance for small sizes by using special kernel
+		#if reduce_power < self._warp_size / 2:
+		#	res = self._env.allocate(final_shape, array.dtype)
+		#	func = self._small_kernels[reduce_power]
+		#	func(final_length, res, array)
+		#	return res
 		else:
 			res = self._env.allocate(array.shape, array.dtype)
 			self._tr(array, res, final_length, reduce_power)
