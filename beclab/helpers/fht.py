@@ -117,7 +117,7 @@ def getPMatrix(N, l):
 
 class FHT1D(PairedCalculation):
 
-	def __init__(self, env, constants, N, order, scale=1):
+	def __init__(self, env, constants, grid, N, order, scale=1):
 		"""
 		N: the maximum number of harmonics
 		(i.e. transform returns decomposition on eigenfunctions with numbers 0 .. N)
@@ -125,6 +125,8 @@ class FHT1D(PairedCalculation):
 		(f() cannot have mixed order, i.e. no f() = Psi^2 + Psi)
 		"""
 		PairedCalculation.__init__(self, env)
+		self._constants = constants
+		self._grid = grid
 
 		self.N = N
 		self.order = order
