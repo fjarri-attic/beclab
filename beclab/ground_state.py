@@ -40,6 +40,8 @@ class TFGroundState(PairedCalculation):
 				SCALAR g_by_hbar)
 			{
 				DEFINE_INDEXES;
+				if(index >= ${g.size})
+					return;
 
 				SCALAR potential = potentials[index];
 
@@ -50,9 +52,12 @@ class TFGroundState(PairedCalculation):
 					data[index] = complex_ctr(0, 0);
 			}
 
-			EXPORTED_FUNC void multiplyByScalar(GLOBAL_MEM COMPLEX *data, SCALAR coeff)
+			EXPORTED_FUNC void multiplyComplexScalar(GLOBAL_MEM COMPLEX *data, SCALAR coeff)
 			{
 				DEFINE_INDEXES;
+				if(index >= ${g.size})
+					return;
+
 				COMPLEX x = data[index];
 				data[index] = complex_mul_scalar(x, coeff);
 			}
@@ -60,7 +65,7 @@ class TFGroundState(PairedCalculation):
 
 		self._program = self._env.compileProgram(kernel_template, self._constants, self._grid)
 		self._kernel_fillWithTFGroundState = self._program.fillWithTFGroundState
-		self._kernel_multiplyByScalar = self._program.multiplyByScalar
+		self._kernel_multiplyComplexScalar = self._program.multiplyComplexScalar
 
 	def _cpu__kernel_fillWithTFGroundState(self, _, data, potentials, mu_by_hbar, g_by_hbar):
 		mask_func = lambda x: 0.0 if x < 0 else x
@@ -69,7 +74,7 @@ class TFGroundState(PairedCalculation):
 			numpy.sqrt(mask_map(mu_by_hbar - self._potentials) / g_by_hbar),
 			dest=data)
 
-	def _cpu__kernel_multiplyByScalar(self, _, data, coeff):
+	def _cpu__kernel_multiplyComplexScalar(self, _, data, coeff):
 		data *= coeff
 
 	def _create(self, data, g, mu):
@@ -98,8 +103,7 @@ class TFGroundState(PairedCalculation):
 		#res.toMSpace()
 		N_real = self._stats.getN(res)
 		coeff = numpy.sqrt(N / N_real)
-		self._kernel_multiplyByScalar(res.size, res.data, self._constants.scalar.cast(coeff))
-		res.toXSpace()
+		self._kernel_multiplyComplexScalar(res.size, res.data, self._constants.scalar.cast(coeff))
 		#res.toXSpace()
 
 		return res
