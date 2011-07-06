@@ -232,87 +232,159 @@ class FHT1D(PairedCalculation):
 				self._fwd_scale)
 
 
-class FHT3D:
+class FHT3D(PairedCalculation):
 
-	def __init__(self, N, order, scale=(1, 1, 1)):
+	def __init__(self, env, constants, grid, N, order, scale=(1, 1, 1)):
 		"""
 		N: the maximum number of harmonics (tuple (Nz, Ny, Nx))
 		(i.e. transform returns decomposition on eigenfunctions with numbers 0 .. N - 1)
 		order: the order of transformed function (i.e. for f = Psi^2 l = 2)
 		(f() cannot have mixed order, i.e. no f() = Psi^2 + Psi)
 		"""
+		PairedCalculation.__init__(self, env)
+		self._constants = constants.copy()
+		self._grid = grid.copy()
+
+		complex_cast = lambda x: x.astype(self._constants.complex.dtype)
+		scalar_cast = lambda x: x.astype(self._constants.scalar.dtype)
+		self._complex_dtype = self._constants.complex.dtype
 
 		self.N = N
 		self.order = order
-		self.scale_coeff = numpy.sqrt(scale[0] * scale[1] * scale[2])
-		self.grid_x, self._weights_x = getHarmonicGrid(N[2], order)
-		self.grid_y, self._weights_y = getHarmonicGrid(N[1], order)
-		self.grid_z, self._weights_z = getHarmonicGrid(N[0], order)
+		scale = numpy.sqrt(scale[0] * scale[1] * scale[2])
+		self._fwd_scale = constants.scalar.cast(scale)
+		self._inv_scale = constants.scalar.cast(1.0 / scale)
 
-		self.Px = getPMatrix(self.N[2], self.order)
-		self.Py = getPMatrix(self.N[1], self.order)
-		self.Pz = getPMatrix(self.N[0], self.order)
+		_, wx = getHarmonicGrid(N[2], order)
+		_, wy = getHarmonicGrid(N[1], order)
+		_, wz = getHarmonicGrid(N[0], order)
+
+		self._xshape = (len(wz), len(wy), len(wx))
+		wx, wy, wz = tile3D(wx, wy, wz)
+
+		self._weights = self._env.toDevice(scalar_cast(wx * wy * wz))
+
+		Px = scalar_cast(getPMatrix(self.N[2], self.order))
+		Py = scalar_cast(getPMatrix(self.N[1], self.order))
+		Pz = scalar_cast(getPMatrix(self.N[0], self.order))
+
+		Px_tr = Px.transpose()
+		Py_tr = Py.transpose()
+		Pz_tr = Pz.transpose()
+
+		self._Px = self._env.toDevice(Px)
+		self._Py = self._env.toDevice(Py)
+		self._Pz = self._env.toDevice(Pz)
+		self._Px_tr = self._env.toDevice(Px_tr.flatten().reshape(Px_tr.shape))
+		self._Py_tr = self._env.toDevice(Py_tr.flatten().reshape(Py_tr.shape))
+		self._Pz_tr = self._env.toDevice(Pz_tr.flatten().reshape(Pz_tr.shape))
+
+		self._allocateXi(1)
+
+		self._prepare()
+
+	def _allocateXi(self, batch):
+		if not hasattr(self, '_Xi') or self._Xi.shape[0] != batch:
+			self._Xi = self._env.allocate((batch,) + self._xshape, self._complex_dtype)
+
+	def _cpu__prepare(self):
+		pass
+
+	def _gpu__prepare(self):
+		kernel_template = """
+			EXPORTED_FUNC void multiplyComplexScalar(
+				GLOBAL_MEM COMPLEX *result, GLOBAL_MEM COMPLEX *data,
+				GLOBAL_MEM SCALAR *coeffs, int batch)
+			{
+				DEFINE_INDEXES;
+				if(index >= ${g.size})
+					return;
+
+				SCALAR coeff_val = coeffs[index];
+				COMPLEX data_val;
+
+				for(int i = 0; i < batch; i++)
+				{
+					data_val = data[index + i * ${g.size}];
+					result[index + i * ${g.size}] = complex_mul_scalar(data_val, coeff_val);
+				}
+			}
+
+			EXPORTED_FUNC void matrixMulComplexScalar(GLOBAL_MEM COMPLEX *result,
+				GLOBAL_MEM COMPLEX *m1, GLOBAL_MEM SCALAR *m2,
+				int w1, int h1, int w2, SCALAR scale)
+			{
+				int output_index = GLOBAL_ID_FLAT;
+				if(output_index >= h1 * w2)
+					return;
+
+				COMPLEX sum = complex_ctr(0, 0);
+				int target_x = output_index % w2;
+				int target_y = output_index / w2;
+
+				for(int i = 0; i < w1; i++)
+					sum = sum + complex_mul_scalar(m1[target_y * w1 + i], m2[i * w2 + target_x]);
+
+				result[output_index] = complex_mul_scalar(sum, scale);
+			}
+		"""
+
+		self._program = self._env.compileProgram(kernel_template, self._constants, self._grid)
+
+		self._kernel_multiplyComplexScalar = self._program.multiplyComplexScalar
+		self._kernel_matrixMulComplexScalar = self._program.matrixMulComplexScalar
+
+	def _cpu__kernel_matrixMulComplexScalar(self, size, res, m1, m2, w1, h1, w2, scale):
+		self._env.copyBuffer(numpy.dot(m1, m2), dest=res)
+		res *= scale
+
+	def _cpu__kernel_multiplyComplexScalar(self, size, res, data, coeffs, batch):
+		self._env.copyBuffer(data.flat * numpy.tile(coeffs.flat, batch), dest=res)
 
 	def getXiVector(self, data, batch=1):
-
-		Mx = len(self.grid_x)
-		My = len(self.grid_y)
-		Mz = len(self.grid_z)
-
-		# prepare 1D weight arrays tiled in 3D
-		wx = numpy.tile(self._weights_x, My * Mz).reshape(Mz, My, Mx)
-		wy = numpy.transpose(numpy.tile(self._weights_y, Mx * Mz).reshape(Mz, Mx, My), axes=(0, 2, 1))
-		wz = numpy.transpose(numpy.tile(self._weights_z, My * Mx).reshape(Mx, My, Mz), axes=(2, 1, 0))
-
-		tile = lambda x: numpy.tile(x, (batch, 1, 1)).reshape(batch, Mz, My, Mx)
-
-		return tile(wx) * tile(wy) * tile(wz) * data
+		return numpy.tile(self._weights, (batch, 1, 1, 1)) * data
 
 	def execute(self, data, result, inverse=False, batch=1):
-		Mz, My, Mx = len(self.grid_z), len(self.grid_y), len(self.grid_x)
+		Mz, My, Mx = self._xshape
 		Nz, Ny, Nx = self.N
 
 		if inverse:
-			data = data.reshape(batch, Nz, Ny, Nx)
+			assert data.shape == (batch,) + self.N
 
 			res = numpy.dot(
-				self.Pz.transpose(),
-				numpy.transpose(data, axes=(1, 2, 3, 0)).reshape(Nz, batch * Nx * Ny)
-			).reshape(Mz, Ny, Nx, batch)
+				numpy.transpose(data, axes=(0, 2, 3, 1)), # batch, Ny, Nx, Nz
+				self._Pz, # Nz, Mz
+			) # batch, Ny, Nx, Mz
 			res = numpy.dot(
-					self.Py.transpose(),
-					numpy.transpose(res, axes=(1, 0, 2, 3)).reshape(Ny, Mz * Nx * batch)
-				).reshape(My, Mz, Nx, batch)
-			res = numpy.transpose(
-				numpy.dot(
-					self.Px.transpose(),
-					numpy.transpose(res, axes=(2, 0, 1, 3)).reshape(Nx, My * Mz * batch)
-				).reshape(Mx, My, Mz, batch),
-				axes=(3, 2, 1, 0)
-			)
+				numpy.transpose(res, axes=(0, 2, 3, 1)), # batch, Nx, Mz, Ny
+				self._Py, # Ny, My
+			) # batch, Nx, Mz, My
+			res = numpy.dot(
+				numpy.transpose(res, axes=(0, 2, 3, 1)), # batch, Mz, My, Nx
+				self._Px, # Nx, Mx
+			) # batch, Mz, My, Mx
 
-			result.flat[:] = (res / self.scale_coeff).flat
+			result.flat[:] = (res * self._inv_scale).flat
 
 		else:
+			assert data.shape == (batch, Mz, My, Mx)
 			data = data.reshape(batch, Mz, My, Mx)
 
-			Xi = self.getXiVector(data, batch=batch)
-
+			Xi = self.getXiVector(data, batch=batch) # batch, Mz, My, Mx
 			res = numpy.dot(
-				self.Pz,
-				numpy.transpose(Xi, axes=(1, 2, 3, 0)).reshape(Mz, batch * Mx * My)
-			).reshape(Nz, My, Mx, batch)
+				numpy.transpose(Xi, axes=(0, 2, 3, 1)), # batch, My, Mx, Mz
+				self._Pz_tr, # Mz, Nz
+			) # batch, My, Mx, Nz
 			res = numpy.dot(
-					self.Py, numpy.transpose(res, axes=(1, 0, 2, 3)).reshape(My, Nz * Mx * batch)
-				).reshape(Ny, Nz, Mx, batch)
-			res = numpy.transpose(
-				numpy.dot(
-					self.Px, numpy.transpose(res, axes=(2, 0, 1, 3)).reshape(Mx, Ny * Nz * batch)
-				).reshape(Nx, Ny, Nz, batch),
-				axes=(3, 2, 1, 0)
-			)
+				numpy.transpose(res, axes=(0, 2, 3, 1)), # batch, Mx, Nz, My
+				self._Py_tr, # My, Ny
+			) # batch, Mx, Nz, Ny
+			res = numpy.dot(
+				numpy.transpose(res, axes=(0, 2, 3, 1)), # batch, Nz, Ny, Mx
+				self._Px_tr, # Mx, Nx
+			) # batch, Nz, Ny, Nx
 
-			result.flat[:] = (res * self.scale_coeff).flat
+			result.flat[:] = (res * self._fwd_scale).flat
 
 
 class TestFunction:
