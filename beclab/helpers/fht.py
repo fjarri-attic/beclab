@@ -143,7 +143,8 @@ class FHT1D(PairedCalculation):
 
 		# flatten and reshape make memory linear again
 		# (transpose() just swaps strides)
-		self._P_tr = self._env.toDevice(P.transpose().flatten().reshape(50, 50))
+		P_tr = P.transpose()
+		self._P_tr = self._env.toDevice(P_tr.flatten().reshape(P_tr.shape))
 
 		self._fwd_scale = constants.scalar.cast(numpy.sqrt(scale))
 		self._inv_scale = constants.scalar.cast(1.0 / numpy.sqrt(scale))
