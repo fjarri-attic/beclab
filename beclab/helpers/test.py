@@ -7,7 +7,7 @@ from beclab.helpers.cl import CLEnvironment
 from beclab.helpers.cuda import CUDAEnvironment
 
 from beclab.helpers.fft import createFFTPlan
-from beclab.helpers.transpose import createTranspose
+from beclab.helpers.transpose import createTranspose, createPermute
 from beclab.helpers.reduce import createReduce
 
 
@@ -132,6 +132,40 @@ class TransposeTest(unittest.TestCase):
 
 			tr(d_data, d_temp, shape[1], shape[0], batch=batch)
 			ref_tr(ref_data, ref_temp, shape[1], shape[0], batch=batch)
+
+			result = self.env.fromDevice(d_temp)
+			ref_result = ref_env.fromDevice(ref_temp)
+
+			self.assert_(diff(result, ref_result) < 1e-6)
+
+	def testPermute(self):
+		ref_env = CPUEnvironment()
+
+		testcases = itertools.product(
+			(
+				(3, 4, 5), (10, 16, 20), (10, 11, 16), (16, 21, 25), (29, 35, 46), (20, 30, 100),
+			),
+			(numpy.float32, numpy.complex64),
+			(1, 3))
+
+		for shape, dtype, batch in testcases:
+
+			shape = (batch,) + shape
+			new_shape = shape[:-3] + (shape[-2], shape[-1], shape[-3])
+
+			data = getTestArray(shape, dtype, batch)
+
+			tr = createPermute(self.env, dtype)
+			ref_tr = createPermute(ref_env, dtype)
+
+			d_data = self.env.toDevice(data)
+			d_temp = self.env.allocate(new_shape, dtype)
+
+			ref_data = ref_env.toDevice(data)
+			ref_temp = ref_env.allocate(new_shape, dtype)
+
+			tr(d_data, d_temp, shape, batch=batch)
+			ref_tr(ref_data, ref_temp, shape, batch=batch)
 
 			result = self.env.fromDevice(d_temp)
 			ref_result = ref_env.fromDevice(ref_temp)
