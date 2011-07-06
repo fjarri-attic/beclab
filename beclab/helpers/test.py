@@ -221,7 +221,8 @@ class ReduceTest(unittest.TestCase):
 			(128, 1024 * 8),
 			(50, 531),
 			(40, 24),
-			(457, 389)
+			(457, 389),
+			(457, 5)
 		)
 
 		for final_length, multiplier in tests:
