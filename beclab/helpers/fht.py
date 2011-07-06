@@ -125,8 +125,8 @@ class FHT1D(PairedCalculation):
 		(f() cannot have mixed order, i.e. no f() = Psi^2 + Psi)
 		"""
 		PairedCalculation.__init__(self, env)
-		self._constants = constants
-		self._grid = grid
+		self._constants = constants.copy()
+		self._grid = grid.copy()
 
 		self.N = N
 		self.order = order
