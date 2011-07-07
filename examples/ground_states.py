@@ -80,15 +80,14 @@ def testThomasFermi(gpu, grid_type, dim, gs_type):
 	# check that double transform did not change N
 	assert abs(N_xspace1 - N_xspace2) / N_xspace2 < 1e-6
 	# check that we actually got N we asked for
-	assert abs(N_xspace2 - N) / N < 1e-6
+	assert abs(N_xspace2 - N) / N < 1e-6 if constants.double else 1e-4
 	# There is certain difference for harmonic grid,
 	# because FHT does not conserve population (TODO: prove it mathematically)
 	assert abs(N_mspace - N_xspace2) / N_xspace2 < 2e-2 if grid_type == 'harmonic' else 1e-6
 
 	# There should be some difference between analytical mu and numerical one,
-	# because the numerical one takes into account kinetic energy
-	# (which is quite small as comared to nonlinear interaction for large N)
-	assert abs(mu - mu_tf) / mu_tf < 1e-2
+	# but it shouldn't be very big
+	assert abs(mu - mu_tf) / mu_tf < 2e-2
 
 	return plot
 
