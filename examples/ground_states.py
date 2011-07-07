@@ -102,8 +102,13 @@ if __name__ == '__main__':
 
 	# Thomas-Fermi ground states
 	for dim in ('1d', '3d'):
+		print
+		print "***", dim, "***"
+		print
 		plots = []
 		for gpu, grid_type, gs_type in itertools.product(*tests):
-			print "* Testing", grid_type, "on", ("GPU" if gpu else "CPU")
+			if grid_type == 'harmonic' and gs_type == 'split-step':
+				continue
+			print "* Testing", grid_type, "grid and", gs_type, "on", ("GPU" if gpu else "CPU")
 			plots.append(testThomasFermi(gpu, grid_type, dim, gs_type))
 		XYPlot(plots).save(prefix + dim + '.pdf')
