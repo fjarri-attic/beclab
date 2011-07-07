@@ -7,6 +7,7 @@ import pycuda.tools
 
 import numpy
 import os
+import gc
 from mako.template import Template
 
 from .misc import log2
@@ -150,6 +151,7 @@ class CUDAEnvironment:
 
 	def release(self):
 		self.context.pop()
+		gc.collect() # forcefully frees all buffers on GPU
 
 	def compile(self, source, double=False, prelude="", **kwds):
 		return _ProgramWrapper(self, source, double=double, prelude=prelude, **kwds)

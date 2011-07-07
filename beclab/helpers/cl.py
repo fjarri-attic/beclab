@@ -2,6 +2,7 @@ import pyopencl as cl
 
 import numpy
 import os
+import gc
 from mako.template import Template
 
 _dir, _file = os.path.split(os.path.abspath(__file__))
@@ -132,7 +133,10 @@ class CLEnvironment:
 		return "CL"
 
 	def release(self):
-		pass
+		del self.queue
+		del self.device
+		del self.context
+		gc.collect() # forcefully frees all buffers on GPU
 
 	def compile(self, source, double=False, prelude="", **kwds):
 		return _ProgramWrapper(self.context, self.queue, source, double=double,

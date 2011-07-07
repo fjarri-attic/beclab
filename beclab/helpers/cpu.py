@@ -1,4 +1,5 @@
 import numpy
+import gc
 
 
 class CPUEnvironment:
@@ -30,7 +31,7 @@ class CPUEnvironment:
 		return "CPU"
 
 	def release(self):
-		pass
+		gc.collect() # forcefully frees all buffers
 
 	def compile(self, source, constants, **kwds):
 		raise NotImplementedError("compile() called for CPU environment")
