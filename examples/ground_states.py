@@ -3,7 +3,6 @@ from beclab import *
 from beclab.meters import DensityProfile, ParticleStatistics
 import itertools
 
-eps = 1e-6
 
 def testThomasFermi(gpu, grid_type, dim, gs_type):
 	"""
