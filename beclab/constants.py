@@ -54,6 +54,7 @@ def getPotentials(env, constants, grid):
 			(constants.wz * z) ** 2) / (2.0 * constants.hbar)
 
 	potentials = potentials.astype(constants.scalar.dtype)
+	potentials = potentials.reshape((1,) + potentials.shape)
 
 	if env is not None:
 		return env.toDevice(potentials)
@@ -74,6 +75,7 @@ def getPlaneWaveEnergy(env, constants, grid):
 			(grid.kx_full ** 2 + grid.ky_full ** 2 + grid.kz_full ** 2) / (2.0 * constants.m)
 
 	E = E.astype(constants.scalar.dtype)
+	E = E.reshape((1,) + E.shape)
 
 	if env is not None:
 		return env.toDevice(E)
@@ -95,6 +97,7 @@ def getHarmonicEnergy(env, constants, grid):
 		E = (constants.wz * (grid.mz_full + 0.5))
 
 	E = E.astype(constants.scalar.dtype)
+	E = E.reshape((1,) + E.shape)
 
 	if env is None:
 		return E
@@ -111,6 +114,7 @@ def getProjectorMask(env, constants, grid):
 	mask_map = numpy.vectorize(mask_func)
 
 	mask = mask_map(E * constants.hbar).astype(constants.scalar.dtype)
+	mask = mask.reshape((1,) + mask.shape)
 	modes = numpy.sum(mask)
 
 	return env.toDevice(mask)
