@@ -97,7 +97,7 @@ if __name__ == '__main__':
 	tests = (
 		(False, True), # gpu usage
 		('uniform', 'harmonic'), # grid type
-		('TF',) # ground state type
+		('TF', 'split-step') # ground state type
 	)
 
 	# Thomas-Fermi ground states
