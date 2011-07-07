@@ -2,6 +2,7 @@ import numpy
 from beclab import *
 from beclab.meters import DensityProfile, ParticleStatistics
 import itertools
+import time
 
 
 def testThomasFermi(gpu, grid_type, dim, gs_type):
@@ -39,7 +40,11 @@ def testThomasFermi(gpu, grid_type, dim, gs_type):
 
 	# Create ground state
 
+	t1 = time.time()
 	cloud = gs.createCloud(N)
+	t2 = time.time()
+	t_gs = t2 - t1
+
 	psi = cloud.psi0
 
 	# population in x-space
@@ -57,10 +62,10 @@ def testThomasFermi(gpu, grid_type, dim, gs_type):
 	mu = stats.getMu(psi) / constants.hbar / constants.wz
 	mu_tf = constants.muTF(N, dim=grid.dim) / constants.hbar / constants.wz
 
-	print "N(x-space) = {Nx}, N(m-space) = {Nm},\n".format(
-			Nx=N_xspace2, Nm=N_mspace) + \
-		"E = {E} hbar w_z, mu = {mu} hbar w_z (mu_analytical = {mu_tf})".format(
-			E=E, mu=mu, mu_tf=mu_tf)
+	print ("N(x-space) = {Nx}, N(m-space) = {Nm},\n" +
+		"E = {E} hbar w_z, mu = {mu} hbar w_z (mu_analytical = {mu_tf})\n" +
+		"Time spent: {t_gs} s").format(
+		Nx=N_xspace2, Nm=N_mspace, E=E, mu=mu, mu_tf=mu_tf, t_gs=t_gs)
 
 	z = grid.z * 1e6 # cast to micrometers
 	profile = prj.getZ(psi) / 1e6 # cast to micrometers^-1
