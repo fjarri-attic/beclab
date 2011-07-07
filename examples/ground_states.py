@@ -1,6 +1,7 @@
 import numpy
 from beclab import *
 from beclab.meters import DensityProfile, ParticleStatistics
+import itertools
 
 eps = 1e-6
 
@@ -81,8 +82,7 @@ if __name__ == '__main__':
 	# Thomas-Fermi ground states
 	for dim in ('1d', '3d'):
 		plots = []
-		for gpu in (False, True):
-			for grid_type in ('uniform', 'harmonic'):
-				print "* Testing", grid_type, "on", ("GPU" if gpu else "CPU")
-				plots.append(testThomasFermi(gpu, grid_type, dim))
+		for gpu, grid_type in itertools.product((False, True), ('uniform', 'harmonic')):
+			print "* Testing", grid_type, "on", ("GPU" if gpu else "CPU")
+			plots.append(testThomasFermi(gpu, grid_type, dim))
 		XYPlot(plots).save(prefix + dim + '_TF.pdf')
