@@ -51,16 +51,19 @@ class ParticleStatistics(PairedCalculation):
 			}
 
 			EXPORTED_FUNC void invariant(GLOBAL_MEM SCALAR *res,
-				GLOBAL_MEM COMPLEX *xstate, GLOBAL_MEM COMPLEX *kstate,
-				GLOBAL_MEM SCALAR *potentials,
+				GLOBAL_MEM COMPLEX *xdata, GLOBAL_MEM COMPLEX *mdata,
+				GLOBAL_MEM SCALAR *potentials, GLOBAL_MEM SCALAR *energy,
 				SCALAR g_by_hbar, int coeff, int ensembles)
 			{
 				LIMITED_BY(ensembles);
 				SCALAR potential = potentials[CELL_INDEX];
+				SCALAR e = energy[CELL_INDEX];
 
-				SCALAR n = squared_abs(xstate[GLOBAL_INDEX]);
-				COMPLEX differential = complex_mul(conj(xstate[GLOBAL_INDEX]), kstate[GLOBAL_INDEX]);
+				SCALAR n = squared_abs(xdata[GLOBAL_INDEX]);
 				SCALAR nonlinear = n * (potential + g_by_hbar * n / coeff);
+				COMPLEX differential = complex_mul_scalar(
+					complex_mul(conj(xdata[GLOBAL_INDEX]), mdata[GLOBAL_INDEX]), e
+				);
 
 				// differential.y will be equal to 0, because \psi * D \psi is a real number
 				res[GLOBAL_INDEX] = nonlinear + differential.x;
@@ -102,9 +105,19 @@ class ParticleStatistics(PairedCalculation):
 			{
 				LIMITED_BY(ensembles);
 
-				SCALAR coeff_val = coeffs[GLOBAL_INDEX];
+				SCALAR coeff_val = coeffs[CELL_INDEX];
 				SCALAR data_val = data[GLOBAL_INDEX];
 				data[GLOBAL_INDEX] = data_val * coeff_val;
+			}
+
+			EXPORTED_FUNC void multiplyTiledCS(GLOBAL_MEM COMPLEX *data, GLOBAL_MEM SCALAR *coeffs,
+				int ensembles)
+			{
+				LIMITED_BY(ensembles);
+
+				SCALAR coeff_val = coeffs[CELL_INDEX];
+				COMPLEX data_val = data[GLOBAL_INDEX];
+				data[GLOBAL_INDEX] = complex_mul_scalar(data_val, coeff_val);
 			}
 		"""
 
@@ -115,6 +128,7 @@ class ParticleStatistics(PairedCalculation):
 		self._kernel_invariant2comp = self._program.invariant2comp
 		self._kernel_density = self._program.density
 		self._kernel_multiplyTiledSS = self._program.multiplyTiledSS
+		self._kernel_multiplyTiledCS = self._program.multiplyTiledCS
 
 	def _cpu__kernel_calculateInteraction(self, gsize, res, data0, data1):
 		self._env.copyBuffer(data0 * data1.conj(), dest=res)
@@ -122,14 +136,28 @@ class ParticleStatistics(PairedCalculation):
 	def _cpu__kernel_density(self, gsize, density, data, coeff, modifier):
 		self._env.copyBuffer((numpy.abs(data) ** 2 - modifier) / coeff, dest=density)
 
-	def _cpu__kernel_multiplyTiledSS(self, gsize, res, coeffs, ensembles):
-		res.flat *= numpy.tile(coeffs.flat, ensembles)
+	def _cpu__kernel_multiplyTiledSS(self, gsize, data, coeffs, ensembles):
+		data.flat *= numpy.tile(coeffs.flat, ensembles)
+
+	def _cpu__kernel_multiplyTiledCS(self, gsize, data, coeffs, ensembles):
+		data.flat *= numpy.tile(coeffs.flat, ensembles)
+
+	def _cpu__kernel_invariant(self, gsize, res, xdata, mdata, potentials,
+			energy, g_by_hbar, coeff, ensembles):
+
+		tile = (ensembles,) + (1,) * self._grid.dim
+
+		n = numpy.abs(xdata) ** 2
+		nonlinear = n * (numpy.tile(potentials, tile) + g_by_hbar * n / coeff)
+		differential = xdata.conj() * numpy.tile(energy, tile) * mdata
+
+		self._env.copyBuffer(nonlinear + differential.real, dest=res)
 
 	def getVisibility(self, psi0, psi1):
 		N0 = self.getN(psi0)
 		N1 = self.getN(psi1)
 		interaction = self._getInteraction(psi0, psi1)
-		self._kernel_multiply(interaction.size, interaction, self._dV)
+		self._kernel_multiplyTiledCS(interaction.size, interaction, self._dV)
 
 		ensembles = psi0.shape[0]
 		interaction = numpy.abs(self._creduce(interaction)) / ensembles
@@ -175,18 +203,18 @@ class ParticleStatistics(PairedCalculation):
 			N = self.getN(psi)
 
 		psi.toMSpace()
-		mdata = self._env.copyBuffer(psi0.data)
+		mdata = self._env.copyBuffer(psi.data)
 		psi.toXSpace()
 
 		cast = self._constants.scalar.cast
-		g = cast(self._constants.g[psi.comp, psi.comp])
+		g_by_hbar = cast(self._constants.g[psi.comp, psi.comp] / self._constants.hbar)
 
-		res = self._env.allocate(psi.shape, dtype=self._constants.complex.dtype)
+		res = self._env.allocate(psi.shape, dtype=self._constants.scalar.dtype)
 		self._kernel_invariant(psi.size, res,
 			psi.data, mdata,
 			self._potentials, self._energy,
-			g, numpy.int32(coeff))
-		self._kernel_multiply(res.size, res, self._dV)
+			g_by_hbar, numpy.int32(coeff), numpy.int32(psi.shape[0]))
+		self._kernel_multiplyTiledSS(res.size, res, self._dV, numpy.int32(psi.shape[0]))
 		return self._reduce(res) / psi.shape[0] / N * self._constants.hbar
 
 	def _getInvariant2comp(self, psi0, psi1, coeff, N):
@@ -218,7 +246,7 @@ class ParticleStatistics(PairedCalculation):
 			mdata0, mdata1,
 			self._potentials, self._energy,
 			g00, g01, g11, numpy.int32(coeff))
-		self._kernel_multiply(res.size, res, self._dV)
+		self._kernel_multiplyTiledSS(res.size, res, self._dV, psi0.shape[0])
 		return self._reduce(res) / psi0.shape[0] / N * self._constants.hbar
 
 	def _getInteraction(self, psi0, psi1):
