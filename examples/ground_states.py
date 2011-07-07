@@ -22,7 +22,7 @@ def testThomasFermi(gpu, grid_type, dim, gs_type):
 	N = 50000 if dim == '3d' else 60 # number of atoms
 
 	if grid_type == 'uniform':
-		shape = (64, 8, 8) if dim == '3d' else (64,)
+		shape = (128, 16, 16) if dim == '3d' else (64,)
 		grid = UniformGrid.forN(env, constants, N, shape)
 	elif grid_type == 'harmonic':
 		shape = (50, 10, 10) if dim == '3d' else (50,)
