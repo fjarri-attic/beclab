@@ -72,7 +72,7 @@ class TFGroundState(PairedCalculation):
 	def _cpu__kernel_multiplyConstantCS(self, gsize, data, coeff):
 		data *= coeff
 
-	def _create(self, data, g, mu):
+	def _fillWithTF(self, data, g, mu):
 		cast = self._constants.scalar.cast
 		mu_by_hbar = cast(mu / self._constants.hbar)
 		g_by_hbar = cast(g / self._constants.hbar)
@@ -80,11 +80,11 @@ class TFGroundState(PairedCalculation):
 		self._kernel_fillWithTFGroundState(data.size, data,
 			self._potentials, mu_by_hbar, g_by_hbar)
 
-	def create(self, N, comp=0):
-		res = Wavefunction(self._env, self._constants, self._grid, comp=comp)
+	def _create(self, psi, N):
+		comp = psi.comp
 		g = self._constants.g[comp, comp]
 		mu = self._constants.muTF(N, dim=self._grid.dim, comp=comp)
-		self._create(res.data, g, mu)
+		self._fillWithTF(psi.data, g, mu)
 
 		# The total number of atoms is equal to the number requested
 		# only in the limit of infinite number of lattice points.
@@ -95,14 +95,23 @@ class TFGroundState(PairedCalculation):
 		# some difference (see comment in getHarmonicGrid() in fht.py).
 		# Doing it in x-space because all losses, interaction and noise are
 		# calculated in x-space, and kinetic + potential operator is less significant.
-		#res.toMSpace()
-		N_real = self._stats.getN(res)
+		#psi.toMSpace()
+		N_real = self._stats.getN(psi)
 		coeff = numpy.sqrt(N / N_real)
-		self._kernel_multiplyConstantCS(res.size, res.data, self._constants.scalar.cast(coeff))
-		#res.toXSpace()
+		self._kernel_multiplyConstantCS(psi.size, psi.data, self._constants.scalar.cast(coeff))
+		#psi.toXSpace()
 
-		return res
+	def create(self, N, comp=0):
+		psi = Wavefunction(self._env, self._constants, self._grid, comp=comp)
+		self._create(psi, N)
+		return psi
 
+	def createCloud(self, N, ratio=1.0):
+		cloud = TwoComponentCloud(self._env, self._constants, self._grid)
+		self._create(cloud.psi0, N * ratio)
+		if ratio != 1.0:
+			self._create(cloud.psi1, N * (1.0 - ratio))
+		return cloud
 
 class GPEGroundState(PairedCalculation):
 	"""
