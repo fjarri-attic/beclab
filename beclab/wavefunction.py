@@ -180,8 +180,10 @@ class Wavefunction(PairedCalculation):
 class TwoComponentCloud:
 
 	def __init__(self, env, constants, grid, psi0=None, psi1=None, prepare=True):
-		assert psi0 is not None or psi1 is not None
-		assert psi0 is None or psi1 is None or psi0.type == psi1.type
+		# If nothing is given, initialize with empty wavefunction
+		if psi0 is None and psi1 is None:
+			psi0 = Wavefunction(env, constants, grid, comp=0)
+
 		assert psi0 is None or psi0.comp == 0
 		assert psi1 is None or psi1.comp == 1
 
@@ -189,13 +191,12 @@ class TwoComponentCloud:
 		self._constants = constants.copy()
 		self._grid = grid.copy()
 
-		self.type = psi1.type if psi0 is None else psi0.type
 		self.time = 0.0
 
 		self.psi0 = psi0.copy(prepare=prepare) \
-			if psi0 is not None else Wavefunction(env, constants, grid, type=self.type, comp=0)
+			if psi0 is not None else Wavefunction(env, constants, grid, comp=0)
 		self.psi1 = psi1.copy(prepare=prepare) \
-			if psi1 is not None else Wavefunction(env, constants, grid, type=self.type, comp=1)
+			if psi1 is not None else Wavefunction(env, constants, grid, comp=1)
 
 	def toWigner(self, ensembles):
 		self.psi0.toWigner(ensembles)
