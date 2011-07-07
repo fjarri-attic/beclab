@@ -9,6 +9,9 @@ def testThomasFermi(gpu, grid_type, dim):
 	"""
 	Creates Thomas-Fermi ground state using different types of representations
 	"""
+
+	# Prepare constants and environment
+
 	if dim != '3d':
 		parameters = dict(use_effective_area=True, fx=42e3, fy=42e3, fz=90)
 	else:
@@ -25,9 +28,13 @@ def testThomasFermi(gpu, grid_type, dim):
 		shape = (50, 10, 10) if dim == '3d' else (50,)
 		grid = HarmonicGrid(env, constants, shape)
 
+	# Prepare 'apparatus'
+
 	tf = TFGroundState(env, constants, grid)
 	prj = DensityProfile(env, constants, grid)
 	stats = ParticleStatistics(env, constants, grid)
+
+	# Create ground state
 
 	psi = tf.create(N)
 
