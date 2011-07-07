@@ -4,6 +4,7 @@ import fractions
 from numpy.polynomial import Hermite as H
 
 from .misc import tile3D, PairedCalculation
+from .transpose import createPermute
 
 
 def factorial(n):
@@ -248,6 +249,7 @@ class FHT3D(PairedCalculation):
 		complex_cast = lambda x: x.astype(self._constants.complex.dtype)
 		scalar_cast = lambda x: x.astype(self._constants.scalar.dtype)
 		self._complex_dtype = self._constants.complex.dtype
+		self._scalar_cast = constants.scalar.cast
 
 		self.N = N
 		self.order = order
@@ -279,20 +281,23 @@ class FHT3D(PairedCalculation):
 		self._Py_tr = self._env.toDevice(Py_tr.flatten().reshape(Py_tr.shape))
 		self._Pz_tr = self._env.toDevice(Pz_tr.flatten().reshape(Pz_tr.shape))
 
+		self._cached_batch = None
 		self._allocateXi(1)
+		self._permute = createPermute(env, constants.complex.dtype)
 
 		self._prepare()
 
 	def _allocateXi(self, batch):
-		if not hasattr(self, '_Xi') or self._Xi.shape[0] != batch:
-			self._Xi = self._env.allocate((batch,) + self._xshape, self._complex_dtype)
+		if self._cached_batch != batch:
+			self._temp1 = self._env.allocate((batch,) + self._xshape, self._complex_dtype)
+			self._temp2 = self._env.allocate((batch,) + self._xshape, self._complex_dtype)
 
 	def _cpu__prepare(self):
 		pass
 
 	def _gpu__prepare(self):
 		kernel_template = """
-			EXPORTED_FUNC void multiplyComplexScalar(
+			EXPORTED_FUNC void multiplyComplexScalars(
 				GLOBAL_MEM COMPLEX *result, GLOBAL_MEM COMPLEX *data,
 				GLOBAL_MEM SCALAR *coeffs, int batch)
 			{
@@ -310,9 +315,26 @@ class FHT3D(PairedCalculation):
 				}
 			}
 
+			EXPORTED_FUNC void multiplyComplexScalar(
+				GLOBAL_MEM COMPLEX *result, GLOBAL_MEM COMPLEX *data,
+				GLOBAL_MEM SCALAR coeff, int batch)
+			{
+				DEFINE_INDEXES;
+				if(index >= ${g.size})
+					return;
+
+				COMPLEX data_val;
+
+				for(int i = 0; i < batch; i++)
+				{
+					data_val = data[index + i * ${g.size}];
+					result[index + i * ${g.size}] = complex_mul_scalar(data_val, coeff);
+				}
+			}
+
 			EXPORTED_FUNC void matrixMulComplexScalar(GLOBAL_MEM COMPLEX *result,
 				GLOBAL_MEM COMPLEX *m1, GLOBAL_MEM SCALAR *m2,
-				int w1, int h1, int w2, SCALAR scale)
+				int w1, int h1, int w2)
 			{
 				int output_index = GLOBAL_ID_FLAT;
 				if(output_index >= h1 * w2)
@@ -325,21 +347,26 @@ class FHT3D(PairedCalculation):
 				for(int i = 0; i < w1; i++)
 					sum = sum + complex_mul_scalar(m1[target_y * w1 + i], m2[i * w2 + target_x]);
 
-				result[output_index] = complex_mul_scalar(sum, scale);
+				result[output_index] = sum;
 			}
 		"""
 
 		self._program = self._env.compileProgram(kernel_template, self._constants, self._grid)
 
+		self._kernel_multiplyComplexScalars = self._program.multiplyComplexScalars
 		self._kernel_multiplyComplexScalar = self._program.multiplyComplexScalar
 		self._kernel_matrixMulComplexScalar = self._program.matrixMulComplexScalar
 
-	def _cpu__kernel_matrixMulComplexScalar(self, size, res, m1, m2, w1, h1, w2, scale):
-		self._env.copyBuffer(numpy.dot(m1, m2), dest=res)
-		res *= scale
+	def _cpu__kernel_matrixMulComplexScalar(self, size, res, m1, m2, w1, h1, w2):
+		m1 = m1.flat[:w1*h1].reshape(h1, w1)
+		m2 = m2.flat[:w1*w2].reshape(w1, w2)
+		res.flat[:size] = numpy.dot(m1, m2).flat
 
-	def _cpu__kernel_multiplyComplexScalar(self, size, res, data, coeffs, batch):
+	def _cpu__kernel_multiplyComplexScalars(self, size, res, data, coeffs, batch):
 		self._env.copyBuffer(data.flat * numpy.tile(coeffs.flat, batch), dest=res)
+
+	def _cpu__kernel_multiplyComplexScalar(self, size, res, data, coeff, batch):
+		self._env.copyBuffer(data * coeff, dest=res)
 
 	def getXiVector(self, data, batch=1):
 		return numpy.tile(self._weights, (batch, 1, 1, 1)) * data
@@ -348,9 +375,26 @@ class FHT3D(PairedCalculation):
 		Mz, My, Mx = self._xshape
 		Nz, Ny, Nx = self.N
 
+		cast = numpy.int32
+
 		if inverse:
 			assert data.shape == (batch,) + self.N
+			self._permute(data, self._temp1, (Nz, Ny, Nx), batch=batch)
+			self._kernel_matrixMulComplexScalar(batch * Ny * Nx * Mz,
+				self._temp2, self._temp1, self._Pz,
+				cast(Nz), cast(batch * Ny * Nx), cast(Mz))
+			self._permute(self._temp2, self._temp1, (Ny, Nx, Mz), batch=batch)
+			self._kernel_matrixMulComplexScalar(batch * Nx * Mz * My,
+				self._temp2, self._temp1, self._Py,
+				cast(Ny), cast(batch * Nx * Mz), cast(My))
+			self._permute(self._temp2, self._temp1, (Nx, Mz, My), batch=batch)
+			self._kernel_matrixMulComplexScalar(batch * Mz * My * Mx,
+				result, self._temp1, self._Px,
+				cast(Nx), cast(batch * Mz * My), cast(Mx))
+			self._kernel_multiplyComplexScalar(Mz * My * Mx, result, result,
+				self._scalar_cast(self._inv_scale), cast(batch))
 
+			"""
 			res = numpy.dot(
 				numpy.transpose(data, axes=(0, 2, 3, 1)), # batch, Ny, Nx, Nz
 				self._Pz, # Nz, Mz
@@ -365,11 +409,28 @@ class FHT3D(PairedCalculation):
 			) # batch, Mz, My, Mx
 
 			result.flat[:] = (res * self._inv_scale).flat
-
+			"""
 		else:
 			assert data.shape == (batch, Mz, My, Mx)
-			data = data.reshape(batch, Mz, My, Mx)
 
+			self._kernel_multiplyComplexScalars(Mz * My * Mx, self._temp2,
+				data, self._weights, cast(batch))
+			self._permute(self._temp2, self._temp1, (Mz, My, Mx), batch=batch)
+			self._kernel_matrixMulComplexScalar(batch * My * Mx * Nz,
+				self._temp2, self._temp1, self._Pz_tr,
+				cast(Mz), cast(batch * My * Mx), cast(Nz))
+			self._permute(self._temp2, self._temp1, (My, Mx, Nz), batch=batch)
+			self._kernel_matrixMulComplexScalar(batch * Mx * Nz * Ny,
+				self._temp2, self._temp1, self._Py_tr,
+				cast(My), cast(batch * Mx * Nz), cast(Ny))
+			self._permute(self._temp2, self._temp1, (Mx, Nz, Ny), batch=batch)
+			self._kernel_matrixMulComplexScalar(batch * Nz * Ny * Nx,
+				result, self._temp1, self._Px_tr,
+				cast(Mx), cast(batch * Nz * Ny), cast(Nx))
+			self._kernel_multiplyComplexScalar(Nz * Ny * Nx, result, result,
+				self._scalar_cast(self._fwd_scale), cast(batch))
+
+			"""
 			Xi = self.getXiVector(data, batch=batch) # batch, Mz, My, Mx
 			res = numpy.dot(
 				numpy.transpose(Xi, axes=(0, 2, 3, 1)), # batch, My, Mx, Mz
@@ -385,7 +446,7 @@ class FHT3D(PairedCalculation):
 			) # batch, Nz, Ny, Nx
 
 			result.flat[:] = (res * self._fwd_scale).flat
-
+			"""
 
 class TestFunction:
 
