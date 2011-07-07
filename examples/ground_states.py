@@ -40,11 +40,8 @@ def testThomasFermi(gpu, grid_type, dim, gs_type):
 
 	# Create ground state
 
-	if gs_type == "TF":
-		psi = gs.create(N)
-	elif gs_type == "split-step":
-		cloud = gs.create(N)
-		psi = cloud.psi0
+	cloud = gs.createCloud(N)
+	psi = cloud.psi0
 
 	# population in x-space
 	N_xspace1 = stats.getN(psi)
