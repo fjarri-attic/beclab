@@ -35,22 +35,19 @@ class ParticleStatistics(PairedCalculation):
 
 	def _gpu__prepare(self):
 		kernel_template = """
-			EXPORTED_FUNC void interaction(GLOBAL_MEM COMPLEX *interaction,
+			EXPORTED_FUNC void interaction(GLOBAL_MEM COMPLEX *res,
 				GLOBAL_MEM COMPLEX *a_state, GLOBAL_MEM COMPLEX *b_state, int ensembles)
 			{
-				DEFINE_INDEXES;
-				if(ensemble >= ensembles)
-					return;
-				interaction[index] = complex_mul(a_state[index], conj(b_state[index]));
+				LIMITED_BY(ensembles);
+				res[GLOBAL_INDEX] = complex_mul(
+					a_state[GLOBAL_INDEX], conj(b_state[GLOBAL_INDEX]));
 			}
 
 			EXPORTED_FUNC void density(GLOBAL_MEM SCALAR *res,
 				GLOBAL_MEM COMPLEX *state, int ensembles, SCALAR modifier, int size)
 			{
-				DEFINE_INDEXES;
-				if(ensemble >= ensembles)
-					return;
-				res[index] = (squared_abs(state[index]) - modifier) / ensembles;
+				LIMITED_BY(ensembles);
+				res[GLOBAL_INDEX] = (squared_abs(state[GLOBAL_INDEX]) - modifier) / ensembles;
 			}
 
 			EXPORTED_FUNC void invariant(GLOBAL_MEM SCALAR *res,
@@ -58,18 +55,15 @@ class ParticleStatistics(PairedCalculation):
 				GLOBAL_MEM SCALAR *potentials,
 				SCALAR g_by_hbar, int coeff, int ensembles)
 			{
-				DEFINE_INDEXES;
-				if(ensemble >= ensembles)
-					return;
+				LIMITED_BY(ensembles);
+				SCALAR potential = potentials[CELL_INDEX];
 
-				SCALAR potential = potentials[cell_index];
-
-				SCALAR n = squared_abs(xstate[index]);
-				COMPLEX differential = complex_mul(conj(xstate[index]), kstate[index]);
+				SCALAR n = squared_abs(xstate[GLOBAL_INDEX]);
+				COMPLEX differential = complex_mul(conj(xstate[GLOBAL_INDEX]), kstate[GLOBAL_INDEX]);
 				SCALAR nonlinear = n * (potential + g_by_hbar * n / coeff);
 
 				// differential.y will be equal to 0, because \psi * D \psi is a real number
-				res[index] = nonlinear + differential.x;
+				res[GLOBAL_INDEX] = nonlinear + differential.x;
 			}
 
 			EXPORTED_FUNC void invariant2comp(GLOBAL_MEM SCALAR *res,
@@ -79,19 +73,17 @@ class ParticleStatistics(PairedCalculation):
 				SCALAR g11_by_hbar, SCALAR g22_by_hbar,
 				SCALAR g12_by_hbar, int coeff, int ensembles)
 			{
-				DEFINE_INDEXES;
-				if(ensemble >= ensembles)
-					return;
+				LIMITED_BY(ensembles);
 
-				SCALAR potential = potentials[cell_index];
+				SCALAR potential = potentials[CELL_INDEX];
 
-				SCALAR n1 = squared_abs(xstate1[index]);
-				SCALAR n2 = squared_abs(xstate2[index]);
+				SCALAR n1 = squared_abs(xstate1[GLOBAL_INDEX]);
+				SCALAR n2 = squared_abs(xstate2[GLOBAL_INDEX]);
 
 				COMPLEX differential1 =
-					complex_mul(conj(xstate1[index]), kstate1[index]);
+					complex_mul(conj(xstate1[GLOBAL_INDEX]), kstate1[GLOBAL_INDEX]);
 				COMPLEX differential2 =
-					complex_mul(conj(xstate2[index]), kstate2[index]);
+					complex_mul(conj(xstate2[GLOBAL_INDEX]), kstate2[GLOBAL_INDEX]);
 
 				SCALAR nonlinear1 = n1 * (potential +
 					g11_by_hbar * n1 / coeff +
@@ -101,25 +93,18 @@ class ParticleStatistics(PairedCalculation):
 					g22_by_hbar * n2 / coeff);
 
 				// differential.y will be equal to 0, because \psi * D \psi is a real number
-				res[index] = nonlinear1 + differential1.x +
+				res[GLOBAL_INDEX] = nonlinear1 + differential1.x +
 					nonlinear2 + differential2.x;
 			}
 
-			EXPORTED_FUNC void multiplyScalars(GLOBAL_MEM SCALAR *data, GLOBAL_MEM SCALAR *coeffs,
+			EXPORTED_FUNC void multiplyTiledSS(GLOBAL_MEM SCALAR *data, GLOBAL_MEM SCALAR *coeffs,
 				int ensembles)
 			{
-				DEFINE_INDEXES;
-				if(ensemble >= ensembles)
-					return;
+				LIMITED_BY(ensembles);
 
-				SCALAR coeff_val = coeffs[index];
-				SCALAR data_val;
-
-				for(int i = 0; i < ensembles; i++)
-				{
-					data_val = data[index + i * ${g.size}];
-					data[index + i * ${g.size}] = data_val * coeff_val;
-				}
+				SCALAR coeff_val = coeffs[GLOBAL_INDEX];
+				SCALAR data_val = data[GLOBAL_INDEX];
+				data[GLOBAL_INDEX] = data_val * coeff_val;
 			}
 		"""
 
@@ -129,15 +114,15 @@ class ParticleStatistics(PairedCalculation):
 		self._kernel_invariant = self._program.invariant
 		self._kernel_invariant2comp = self._program.invariant2comp
 		self._kernel_density = self._program.density
-		self._kernel_multiplyScalars = self._program.multiplyScalars
+		self._kernel_multiplyTiledSS = self._program.multiplyTiledSS
 
-	def _cpu__kernel_calculateInteraction(self, _, res, data0, data1):
+	def _cpu__kernel_calculateInteraction(self, gsize, res, data0, data1):
 		self._env.copyBuffer(data0 * data1.conj(), dest=res)
 
-	def _cpu__kernel_density(self, _, density, data, coeff, modifier):
+	def _cpu__kernel_density(self, gsize, density, data, coeff, modifier):
 		self._env.copyBuffer((numpy.abs(data) ** 2 - modifier) / coeff, dest=density)
 
-	def _cpu__kernel_multiplyScalars(self, _, res, coeffs, ensembles):
+	def _cpu__kernel_multiplyTiledSS(self, gsize, res, coeffs, ensembles):
 		res.flat *= numpy.tile(coeffs.flat, ensembles)
 
 	def getVisibility(self, psi0, psi1):
@@ -176,7 +161,7 @@ class ParticleStatistics(PairedCalculation):
 	def getAveragePopulation(self, psi):
 		density = self.getAverageDensity(psi)
 		if not psi.in_mspace:
-			self._kernel_multiplyScalars(density.size, density, self._dV, numpy.int32(psi.shape[0]))
+			self._kernel_multiplyTiledSS(density.size, density, self._dV, numpy.int32(psi.shape[0]))
 		return density
 
 	def _getInvariant(self, psi, coeff, N):

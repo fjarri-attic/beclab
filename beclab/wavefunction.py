@@ -40,40 +40,31 @@ class Wavefunction(PairedCalculation):
 
 			EXPORTED_FUNC void fillWithZeros(GLOBAL_MEM COMPLEX *res)
 			{
-				DEFINE_INDEXES;
-				if(index >= ${g.size})
-					return;
-
-				res[index] = complex_ctr(0, 0);
+				LIMITED_BY_GRID;
+				res[GLOBAL_INDEX] = complex_ctr(0, 0);
 			}
 
 			// Initialize ensembles with the copy of the current state
-			EXPORTED_FUNC void fillEnsembles(GLOBAL_MEM COMPLEX *src,
-				GLOBAL_MEM COMPLEX *dest, int ensembles)
+			EXPORTED_FUNC void fillEnsembles(GLOBAL_MEM COMPLEX *res,
+				GLOBAL_MEM COMPLEX *src, int ensembles)
 			{
-				DEFINE_INDEXES;
-				if(index >= ${g.size})
-					return;
-
-				COMPLEX src_val = src[index];
-				for(int i = 0; i < ensembles; i++)
-					dest[index + i * ${g.size}] = src_val;
+				LIMITED_BY(ensembles);
+				COMPLEX val = src[CELL_INDEX];
+				res[GLOBAL_INDEX] = val;
 			}
 
-			EXPORTED_FUNC void addVacuumParticles(GLOBAL_MEM COMPLEX *modespace_data,
-				GLOBAL_MEM COMPLEX *randoms, GLOBAL_MEM SCALAR *mask)
+			EXPORTED_FUNC void addVacuumParticles(GLOBAL_MEM COMPLEX *data,
+				GLOBAL_MEM COMPLEX *randoms, GLOBAL_MEM SCALAR *mask, int ensembles)
 			{
-				DEFINE_INDEXES;
-				if(index >= ${g.size})
-					return;
+				LIMITED_BY(ensembles);
 
-				SCALAR mask_elem = mask[cell_index];
-				COMPLEX val = modespace_data[index];
+				SCALAR mask_elem = mask[CELL_INDEX];
+				COMPLEX val = data[GLOBAL_INDEX];
 
-				val = val + randoms[index]; // add noise
+				val = val + randoms[GLOBAL_INDEX]; // add noise
 				val = complex_mul_scalar(val, mask_elem); // remove high-energy components
 
-				modespace_data[index] = val;
+				data[GLOBAL_INDEX] = val;
 			}
 		"""
 
@@ -82,15 +73,15 @@ class Wavefunction(PairedCalculation):
 		self._kernel_fillEnsembles = self._program.fillEnsembles
 		self._kernel_addVacuumParticles = self._program.addVacuumParticles
 
-	def _cpu__kernel_addVacuumParticles(self, _, modespace_data, randoms, mask):
-		tile = (self.shape[0],) + (1,) * (self._grid.dim - 1)
+	def _cpu__kernel_addVacuumParticles(self, gsize, modespace_data, randoms, mask, ensembles):
+		tile = (ensembles,) + (1,) * self._grid.dim
 		modespace_data += randoms # add vacuum particles
 		modespace_data *= numpy.tile(mask, tile) # remove high-energy components
 
-	def _cpu__kernel_fillWithZeros(self, _, data):
+	def _cpu__kernel_fillWithZeros(self, gsize, data):
 		data.flat[:] = numpy.zeros_like(data).flat
 
-	def _cpu__kernel_fillEnsembles(self, _, data, new_data, ensembles):
+	def _cpu__kernel_fillEnsembles(self, gsize, data, new_data, ensembles):
 		tile = (ensembles,) + (1,) * self._grid.dim
 		new_data.flat[:] = numpy.tile(data, tile).flat
 

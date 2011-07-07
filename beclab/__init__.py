@@ -1,7 +1,12 @@
 from . import helpers
 
 _PRELUDE = """
-#define DEFINE_INDEXES unsigned int index = GLOBAL_ID_FLAT, cell_index = index % ${g.size}, ensemble = index / ${g.size}
+#define GLOBAL_INDEX GLOBAL_ID_FLAT
+#define CELL_INDEX (GLOBAL_INDEX % ${g.size})
+#define ENSEMBLE_INDEX (GLOBAL_INDEX / ${g.size})
+
+#define LIMITED_BY(x) if(GLOBAL_INDEX >= (x) * ${g.size}) return
+#define LIMITED_BY_GRID LIMITED_BY(1)
 """
 
 def getEnvWrapper(env_class):

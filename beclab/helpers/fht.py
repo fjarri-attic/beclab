@@ -150,12 +150,13 @@ class FHT1D(PairedCalculation):
 		self._fwd_scale = constants.scalar.cast(numpy.sqrt(scale))
 		self._inv_scale = constants.scalar.cast(1.0 / numpy.sqrt(scale))
 
+		self._cached_batch = None
 		self._allocateXi(1)
 
 		self._prepare()
 
 	def _allocateXi(self, batch):
-		if not hasattr(self, '_Xi') or self._Xi.shape[0] != batch:
+		if self._cached_batch != batch:
 			self._Xi = self._env.allocate((batch,) + self._xshape, self._complex_dtype)
 
 	def _cpu__prepare(self):
@@ -163,73 +164,68 @@ class FHT1D(PairedCalculation):
 
 	def _gpu__prepare(self):
 		kernel_template = """
-			EXPORTED_FUNC void multiplyComplexScalar(
-				GLOBAL_MEM COMPLEX *result, GLOBAL_MEM COMPLEX *data,
+			EXPORTED_FUNC void multiplyTiledCS(
+				GLOBAL_MEM COMPLEX *res, GLOBAL_MEM COMPLEX *data,
 				GLOBAL_MEM SCALAR *coeffs, int batch)
 			{
-				DEFINE_INDEXES;
-				if(index >= ${g.size})
+				if(GLOBAL_INDEX >= ${size} * batch)
 					return;
 
-				SCALAR coeff_val = coeffs[index];
-				COMPLEX data_val;
-
-				for(int i = 0; i < batch; i++)
-				{
-					data_val = data[index + i * ${g.size}];
-					result[index + i * ${g.size}] = complex_mul_scalar(data_val, coeff_val);
-				}
+				SCALAR coeff_val = coeffs[GLOBAL_INDEX % ${size}];
+				COMPLEX data_val = data[GLOBAL_INDEX];
+				res[GLOBAL_INDEX] = complex_mul_scalar(data_val, coeff_val);
 			}
 
-			EXPORTED_FUNC void matrixMulComplexScalar(GLOBAL_MEM COMPLEX *result,
+			EXPORTED_FUNC void matrixMulCS(GLOBAL_MEM COMPLEX *res,
 				GLOBAL_MEM COMPLEX *m1, GLOBAL_MEM SCALAR *m2,
 				int w1, int h1, int w2, SCALAR scale)
 			{
-				int output_index = GLOBAL_ID_FLAT;
-				if(output_index >= h1 * w2)
+				if(GLOBAL_INDEX >= h1 * w2)
 					return;
 
 				COMPLEX sum = complex_ctr(0, 0);
-				int target_x = output_index % w2;
-				int target_y = output_index / w2;
+				int target_x = GLOBAL_INDEX % w2;
+				int target_y = GLOBAL_INDEX / w2;
 
 				for(int i = 0; i < w1; i++)
 					sum = sum + complex_mul_scalar(m1[target_y * w1 + i], m2[i * w2 + target_x]);
 
-				result[output_index] = complex_mul_scalar(sum, scale);
+				res[GLOBAL_INDEX] = complex_mul_scalar(sum, scale);
 			}
 		"""
 
-		self._program = self._env.compileProgram(kernel_template, self._constants, self._grid)
+		self._program = self._env.compileProgram(kernel_template, self._constants,
+			self._grid, size=self._xshape[0])
 
-		self._kernel_multiplyComplexScalar = self._program.multiplyComplexScalar
-		self._kernel_matrixMulComplexScalar = self._program.matrixMulComplexScalar
+		self._kernel_multiplyTiledCS = self._program.multiplyTiledCS
+		self._kernel_matrixMulCS = self._program.matrixMulCS
 
-	def _cpu__kernel_matrixMulComplexScalar(self, size, res, m1, m2, w1, h1, w2, scale):
+	def _cpu__kernel_matrixMulCS(self, gsize, res, m1, m2, w1, h1, w2, scale):
 		self._env.copyBuffer(numpy.dot(m1, m2), dest=res)
 		res *= scale
 
-	def _cpu__kernel_multiplyComplexScalar(self, size, res, data, coeffs, batch):
+	def _cpu__kernel_multiplyTiledCS(self, gsize, res, data, coeffs, batch):
 		self._env.copyBuffer(data.flat * numpy.tile(coeffs.flat, batch), dest=res)
 
 	def execute(self, data, result, inverse=False, batch=1):
+		cast = numpy.int32
 		if inverse:
 			assert data.shape == (batch, self.N)
 
-			self._kernel_matrixMulComplexScalar(batch * self._xshape[0],
+			self._kernel_matrixMulCS(batch * self._xshape[0],
 				result, data, self._P,
-				numpy.int32(self.N), numpy.int32(batch), numpy.int32(self._xshape[0]),
+				cast(self.N), cast(batch), cast(self._xshape[0]),
 				self._inv_scale
 			)
 		else:
 			assert data.shape == (batch,) + self._xshape
 			self._allocateXi(batch)
-			self._kernel_multiplyComplexScalar(self._xshape[0], self._Xi, data,
-				self._weights_x, numpy.int32(batch))
+			self._kernel_multiplyTiledCS(self._xshape[0], self._Xi, data,
+				self._weights_x, cast(batch))
 
-			self._kernel_matrixMulComplexScalar(batch * self.N,
+			self._kernel_matrixMulCS(batch * self.N,
 				result, self._Xi, self._P_tr,
-				numpy.int32(self._xshape[0]), numpy.int32(batch), numpy.int32(self.N),
+				cast(self._xshape[0]), cast(batch), cast(self.N),
 				self._fwd_scale)
 
 
@@ -282,12 +278,12 @@ class FHT3D(PairedCalculation):
 		self._Pz_tr = self._env.toDevice(Pz_tr.flatten().reshape(Pz_tr.shape))
 
 		self._cached_batch = None
-		self._allocateXi(1)
+		self._allocateTempArrays(1)
 		self._permute = createPermute(env, constants.complex.dtype)
 
 		self._prepare()
 
-	def _allocateXi(self, batch):
+	def _allocateTempArrays(self, batch):
 		if self._cached_batch != batch:
 			self._temp1 = self._env.allocate((batch,) + self._xshape, self._complex_dtype)
 			self._temp2 = self._env.allocate((batch,) + self._xshape, self._complex_dtype)
@@ -297,46 +293,34 @@ class FHT3D(PairedCalculation):
 
 	def _gpu__prepare(self):
 		kernel_template = """
-			EXPORTED_FUNC void multiplyComplexScalars(
-				GLOBAL_MEM COMPLEX *result, GLOBAL_MEM COMPLEX *data,
+			EXPORTED_FUNC void multiplyTiledCS(
+				GLOBAL_MEM COMPLEX *res, GLOBAL_MEM COMPLEX *data,
 				GLOBAL_MEM SCALAR *coeffs, int batch)
 			{
-				DEFINE_INDEXES;
-				if(index >= ${g.size})
+				if(GLOBAL_INDEX >= ${size} * batch)
 					return;
 
-				SCALAR coeff_val = coeffs[index];
-				COMPLEX data_val;
-
-				for(int i = 0; i < batch; i++)
-				{
-					data_val = data[index + i * ${g.size}];
-					result[index + i * ${g.size}] = complex_mul_scalar(data_val, coeff_val);
-				}
+				SCALAR coeff_val = coeffs[GLOBAL_INDEX % ${size}];
+				COMPLEX data_val = data[GLOBAL_INDEX];
+				res[GLOBAL_INDEX] = complex_mul_scalar(data_val, coeff_val);
 			}
 
-			EXPORTED_FUNC void multiplyComplexScalar(
-				GLOBAL_MEM COMPLEX *result, GLOBAL_MEM COMPLEX *data,
+			EXPORTED_FUNC void multiplyConstantCS(
+				GLOBAL_MEM COMPLEX *res, GLOBAL_MEM COMPLEX *data,
 				GLOBAL_MEM SCALAR coeff, int batch)
 			{
-				DEFINE_INDEXES;
-				if(index >= ${g.size})
+				if(GLOBAL_INDEX >= ${size} * batch)
 					return;
 
-				COMPLEX data_val;
-
-				for(int i = 0; i < batch; i++)
-				{
-					data_val = data[index + i * ${g.size}];
-					result[index + i * ${g.size}] = complex_mul_scalar(data_val, coeff);
-				}
+				COMPLEX data_val = data[GLOBAL_INDEX];
+				res[GLOBAL_INDEX] = complex_mul_scalar(data_val, coeff);
 			}
 
-			EXPORTED_FUNC void matrixMulComplexScalar(GLOBAL_MEM COMPLEX *result,
+			EXPORTED_FUNC void matrixMulCS(GLOBAL_MEM COMPLEX *res,
 				GLOBAL_MEM COMPLEX *m1, GLOBAL_MEM SCALAR *m2,
 				int w1, int h1, int w2)
 			{
-				int output_index = GLOBAL_ID_FLAT;
+				int output_index = GLOBAL_INDEX;
 				if(output_index >= h1 * w2)
 					return;
 
@@ -347,29 +331,27 @@ class FHT3D(PairedCalculation):
 				for(int i = 0; i < w1; i++)
 					sum = sum + complex_mul_scalar(m1[target_y * w1 + i], m2[i * w2 + target_x]);
 
-				result[output_index] = sum;
+				res[output_index] = sum;
 			}
 		"""
 
-		self._program = self._env.compileProgram(kernel_template, self._constants, self._grid)
+		self._program = self._env.compileProgram(kernel_template, self._constants,
+			self._grid, size=self._xshape[0] * self._xshape[1] * self._xshape[2])
 
-		self._kernel_multiplyComplexScalars = self._program.multiplyComplexScalars
-		self._kernel_multiplyComplexScalar = self._program.multiplyComplexScalar
-		self._kernel_matrixMulComplexScalar = self._program.matrixMulComplexScalar
+		self._kernel_multiplyTiledCS = self._program.multiplyTiledCS
+		self._kernel_multiplyConstantCS = self._program.multiplyConstantCS
+		self._kernel_matrixMulCS = self._program.matrixMulCS
 
-	def _cpu__kernel_matrixMulComplexScalar(self, size, res, m1, m2, w1, h1, w2):
+	def _cpu__kernel_matrixMulCS(self, gsize, res, m1, m2, w1, h1, w2):
 		m1 = m1.flat[:w1*h1].reshape(h1, w1)
 		m2 = m2.flat[:w1*w2].reshape(w1, w2)
-		res.flat[:size] = numpy.dot(m1, m2).flat
+		res.flat[:gsize] = numpy.dot(m1, m2).flat
 
-	def _cpu__kernel_multiplyComplexScalars(self, size, res, data, coeffs, batch):
+	def _cpu__kernel_multiplyTiledCS(self, gsize, res, data, coeffs, batch):
 		self._env.copyBuffer(data.flat * numpy.tile(coeffs.flat, batch), dest=res)
 
-	def _cpu__kernel_multiplyComplexScalar(self, size, res, data, coeff, batch):
+	def _cpu__kernel_multiplyConstantCS(self, gsize, res, data, coeff, batch):
 		self._env.copyBuffer(data * coeff, dest=res)
-
-	def getXiVector(self, data, batch=1):
-		return numpy.tile(self._weights, (batch, 1, 1, 1)) * data
 
 	def execute(self, data, result, inverse=False, batch=1):
 		Mz, My, Mx = self._xshape
@@ -380,18 +362,18 @@ class FHT3D(PairedCalculation):
 		if inverse:
 			assert data.shape == (batch,) + self.N
 			self._permute(data, self._temp1, (Nz, Ny, Nx), batch=batch)
-			self._kernel_matrixMulComplexScalar(batch * Ny * Nx * Mz,
+			self._kernel_matrixMulCS(batch * Ny * Nx * Mz,
 				self._temp2, self._temp1, self._Pz,
 				cast(Nz), cast(batch * Ny * Nx), cast(Mz))
 			self._permute(self._temp2, self._temp1, (Ny, Nx, Mz), batch=batch)
-			self._kernel_matrixMulComplexScalar(batch * Nx * Mz * My,
+			self._kernel_matrixMulCS(batch * Nx * Mz * My,
 				self._temp2, self._temp1, self._Py,
 				cast(Ny), cast(batch * Nx * Mz), cast(My))
 			self._permute(self._temp2, self._temp1, (Nx, Mz, My), batch=batch)
-			self._kernel_matrixMulComplexScalar(batch * Mz * My * Mx,
+			self._kernel_matrixMulCS(batch * Mz * My * Mx,
 				result, self._temp1, self._Px,
 				cast(Nx), cast(batch * Mz * My), cast(Mx))
-			self._kernel_multiplyComplexScalar(Mz * My * Mx, result, result,
+			self._kernel_multiplyConstantCS(Mz * My * Mx, result, result,
 				self._scalar_cast(self._inv_scale), cast(batch))
 
 			"""
@@ -413,21 +395,21 @@ class FHT3D(PairedCalculation):
 		else:
 			assert data.shape == (batch, Mz, My, Mx)
 
-			self._kernel_multiplyComplexScalars(Mz * My * Mx, self._temp2,
+			self._kernel_multiplyTiledCS(Mz * My * Mx, self._temp2,
 				data, self._weights, cast(batch))
 			self._permute(self._temp2, self._temp1, (Mz, My, Mx), batch=batch)
-			self._kernel_matrixMulComplexScalar(batch * My * Mx * Nz,
+			self._kernel_matrixMulCS(batch * My * Mx * Nz,
 				self._temp2, self._temp1, self._Pz_tr,
 				cast(Mz), cast(batch * My * Mx), cast(Nz))
 			self._permute(self._temp2, self._temp1, (My, Mx, Nz), batch=batch)
-			self._kernel_matrixMulComplexScalar(batch * Mx * Nz * Ny,
+			self._kernel_matrixMulCS(batch * Mx * Nz * Ny,
 				self._temp2, self._temp1, self._Py_tr,
 				cast(My), cast(batch * Mx * Nz), cast(Ny))
 			self._permute(self._temp2, self._temp1, (Mx, Nz, Ny), batch=batch)
-			self._kernel_matrixMulComplexScalar(batch * Nz * Ny * Nx,
+			self._kernel_matrixMulCS(batch * Nz * Ny * Nx,
 				result, self._temp1, self._Px_tr,
 				cast(Mx), cast(batch * Nz * Ny), cast(Nx))
-			self._kernel_multiplyComplexScalar(Nz * Ny * Nx, result, result,
+			self._kernel_multiplyConstantCS(Nz * Ny * Nx, result, result,
 				self._scalar_cast(self._fwd_scale), cast(batch))
 
 			"""

@@ -117,7 +117,7 @@ INTERNAL_FUNC ${complex} csqrt(${complex} a)
 	#define GLOBAL_ID_Y (threadIdx.y + blockDim.y * blockIdx.y)
 	#define GLOBAL_SIZE_Y (blockDim.y * gridDim.y)
 
-	#define GLOBAL_ID_FLAT (threadIdx.x + blockDim.x * blockIdx.x + gridDim.x * blockDim.x * blockIdx.y)
+	#define GLOBAL_ID_FLAT (threadIdx.x + blockDim.x * (blockIdx.x + gridDim.x * blockIdx.y))
 	#define BLOCK_ID_FLAT (blockIdx.x + gridDim.x * blockIdx.y)
 	#define BLOCKS_NUM_FLAT (gridDim.x * gridDim.y)
 %else:

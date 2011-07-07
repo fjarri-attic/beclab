@@ -35,46 +35,41 @@ class TFGroundState(PairedCalculation):
 	def _gpu__prepare(self):
 		kernel_template = """
 			// fill given buffer with ground state, obtained from Thomas-Fermi approximation
-			EXPORTED_FUNC void fillWithTFGroundState(GLOBAL_MEM COMPLEX *data,
+			EXPORTED_FUNC void fillWithTFGroundState(GLOBAL_MEM COMPLEX *res,
 				GLOBAL_MEM SCALAR *potentials, SCALAR mu_by_hbar,
 				SCALAR g_by_hbar)
 			{
-				DEFINE_INDEXES;
-				if(index >= ${g.size})
-					return;
+				LIMITED_BY_GRID;
 
-				SCALAR potential = potentials[index];
+				SCALAR potential = potentials[GLOBAL_INDEX];
 
 				SCALAR e = mu_by_hbar - potential;
 				if(e > 0)
-					data[index] = complex_ctr(sqrt(e / g_by_hbar), 0);
+					res[GLOBAL_INDEX] = complex_ctr(sqrt(e / g_by_hbar), 0);
 				else
-					data[index] = complex_ctr(0, 0);
+					res[GLOBAL_INDEX] = complex_ctr(0, 0);
 			}
 
-			EXPORTED_FUNC void multiplyComplexScalar(GLOBAL_MEM COMPLEX *data, SCALAR coeff)
+			EXPORTED_FUNC void multiplyConstantCS(GLOBAL_MEM COMPLEX *data, SCALAR coeff)
 			{
-				DEFINE_INDEXES;
-				if(index >= ${g.size})
-					return;
-
-				COMPLEX x = data[index];
-				data[index] = complex_mul_scalar(x, coeff);
+				LIMITED_BY_GRID;
+				COMPLEX x = data[GLOBAL_INDEX];
+				data[GLOBAL_INDEX] = complex_mul_scalar(x, coeff);
 			}
 		"""
 
 		self._program = self._env.compileProgram(kernel_template, self._constants, self._grid)
 		self._kernel_fillWithTFGroundState = self._program.fillWithTFGroundState
-		self._kernel_multiplyComplexScalar = self._program.multiplyComplexScalar
+		self._kernel_multiplyConstantCS = self._program.multiplyConstantCS
 
-	def _cpu__kernel_fillWithTFGroundState(self, _, data, potentials, mu_by_hbar, g_by_hbar):
+	def _cpu__kernel_fillWithTFGroundState(self, gsize, data, potentials, mu_by_hbar, g_by_hbar):
 		mask_func = lambda x: 0.0 if x < 0 else x
 		mask_map = numpy.vectorize(mask_func)
 		self._env.copyBuffer(
 			numpy.sqrt(mask_map(mu_by_hbar - self._potentials) / g_by_hbar),
 			dest=data)
 
-	def _cpu__kernel_multiplyComplexScalar(self, _, data, coeff):
+	def _cpu__kernel_multiplyConstantCS(self, gsize, data, coeff):
 		data *= coeff
 
 	def _create(self, data, g, mu):
@@ -103,7 +98,7 @@ class TFGroundState(PairedCalculation):
 		#res.toMSpace()
 		N_real = self._stats.getN(res)
 		coeff = numpy.sqrt(N / N_real)
-		self._kernel_multiplyComplexScalar(res.size, res.data, self._constants.scalar.cast(coeff))
+		self._kernel_multiplyConstantCS(res.size, res.data, self._constants.scalar.cast(coeff))
 		#res.toXSpace()
 
 		return res
