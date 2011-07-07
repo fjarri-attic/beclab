@@ -80,7 +80,7 @@ class TFGroundState(PairedCalculation):
 		self._kernel_fillWithTFGroundState(data.size, data,
 			self._potentials, mu_by_hbar, g_by_hbar)
 
-	def _create(self, psi, N):
+	def fillWithTF(self, psi, N):
 		comp = psi.comp
 		g = self._constants.g[comp, comp]
 		mu = self._constants.muTF(N, dim=self._grid.dim, comp=comp)
@@ -103,14 +103,14 @@ class TFGroundState(PairedCalculation):
 
 	def create(self, N, comp=0):
 		psi = Wavefunction(self._env, self._constants, self._grid, comp=comp)
-		self._create(psi, N)
+		self.fillWithTF(psi, N)
 		return psi
 
 	def createCloud(self, N, ratio=1.0):
 		cloud = TwoComponentCloud(self._env, self._constants, self._grid)
-		self._create(cloud.psi0, N * ratio)
+		self.fillWithTF(cloud.psi0, N * ratio)
 		if ratio != 1.0:
-			self._create(cloud.psi1, N * (1.0 - ratio))
+			self.fillWithTF(cloud.psi1, N * (1.0 - ratio))
 		return cloud
 
 class GPEGroundState(PairedCalculation):
