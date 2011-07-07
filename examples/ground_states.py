@@ -41,7 +41,14 @@ def testThomasFermi(gpu, grid_type, dim):
 	# population in x-space after double transformation (should not change)
 	N_xspace2 = stats.getN(psi)
 
-	print "N(x-space) = {Nx}, N(m-space) = {Nm}".format(Nx=N_xspace2, Nm=N_mspace)
+	E = stats.getEnergy(psi) / constants.hbar / constants.wz
+	mu = stats.getMu(psi) / constants.hbar / constants.wz
+	mu_tf = constants.muTF(N, dim=grid.dim) / constants.hbar / constants.wz
+
+	print "N(x-space) = {Nx}, N(m-space) = {Nm},\n".format(
+			Nx=N_xspace2, Nm=N_mspace) + \
+		"E = {E} hbar w_z, mu = {mu} hbar w_z (mu_analytical = {mu_tf})".format(
+			E=E, mu=mu, mu_tf=mu_tf)
 
 	z = grid.z
 	profile = prj.getZ(psi) / 1e6
@@ -59,6 +66,11 @@ def testThomasFermi(gpu, grid_type, dim):
 	# There is certain difference for harmonic grid,
 	# because FHT does not conserve population (TODO: prove it mathematically)
 	assert abs(N_mspace - N_xspace2) / N_xspace2 < 2e-2 if grid_type == 'harmonic' else 1e-6
+
+	# There should be some difference between analytical mu and numerical one,
+	# because the numerical one takes into account kinetic energy
+	# (which is quite small as comared to nonlinear interaction for large N)
+	assert abs(mu - mu_tf) / mu_tf < 1e-2
 
 	return plot
 
