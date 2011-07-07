@@ -223,9 +223,12 @@ class CPUTranspose:
 class CPUPermute:
 
 	def __call__(self, src, dest, src_shape, batch=1):
-		shape = tuple(numpy.arange(len(src_shape)))
+		shape = tuple(numpy.arange(len(src_shape) + 1))
 		axes = shape[:-3] + (shape[-2], shape[-1], shape[-3])
-		dest.flat[:] = (numpy.transpose(src, axes=axes)).flat
+
+		size = batch * src_shape[0] * src_shape[1] * src_shape[2]
+		src = src.ravel()[:size].reshape((batch,) + src_shape[-3:])
+		dest.flat[:size] = (numpy.transpose(src, axes=axes)).flat
 
 def createTranspose(env, dtype):
 	if env.gpu:
