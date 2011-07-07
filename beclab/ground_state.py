@@ -8,7 +8,7 @@ import numpy
 from .helpers import *
 from .wavefunction import Wavefunction, TwoComponentCloud
 from .meters import ParticleStatistics
-from .constants import getPotentials, UniformGrid, HarmonicGrid
+from .constants import getPotentials, getPlaneWaveEnergy, UniformGrid, HarmonicGrid
 
 
 class TFGroundState(PairedCalculation):
@@ -113,335 +113,314 @@ class TFGroundState(PairedCalculation):
 			self.fillWithTF(cloud.psi1, N * (1.0 - ratio))
 		return cloud
 
-class GPEGroundState(PairedCalculation):
+
+class SplitStepGroundState(PairedCalculation):
 	"""
 	Calculates GPE ground state using split-step propagation in imaginary time.
 	"""
 
-	def __init__(self, env, constants):
+	def __init__(self, env, constants, grid):
 		PairedCalculation.__init__(self, env)
-		self._env = env
-		self._constants = constants
 
-		self._tf_gs = TFGroundState(env, constants)
-		self._plan = createFFTPlan(env, constants.shape, constants.complex.dtype)
-		self._statistics = ParticleStatistics(env, constants)
+		assert isinstance(grid, UniformGrid)
 
-		self._potentials = getPotentials(env, constants)
-		self._kvectors = getKVectors(env, constants)
+		self._constants = constants.copy()
+		self._grid = grid.copy()
 
-		self._prepare()
+		self._tf_gs = TFGroundState(env, constants, grid)
+		self._statistics = ParticleStatistics(env, constants, grid)
 
-	def _cpu__prepare(self):
-		self._k_coeff = numpy.exp(self._kvectors * (-self._constants.dt_steady / 2))
+	def _cpu__prepare_specific(self, **kwds):
+		self._dt = kwds['dt']
+		self._g00 = kwds['g00']
+		self._g01 = kwds['g01']
+		self._g11 = kwds['g11']
+		self._itmax = kwds['itmax']
 
-	def _gpu__prepare(self):
+	def _gpu__prepare_specific(self, **kwds):
 		kernel_template = """
-			EXPORTED_FUNC void multiply(GLOBAL_MEM COMPLEX *data, SCALAR coeff)
+			EXPORTED_FUNC void multiplyConstantCS(GLOBAL_MEM COMPLEX *data, SCALAR c)
 			{
-				DEFINE_INDEXES;
-				data[index] = complex_mul_scalar(data[index], coeff);
+				LIMITED_BY_GRID;
+				COMPLEX val = data[GLOBAL_INDEX];
+				data[GLOBAL_INDEX] = complex_mul_scalar(val, c);
 			}
 
-			EXPORTED_FUNC void multiply2(GLOBAL_MEM COMPLEX *data1, GLOBAL_MEM COMPLEX *data2,
-				SCALAR c1, SCALAR c2)
+			EXPORTED_FUNC void multiplyConstantCS_2comp(GLOBAL_MEM COMPLEX *data0,
+				GLOBAL_MEM COMPLEX *data1, SCALAR c0, SCALAR c1)
 			{
-				DEFINE_INDEXES;
-				data1[index] = complex_mul_scalar(data1[index], c1);
-				data2[index] = complex_mul_scalar(data2[index], c2);
+				LIMITED_BY_GRID;
+
+				COMPLEX d;
+				d = data0[GLOBAL_INDEX];
+				data0[GLOBAL_INDEX] = complex_mul_scalar(d, c0);
+				d = data1[GLOBAL_INDEX];
+				data1[GLOBAL_INDEX] = complex_mul_scalar(d, c1);
 			}
 
-			// Propagates state vector in k-space for steady state calculation (i.e., in imaginary time)
-			EXPORTED_FUNC void propagateKSpace(GLOBAL_MEM COMPLEX *data,
-				GLOBAL_MEM SCALAR *kvectors)
+			// Propagates psi function in mode space
+			EXPORTED_FUNC void mpropagate(GLOBAL_MEM COMPLEX *data,
+				GLOBAL_MEM SCALAR *mode_prop)
 			{
-				DEFINE_INDEXES;
+				LIMITED_BY_GRID;
 
-				SCALAR kvector = kvectors[cell_index];
-
-				SCALAR prop_coeff = exp(kvector *
-					(SCALAR)${-c.dt_steady / 2.0});
-				COMPLEX temp = data[index];
-				data[index] = complex_mul_scalar(temp, prop_coeff);
+				SCALAR prop = mode_prop[GLOBAL_INDEX];
+				COMPLEX val = data[GLOBAL_INDEX];
+				data[GLOBAL_INDEX] = complex_mul_scalar(val, prop);
 			}
 
-			// Propagates state vector in k-space for steady state calculation (i.e., in imaginary time)
-			// Version for processing two components at once
-			EXPORTED_FUNC void propagateKSpace2(
-				GLOBAL_MEM COMPLEX *data1, GLOBAL_MEM COMPLEX *data2,
-				GLOBAL_MEM SCALAR *kvectors)
+			// Propagates two psi functions in mode space
+			EXPORTED_FUNC void mpropagate_2comp(
+				GLOBAL_MEM COMPLEX *data0, GLOBAL_MEM COMPLEX *data1,
+				GLOBAL_MEM SCALAR *mode_prop)
 			{
-				DEFINE_INDEXES;
+				LIMITED_BY_GRID;
 
-				SCALAR kvector = kvectors[cell_index];
-
-				SCALAR prop_coeff = exp(kvector *
-					(SCALAR)${-c.dt_steady / 2.0});
-
-				data1[index] = complex_mul_scalar(data1[index], prop_coeff);
-				data2[index] = complex_mul_scalar(data2[index], prop_coeff);
-			}
-
-			// Propagates state in x-space for steady state calculation
-			EXPORTED_FUNC void propagateXSpace(GLOBAL_MEM COMPLEX *data,
-				GLOBAL_MEM SCALAR *potentials, SCALAR g_by_hbar)
-			{
-				DEFINE_INDEXES;
-
-				COMPLEX a = data[index];
-
-				//store initial x-space field
-				COMPLEX a0 = a;
-
-				SCALAR da;
-				SCALAR V = potentials[cell_index];
-
-				//iterate to midpoint solution
-				%for iter in range(c.itmax):
-					//calculate midpoint log derivative and exponentiate
-					da = exp((SCALAR)${c.dt_steady / 2.0} *
-						(-V - g_by_hbar * squared_abs(a)));
-
-					//propagate to midpoint using log derivative
-					a = complex_mul_scalar(a0, da);
-				%endfor
-
-				//propagate to endpoint using log derivative
-				data[index] = complex_mul_scalar(a, da);
+				COMPLEX val;
+				SCALAR prop = mode_prop[GLOBAL_INDEX];
+				val = data0[GLOBAL_INDEX];
+				data0[GLOBAL_INDEX] = complex_mul_scalar(val, prop);
+				val = data1[GLOBAL_INDEX];
+				data1[GLOBAL_INDEX] = complex_mul_scalar(val, prop);
 			}
 
 			// Propagates state in x-space for steady state calculation
-			EXPORTED_FUNC void propagateXSpace2(GLOBAL_MEM COMPLEX *a,
-				GLOBAL_MEM COMPLEX *b, GLOBAL_MEM SCALAR *potentials,
-				SCALAR g11_by_hbar, SCALAR g22_by_hbar,
-				SCALAR g12_by_hbar)
+			EXPORTED_FUNC void xpropagate(GLOBAL_MEM COMPLEX *data,
+				GLOBAL_MEM SCALAR *potentials)
 			{
-				DEFINE_INDEXES;
+				LIMITED_BY_GRID;
 
-				COMPLEX a_res = a[index];
-				COMPLEX b_res = b[index];
+				COMPLEX val = data[GLOBAL_INDEX];
 
-				//store initial x-space field
-				COMPLEX a0 = a_res;
-				COMPLEX b0 = b_res;
+				// store initial x-space field
+				COMPLEX val_copy = val;
 
-				SCALAR da, db, a_density, b_density;
-				SCALAR V = potentials[cell_index];
+				SCALAR dval;
+				SCALAR V = potentials[GLOBAL_INDEX];
 
-				//iterate to midpoint solution
-				%for iter in range(c.itmax):
-					//calculate midpoint log derivative and exponentiate
-					a_density = squared_abs(a_res);
-					b_density = squared_abs(b_res);
-
-					da = exp((SCALAR)${c.dt_steady / 2.0} *
-						(-V - g11_by_hbar * a_density - g12_by_hbar * b_density));
-					db = exp((SCALAR)${c.dt_steady / 2.0} *
-						(-V - g12_by_hbar * a_density - g22_by_hbar * b_density));
+				// iterate to midpoint solution
+				%for i in range(itmax):
+					// calculate midpoint log derivative and exponentiate
+					dval = exp((SCALAR)${dt / 2.0} *
+						(-V - (SCALAR)${g00} * squared_abs(val)));
 
 					//propagate to midpoint using log derivative
-					a_res = complex_mul_scalar(a0, da);
-					b_res = complex_mul_scalar(b0, db);
+					val = complex_mul_scalar(val_copy, dval);
 				%endfor
 
 				//propagate to endpoint using log derivative
-				a[index] = complex_mul_scalar(a_res, da);
-				b[index] = complex_mul_scalar(b_res, db);
+				data[GLOBAL_INDEX] = complex_mul_scalar(val, dval);
+			}
+
+			// Propagates state in x-space for steady state calculation
+			EXPORTED_FUNC void xpropagate_2comp(GLOBAL_MEM COMPLEX *data0,
+				GLOBAL_MEM COMPLEX *data1, GLOBAL_MEM SCALAR *potentials)
+			{
+				LIMITED_BY_GRID;
+
+				COMPLEX val0 = data0[GLOBAL_INDEX];
+				COMPLEX val1 = data1[GLOBAL_INDEX];
+
+				// store initial x-space field
+				COMPLEX val0_copy = val0;
+				COMPLEX val1_copy = val1;
+
+				SCALAR dval0, dval1, n0, n1;
+				SCALAR V = potentials[GLOBAL_INDEX];
+
+				// iterate to midpoint solution
+				%for i in range(itmax):
+					// calculate midpoint log derivative and exponentiate
+					n0 = squared_abs(val0);
+					n1 = squared_abs(val1);
+
+					dval0 = exp((SCALAR)${dt / 2.0} *
+						(-V - (SCALAR)${g00} * n0 - (SCALAR)${g01} * n1));
+					dval1 = exp((SCALAR)${dt / 2.0} *
+						(-V - (SCALAR)${g01} * n0 - (SCALAR)${g11} * n1));
+
+					// propagate to midpoint using log derivative
+					val0 = complex_mul_scalar(val0_copy, dval0);
+					val1 = complex_mul_scalar(val1_copy, dval1);
+				%endfor
+
+				// propagate to endpoint using log derivative
+				data0[GLOBAL_INDEX] = complex_mul_scalar(val0, dval0);
+				data1[GLOBAL_INDEX] = complex_mul_scalar(val1, dval1);
 			}
 		"""
 
-		self._program = self._env.compileProgram(kernel_template, self._constants)
+		self._program = self._env.compileProgram(kernel_template, self._constants,
+			self._grid, dt=kwds['dt'], g00=kwds['g00'], g01=kwds['g01'], g11=kwds['g11'],
+			itmax=kwds['itmax'])
 
-		self._propagateKSpace = self._program.propagateKSpace
-		self._propagateKSpace2 = self._program.propagateKSpace2
-		self._propagateXSpace = self._program.propagateXSpace
-		self._propagateXSpace2 = self._program.propagateXSpace2
-		self._multiply = self._program.multiply
-		self._multiply2 = self._program.multiply2
+		self._kernel_multiplyConstantCS = self._program.multiplyConstantCS
+		self._kernel_multiplyConstantCS_2comp = self._program.multiplyConstantCS_2comp
+		self._kernel_mpropagate = self._program.mpropagate
+		self._kernel_mpropagate_2comp = self._program.mpropagate_2comp
+		self._kernel_xpropagate = self._program.xpropagate
+		self._kernel_xpropagate_2comp = self._program.xpropagate_2comp
 
-	def _cpu__kpropagate(self, state1, state2):
-		# for numpy arrays, '*=' operator is inplace
-		state1.data *= self._k_coeff
-		if state2 is not None:
-			state2.data *= self._k_coeff
+	def _prepare(self, dt=1e-5, g00=0.0, g01=0.0, g11=0.0, itmax=3):
+		self._potentials = getPotentials(self._env, self._constants, self._grid)
+		energy = getPlaneWaveEnergy(None, self._constants, self._grid)
+		self._mode_prop = self._env.toDevice(numpy.exp(energy * (-dt / 2)))
+		self._prepare_specific(dt=dt, g00=g00, g01=g01, g11=g11, itmax=itmax)
 
-	def _gpu__kpropagate(self, state1, state2):
-		if state2 is None:
-			self._propagateKSpace(state1.size, state1.data, self._kvectors)
+	def _cpu__kernel_multiplyConstantCS(self, gsize, data, c):
+		data *= c
+
+	def _cpu__kernel_multiplyConstantCS_2comp(self, gsize, data0, data1, c0, c1):
+		data0 *= c0
+		data1 *= c1
+
+	def _cpu__kernel_mpropagate(self, gsize, data0, mode_prop):
+		data0 *= mode_prop
+
+	def _cpu__kernel_mpropagate_2comp(self, gsize, data0, data1, mode_prop):
+		data0 *= mode_prop
+		data1 *= mode_prop
+
+	def _cpu__kernel_xpropagate(self, gsize, data, potentials):
+		data_copy = data.copy()
+		g = self._g00
+		dt = -self._dt / 2
+
+		for i in xrange(self._itmax):
+			n = numpy.abs(data) ** 2
+			d = numpy.exp((potentials + n * g) * dt)
+			data.flat[:] = (data_copy * d).flat
+		data *= d
+
+	def _cpu__kernel_xpropagate_2comp(self, gsize, data0, data1, potentials):
+
+		dt = -self._dt / 2
+		g00 = self._g00
+		g01 = self._g01
+		g11 = self._g11
+
+		data0_copy = data0.copy()
+		data1_copy = data1.copy()
+
+		for i in xrange(self._constants.itmax):
+			n0 = numpy.abs(data0) ** 2
+			n1 = numpy.abs(data1) ** 2
+
+			d0 = numpy.exp((potentials + n0 * g00 + n1 * g01) * dt)
+			d1 = numpy.exp((potentials + n0 * g01 + n1 * g11) * dt)
+
+			data0.flat[:] = (data0_copy * d0).flat
+			data1.flat[:] = (data1_copy * d1).flat
+
+		data0 *= d0
+		data1 *= d1
+
+	def _mpropagate(self, psi0, psi1):
+		if psi1 is None:
+			self._kernel_mpropagate(psi0.size, psi0.data, self._mode_prop)
 		else:
-			self._propagateKSpace2(state1.size, state1.data, state2.data, self._kvectors)
+			self._kernel_mpropagate_2comp(psi0.size, psi0.data, psi1.data, self._mode_prop)
 
-	def _cpu__xpropagate(self, state1, state2):
-		p = self._potentials
-		dt = -self._constants.dt_steady / 2
-
-		if state2 is None:
-			a0 = state1.data.copy()
-			g_by_hbar = self._constants.g_by_hbar[(state1.comp, state1.comp)]
-
-			for iter in xrange(self._constants.itmax):
-				n = numpy.abs(state1.data) ** 2
-				da = numpy.exp((p + n * g_by_hbar) * dt)
-				state1.data = a0 * da
-			state1.data *= da
+	def _xpropagate(self, psi0, psi1):
+		if psi1 is None:
+			self._kernel_xpropagate(psi0.size, psi0.data, self._potentials)
 		else:
-			a0 = state1.data.copy()
-			b0 = state2.data.copy()
+			self._propagateXSpace2(psi0.size, psi0.data, psi1.data, self._potentials)
 
-			comp1 = state1.comp
-			comp2 = state2.comp
-			g_by_hbar = self._constants.g_by_hbar
-			g11_by_hbar = g_by_hbar[(comp1, comp1)]
-			g12_by_hbar = g_by_hbar[(comp1, comp2)]
-			g22_by_hbar = g_by_hbar[(comp2, comp2)]
-
-			for iter in xrange(self._constants.itmax):
-				na = numpy.abs(state1.data) ** 2
-				nb = numpy.abs(state2.data) ** 2
-
-				pa = p + na * g11_by_hbar + nb * g12_by_hbar
-				pb = p + nb * g22_by_hbar + na * g12_by_hbar
-
-				da = numpy.exp(pa * dt)
-				db = numpy.exp(pb * dt)
-
-				state1.data = a0 * da
-				state2.data = b0 * db
-
-			state1.data *= da
-			state2.data *= db
-
-	def _gpu__xpropagate(self, state1, state2):
+	def _renormalize(self, psi0, psi1, c0, c1):
 		cast = self._constants.scalar.cast
-		if state2 is None:
-			g_by_hbar = self._constants.g_by_hbar[(state1.comp, state1.comp)]
-			self._propagateXSpace(state1.size, state1.data, self._potentials,
-				cast(g_by_hbar))
+		if psi1 is None:
+			self._kernel_multiplyConstantCS(psi0.size, psi0.data, cast(c0))
 		else:
-			comp1 = state1.comp
-			comp2 = state2.comp
-			g_by_hbar = self._constants.g_by_hbar
-			g11_by_hbar = g_by_hbar[(comp1, comp1)]
-			g12_by_hbar = g_by_hbar[(comp1, comp2)]
-			g22_by_hbar = g_by_hbar[(comp2, comp2)]
+			self._kernel_multiplyConstantCS_2comp(psi0.size, psi0.data, psi1.data, cast(c0), cast(c1))
 
-			self._propagateXSpace2(state1.size, state1.data, state2.data,
-				self._potentials, cast(g11_by_hbar), cast(g22_by_hbar), cast(g12_by_hbar))
+	def _create(self, psi0, psi1, N0, N1, precision, **kwds):
 
-	def _cpu__renormalize(self, state1, state2, coeff):
-		if state2 is None:
-			state1.data *= coeff
-		else:
-			c1, c2 = coeff
-			state1.data *= c1
-			state2.data *= c2
+		two_component = psi1 is not None
+		verbose = kwds.pop('verbose', False)
 
-	def _gpu__renormalize(self, state1, state2, coeff):
-		cast = self._constants.scalar.cast
-		if state2 is None:
-			self._multiply(state1.size, state1.data, cast(coeff))
-		else:
-			c1, c2 = coeff
-			self._multiply2(state1.size, state1.data, state2.data, cast(c1), cast(c2))
-
-	def _toXSpace(self, state1, state2):
-		self._plan.execute(state1.data)
-		if state2 is not None:
-			self._plan.execute(state2.data)
-
-	def _toKSpace(self, state1, state2):
-		self._plan.execute(state1.data, inverse=True)
-		if state2 is not None:
-			self._plan.execute(state2.data, inverse=True)
-
-	def _create(self, two_component=False, comp=0, ratio=0.5,
-			precision=1e-6, verbose=True):
-
-		assert not two_component or comp == COMP_1_minus1
-
-		desired_N1 = self._constants.N * ratio
-		desired_N2 = self._constants.N * (1 - ratio)
-
+		g_by_hbar = self._constants.g / self._constants.hbar
+		kwds['g00'] = g_by_hbar[psi0.comp, psi0.comp]
 		if two_component:
-			# it would be nice to use two-component TF state here,
-			# but the formula is quite complex, and it is much easier
-			# just to start from uniform distribution
-			# (not two one-component TF-states, because in case of
-			# immiscible regime they are far from ground state)
+			kwds['g01'] = g_by_hbar[psi0.comp, psi1.comp]
+			kwds['g11'] = g_by_hbar[psi1.comp, psi1.comp]
+		self._prepare(**kwds)
 
-			state1 = State(self._env, self._constants, comp=comp)
-			state1.fillWithOnes()
-
-			state2 = State(self._env, self._constants, comp=COMP_2_1)
-			state2.fillWithOnes()
-		else:
-			# TF state is a good first approximation in case of one-component cloud
-			state1 = self._tf_gs.create(comp=comp, N=self._constants.N)
-			state2 = None
+		# it would be nice to use two-component TF state here,
+		# but the formula is quite complex, and it is much easier
+		# just to start from something approximately correct
+		self._tf_gs.fillWithTF(psi0, N0)
+		if two_component:
+			self._tf_gs.fillWithTF(psi1, N1)
 
 		stats = self._statistics
-		E = 0
 
 		if two_component:
-			new_E = stats.countEnergyTwoComponent(state1, state2)
+			total_N = lambda psi0, psi1: stats.getN(psi0) + stats.getN(psi1)
+			total_E = lambda psi0, psi1, N: stats.getEnergy2comp(psi0, psi1, N=N)
+			total_mu = lambda psi0, psi1, N: stats.getMu2comp(psi0, psi1, N=N)
+			to_xspace = lambda psi0, psi1: psi0.toXSpace(), psi1.toXSpace()
+			to_mspace = lambda psi0, psi1: psi0.toMSpace(), psi1.toMSpace()
 		else:
-			new_E = stats.countEnergy(state1)
+			total_N = lambda psi0, psi1: stats.getN(psi0)
+			total_E = lambda psi0, psi1, N: stats.getEnergy(psi0, N=N)
+			total_mu = lambda psi0, psi1, N: stats.getMu(psi0, N=N)
+			to_xspace = lambda psi0, psi1: psi0.toXSpace()
+			to_mspace = lambda psi0, psi1: psi0.toMSpace()
 
-		self._toKSpace(state1, state2)
+		E = 0.0
+		new_E = total_E(psi0, psi1, N0 + N1)
 
+		to_mspace(psi0, psi1)
 		while abs(E - new_E) / new_E > precision:
 
 			# propagation
-			self._kpropagate(state1, state2)
-			self._toXSpace(state1, state2)
-			self._xpropagate(state1, state2)
-			self._toKSpace(state1, state2)
-			self._kpropagate(state1, state2)
+			self._mpropagate(psi0, psi1)
+			to_xspace(psi0, psi1)
+			self._xpropagate(psi0, psi1)
+			to_mspace(psi0, psi1)
+			self._mpropagate(psi0, psi1)
 
 			# normalization
-
-			self._toXSpace(state1, state2)
+			to_xspace(psi0, psi1)
 
 			# renormalize
 			if two_component:
-				N1 = stats.countParticles(state1)
-				N2 = stats.countParticles(state2)
-				c1 = math.sqrt(desired_N1 / N1)
-				c2 = math.sqrt(desired_N2 / N2)
-				self._renormalize(state1, state2, (c1, c2))
+				new_N0 = stats.getN(psi0)
+				new_N1 = stats.getN(psi1)
+				c0 = numpy.sqrt(N0 / new_N0)
+				c1 = numpy.sqrt(N1 / new_N1)
+				self._renormalize(psi0, psi1, c0, c1)
 			else:
-				N = stats.countParticles(state1)
-				self._renormalize(state1, state2, math.sqrt(self._constants.N / N))
+				new_N0 = stats.getN(psi0)
+				self._renormalize(psi0, psi1, numpy.sqrt(N0 / new_N0), None)
 
 			E = new_E
-			if two_component:
-				new_E = stats.countEnergyTwoComponent(state1, state2, N=self._constants.N)
-			else:
-				new_E = stats.countEnergy(state1, N=self._constants.N)
+			new_E = total_E(psi0, psi1, N0 + N1)
+			to_mspace(psi0, psi1)
 
-			self._toKSpace(state1, state2)
-
-		self._toXSpace(state1, state2)
+		to_xspace(psi0, psi1)
 
 		if verbose:
-			if two_component:
-				print "Ground state calculation (two components):" + \
-					" N = " + str(stats.countParticles(state1)) + \
-						" + " + str(stats.countParticles(state2)) + \
-					" E = " + str(stats.countEnergyTwoComponent(state1, state2)) + \
-					" mu = " + str(stats.countMuTwoComponent(state1, state2))
-			else:
-				print "Ground state calculation (one component):" + \
-					" N = " + str(stats.countParticles(state1)) + \
-					" E = " + str(stats.countEnergy(state1)) + \
-					" mu = " + str(stats.countMu(state1))
+			postfix = "(two components)" if two_component else "(one component)"
+			pop = str(stats.getN(psi0)) + " + " + str(stats.getN(psi1)) if two_component else \
+				str(stats.getN(psi0))
 
-		return state1, state2
+			print "Ground state calculation " + postfix + " :" + \
+					" N = " + N + \
+					" E = " + str(total_E(psi0, psi1, N0 + N1)) + \
+					" mu = " + str(total_mu(psi0, psi1, N0 + N1))
 
-	def createCloud(self, two_component=False, ratio=0.5, precision=1e-6):
-		state1, state2 = self._create(two_component=two_component, ratio=ratio, precision=precision)
-		return TwoComponentCloud(self._env, self._constants, a=state1, b=state2)
+	def create(self, N, comp=0, precision=1e-6, dt=1e-5):
+		psi = Wavefunction(self._env, self._constants, self._grid, comp=comp)
+		self._create(psi, None, N, 0, precision, dt=dt)
+		return psi
 
-	def createState(self, comp=0, precision=1e-6):
-		state1, state2 = self._create(two_component=False, comp=comp, precision=precision)
-		return state1
+	def createCloud(self, N, ratio=1.0, precision=1e-6, dt=1e-5):
+		cloud = TwoComponentCloud(self._env, self._constants, self._grid)
+		if ratio == 1.0:
+			self._create(cloud.psi0, None, N, 0, precision, dt=dt)
+		else:
+			self._create(cloud.psi0, cloud.psi1, N * ratio, N * (1.0 - ratio),
+				precision, dt=dt)
+		return cloud
