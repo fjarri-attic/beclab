@@ -5,7 +5,7 @@ import itertools
 
 eps = 1e-6
 
-def testThomasFermi(gpu, grid_type, dim):
+def testThomasFermi(gpu, grid_type, dim, gs_type):
 	"""
 	Creates Thomas-Fermi ground state using different types of representations
 	"""
@@ -30,13 +30,21 @@ def testThomasFermi(gpu, grid_type, dim):
 
 	# Prepare 'apparatus'
 
-	tf = TFGroundState(env, constants, grid)
+	if gs_type == "TF":
+		gs = TFGroundState(env, constants, grid)
+	elif gs_type == "split-step":
+		gs = SplitStepGroundState(env, constants, grid)
+
 	prj = DensityProfile(env, constants, grid)
 	stats = ParticleStatistics(env, constants, grid)
 
 	# Create ground state
 
-	psi = tf.create(N)
+	if gs_type == "TF":
+		psi = gs.create(N)
+	elif gs_type == "split-step":
+		cloud = gs.create(N)
+		psi = cloud.psi0
 
 	# population in x-space
 	N_xspace1 = stats.getN(psi)
@@ -58,9 +66,10 @@ def testThomasFermi(gpu, grid_type, dim):
 		"E = {E} hbar w_z, mu = {mu} hbar w_z (mu_analytical = {mu_tf})".format(
 			E=E, mu=mu, mu_tf=mu_tf)
 
-	z = grid.z
-	profile = prj.getZ(psi) / 1e6
-	plot = XYData(str(env) + ", " + grid_type, z * 1e6, profile,
+	z = grid.z * 1e6 # cast to micrometers
+	profile = prj.getZ(psi) / 1e6 # cast to micrometers^-1
+	plot = XYData(str(env) + ", " + grid_type + ", " + gs_type,
+		z, profile,
 		xname="Z ($\\mu$m)", yname="Axial density ($\\mu$m$^{-1}$)", ymin=0)
 
 	env.release()
@@ -85,11 +94,16 @@ def testThomasFermi(gpu, grid_type, dim):
 if __name__ == '__main__':
 
 	prefix = 'ground_states_'
+	tests = (
+		(False, True), # gpu usage
+		('uniform', 'harmonic'), # grid type
+		('TF',) # ground state type
+	)
 
 	# Thomas-Fermi ground states
 	for dim in ('1d', '3d'):
 		plots = []
-		for gpu, grid_type in itertools.product((False, True), ('uniform', 'harmonic')):
+		for gpu, grid_type, gs_type in itertools.product(*tests):
 			print "* Testing", grid_type, "on", ("GPU" if gpu else "CPU")
-			plots.append(testThomasFermi(gpu, grid_type, dim))
-		XYPlot(plots).save(prefix + dim + '_TF.pdf')
+			plots.append(testThomasFermi(gpu, grid_type, dim, gs_type))
+		XYPlot(plots).save(prefix + dim + '.pdf')
