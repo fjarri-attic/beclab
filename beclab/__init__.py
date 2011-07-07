@@ -32,11 +32,11 @@ class _Envs:
 		except:
 			pass
 
-#		try:
-#			import helpers.cl
-#			self.cl = getEnvWrapper(helpers.cl.CLEnvironment)
-#		except:
-#			pass
+		try:
+			import helpers.cl
+			self.cl = getEnvWrapper(helpers.cl.CLEnvironment)
+		except:
+			pass
 
 		import helpers.cpu
 		self.cpu = helpers.cpu.CPUEnvironment
