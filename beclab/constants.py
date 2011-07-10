@@ -33,9 +33,6 @@ _DEFAULTS = {
 	'gamma111': 5.4e-42,
 	'gamma12': 1.52e-20,
 	'gamma22': 7.7e-20,
-
-	# number of iterations for mid-step of split-step evolution
-	'itmax': 3,
 }
 
 def getPotentials(env, constants, grid):
