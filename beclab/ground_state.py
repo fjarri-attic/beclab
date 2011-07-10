@@ -378,7 +378,13 @@ class SplitStepGroundState(PairedCalculation):
 		new_E = total_E(psi0, psi1, N0 + N1)
 
 		to_mspace(psi0, psi1)
-		while abs(E - new_E) / new_E > precision:
+
+		# Reducing the dependence on time step
+		# Now we can use small time steps not being afraid that
+		# propagation will be terminated too soon (because dE is too small)
+		# (TODO: dE ~ dt, but not exactly; see W. Bao and Q. Du, 2004, eqn. 2.7
+		# Now default precision is chosen so that usual dt's work well with it)
+		while abs(E - new_E) / new_E > precision * self._dt:
 
 			# propagation
 			self._mpropagate(psi0, psi1)
@@ -417,12 +423,12 @@ class SplitStepGroundState(PairedCalculation):
 					" E = " + str(total_E(psi0, psi1, N0 + N1)) + \
 					" mu = " + str(total_mu(psi0, psi1, N0 + N1))
 
-	def create(self, N, comp=0, precision=1e-6, dt=1e-5):
+	def create(self, N, comp=0, precision=1e-2, dt=1e-5):
 		psi = Wavefunction(self._env, self._constants, self._grid, comp=comp)
 		self._create(psi, None, N, 0, precision, dt=dt)
 		return psi
 
-	def createCloud(self, N, ratio=1.0, precision=1e-6, dt=1e-5):
+	def createCloud(self, N, ratio=1.0, precision=1e-2, dt=1e-5):
 		cloud = TwoComponentCloud(self._env, self._constants, self._grid)
 		if ratio == 1.0:
 			self._create(cloud.psi0, None, N, 0, precision, dt=dt)
