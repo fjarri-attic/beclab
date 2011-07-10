@@ -86,6 +86,12 @@ class TFGroundState(PairedCalculation):
 		mu = self._constants.muTF(N, dim=self._grid.dim, comp=comp)
 		self._fillWithTF(psi.data, g, mu)
 
+		# This is required for HarmonicGrid
+		# Otherwise first X-M-X transform removes some "excessive" parts
+		# TODO: need to mathematically justify this
+		psi.toMSpace()
+		psi.toXSpace()
+
 		# The total number of atoms is equal to the number requested
 		# only in the limit of infinite number of lattice points.
 		# So we have to renormalize the data.
