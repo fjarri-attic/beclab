@@ -310,19 +310,24 @@ class ParticleStatistics(PairedCalculation):
 		return Pz.std()
 
 	def getN(self, psi):
+		"""Returns particle count for wavefunction"""
 		p = self.getAveragePopulation(psi)
 		return self._reduce(p)
 
 	def getEnergy(self, psi, N=None):
+		"""Returns average energy per particle"""
 		return self._getInvariant(psi, 2, N)
 
 	def getMu(self, psi, N=None):
+		"""Returns average chemical potential per particle"""
 		return self._getInvariant(psi, 1, N)
 
 	def getEnergy2comp(self, psi0, psi1, N=None):
+		"""Returns average energy per particle for two-component cloud"""
 		return self._getInvatiant2comp(psi0, psi1, 2, N)
 
 	def getMu2comp(self, psi0, psi1, N=None):
+		"""Returns average chemical potential per particle for two-component cloud"""
 		return self._getInvariant2comp(psi0, psi1, 1, N)
 
 
