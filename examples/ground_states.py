@@ -89,7 +89,7 @@ def testThomasFermi(gpu, grid_type, dim, gs_type):
 
 	# There should be some difference between analytical mu and numerical one,
 	# but it shouldn't be very big
-	assert abs(mu - mu_tf) / mu_tf < 2e-2
+	assert abs(mu - mu_tf) / mu_tf < 1e-1
 
 	return plot
 
