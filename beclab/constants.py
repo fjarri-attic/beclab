@@ -210,7 +210,7 @@ class UniformGrid:
 		# calculating approximate diameter of the cloud based on
 		# Thomas-Fermi chemical potential for the first component
 		dim = len(shape)
-		mu1 = constants.muTF(N, dim=dim, comp=1)
+		mu1 = constants.muTF(N, dim=dim, comp=0)
 		diameter = lambda w: 2.0 * border * numpy.sqrt(2.0 * mu1 / (constants.m * w ** 2))
 
 		if dim == 3:
