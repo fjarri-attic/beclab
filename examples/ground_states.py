@@ -34,6 +34,8 @@ def testThomasFermi(gpu, grid_type, dim, gs_type):
 		gs = TFGroundState(env, constants, grid)
 	elif gs_type == "split-step":
 		gs = SplitStepGroundState(env, constants, grid)
+	elif gs_type == "rk5":
+		gs = RK5IPGroundState(env, constants, grid)
 
 	prj = DensityProfile(env, constants, grid)
 	stats = ParticleStatistics(env, constants, grid)
@@ -97,7 +99,7 @@ if __name__ == '__main__':
 	tests = (
 		(False, True), # gpu usage
 		('uniform', 'harmonic'), # grid type
-		('TF', 'split-step') # ground state type
+		('TF', 'split-step', 'rk5') # ground state type
 	)
 
 	# Thomas-Fermi ground states
@@ -107,7 +109,7 @@ if __name__ == '__main__':
 		print
 		plots = []
 		for gpu, grid_type, gs_type in itertools.product(*tests):
-			if grid_type == 'harmonic' and gs_type == 'split-step':
+			if grid_type == 'harmonic' and (gs_type == 'rk5' or gs_type == 'split-step'):
 				continue
 			print "* Testing", grid_type, "grid and", gs_type, "on", ("GPU" if gpu else "CPU")
 			plots.append(testThomasFermi(gpu, grid_type, dim, gs_type))
