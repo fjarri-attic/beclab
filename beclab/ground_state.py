@@ -436,3 +436,386 @@ class SplitStepGroundState(PairedCalculation):
 			self._create(cloud.psi0, cloud.psi1, N * ratio, N * (1.0 - ratio),
 				precision, dt=dt)
 		return cloud
+
+
+class RK5IPGroundState(PairedCalculation):
+
+	def __init__(self, env, constants, grid, dt_guess=1e-4, eps=1e-9):
+		PairedCalculation.__init__(self, env)
+
+		assert isinstance(grid, UniformGrid)
+
+		self._constants = constants.copy()
+		self._grid = grid.copy()
+
+		self._dt = dt_guess
+		self._eps = eps
+
+		self._tf_gs = TFGroundState(env, constants, grid)
+		self._statistics = ParticleStatistics(env, constants, grid)
+
+		self._plan = createFFTPlan(self._env, self._constants, self._grid)
+		self._potentials = getPotentials(self._env, self._constants, self._grid)
+		self._energy = getPlaneWaveEnergy(self._env, self._constants, self._grid)
+		self._maxFinder = createMaxFinder(self._env, self._constants.scalar.dtype)
+
+		self._prepare()
+
+	def _prepare(self, g00=0.0, g01=0.0, g11=0.0):
+		self._dt_used = 0
+		shape = self._grid.mshape
+		cdtype = self._constants.complex.dtype
+		sdtype = self._constants.scalar.dtype
+
+		self._xdata0 = self._env.allocate((1,) + shape, dtype=cdtype)
+		self._xdata1 = self._env.allocate((1,) + shape, dtype=cdtype)
+
+		self._k = self._env.allocate((2, 6) + shape, dtype=cdtype)
+
+		self._scale0 = self._env.allocate((1,) + shape, dtype=cdtype)
+		self._scale1 = self._env.allocate((1,) + shape, dtype=cdtype)
+
+		self._g00 = g00
+		self._g01 = g01
+		self._g11 = g11
+
+		self._a = numpy.array([0, 0.2, 0.3, 0.6, 1, 0.875])
+		self._b = numpy.array([
+			[0, 0, 0, 0, 0],
+			[1.0 / 5, 0, 0, 0, 0],
+			[3.0 / 40, 9.0 / 40, 0, 0, 0],
+			[3.0 / 10, -9.0 / 10, 6.0 / 5, 0, 0],
+			[-11.0 / 54, 5.0 / 2, -70.0 / 27, 35.0 / 27, 0],
+			[1631.0 / 55296, 175.0 / 512, 575.0 / 13824, 44275.0 / 110592, 253.0 / 4096]
+		])
+		self._c = numpy.array([37.0 / 378, 0, 250.0 / 621, 125.0 / 594, 0, 512.0 / 1771])
+		self._cs = numpy.array([2825.0 / 27648, 0, 18575.0 / 48384.0, 13525.0 / 55296, 277.0 / 14336, 0.25])
+
+	def _cpu__kernel_multiplyConstantCS(self, gsize, data, c):
+		data *= c
+
+	def _cpu__kernel_multiplyConstantCS_2comp(self, gsize, data0, data1, c0, c1):
+		data0 *= c0
+		data1 *= c1
+
+	def _cpu__kernel_transformIP(self, gsize, data, energy, dt):
+		data *= numpy.exp(energy * dt)
+
+	def _cpu__kernel_transformIP_2comp(self, gsize, data0, data1, energy, dt):
+		coeffs = numpy.exp(energy * dt)
+		data0 *= coeffs
+		data1 *= coeffs
+
+	def _cpu__kernel_calculateScale(self, gsize, res, k, data):
+		res.flat[:] = (
+			numpy.abs(k[0, 0].real) + 1j * numpy.abs(k[0, 0].imag) +
+			numpy.abs(data.real) + 1j * numpy.abs(data.imag) +
+			(1 + 1j) * self._tiny).flat
+
+	def _cpu__kernel_calculateScale_2comp(self, gsize, res0, res1, k, data0, data1):
+		res0.flat[:] = (numpy.abs(k[0, 0]) + numpy.abs(data0) + tiny).flat
+		res1.flat[:] = (numpy.abs(k[1, 0]) + numpy.abs(data1) + tiny).flat
+
+	def _cpu__kernel_calculateError(self, gsize, k, scale):
+		shape = k.shape[2:]
+		scale = scale.reshape(shape)
+		k[0, 0].real /= scale.real * self._eps
+		k[0, 0].imag /= scale.imag * self._eps
+
+	def _cpu__kernel_calculateError_2comp(self, gsize, k, scale0, scale1):
+		shape = k.shape[2:]
+		k[0, 0] /= scale0.reshape(shape) * self._eps
+		k[1, 0] /= scale1.reshape(shape) * self._eps
+
+	def _cpu__kernel_propagationFunc(self, gsize, k, data, potentials, dt0, stage):
+		g = self._g00
+		n = numpy.abs(data) ** 2
+		k[0, stage] = -((potentials + n * g) * data) * dt0
+
+	def _cpu__kernel_propagationFunc_2comp(self, gsize, k, data0, data1, potentials, dt0, stage):
+		g00 = self._g00
+		g01 = self._g01
+		g11 = self._g11
+
+		n0 = numpy.abs(data0) ** 2
+		n1 = numpy.abs(data1) ** 2
+
+		k[0, stage] = -((potentials + n0 * g00 + n1 * g01) * data0) * dt0
+		k[1, stage] = -((potentials + n0 * g01 + n1 * g11) * data1) * dt0
+
+	def _cpu__kernel_createData(self, gsize, res, data, k, stage):
+		res.flat[:] = data.flat
+
+		b = self._b[stage, :]
+		for s in xrange(stage):
+ 			res += k[0, s] * b[s]
+
+	def _cpu__kernel_createData_2comp(self, gsize, res0, res1, data0, data1, k, stage):
+		res0.flat[:] = data0.flat
+		res1.flat[:] = data1.flat
+
+		b = self._b[stage, :]
+		for s in xrange(stage):
+ 			res0 += k[0, s] * b[s]
+			res1 += k[1, s] * b[s]
+
+	def _cpu__kernel_sumResults(self, gsize, res, k, data):
+		res.flat[:] = data.flat
+
+		c = self._c
+		c_err = c - self._cs
+
+		for s in xrange(6):
+			res += k[0, s] * c[s]
+
+		k[0, 0] *= c_err[0]
+		for s in xrange(1, 6):
+			k[0, 0] += k[0, s] * c_err[s]
+		k[0, 0] = numpy.abs(k[0, 0].real) + 1j * numpy.abs(k[0, 0].imag)
+
+	def _cpu__kernel_sumResults_2comp(self, gsize, res0, res1, k, data0, data1):
+		res0.flat[:] = data0.flat
+		res1.flat[:] = data1.flat
+
+		c = self._c
+		c_err = c - self._cs
+
+		for s in xrange(6):
+			res0 += k[0, s] * c[s]
+			res1 += k[0, s] * c[s]
+
+		k[0, 0] *= c_err[0]
+		k[1, 0] *= c_err[0]
+		for s in xrange(1, 6):
+			k[0, 0] += k[0, s] * c_err[s]
+			k[1, 0] += k[1, s] * c_err[s]
+
+	def _propagate_rk5(self, psi0, dt0):
+
+		cast = self._constants.scalar.cast
+
+		for stage in xrange(6):
+			self._kernel_createData(psi0.size, self._xdata0,
+				psi0.data, self._k, numpy.int32(stage))
+			dt = self._a[stage] * dt0
+			self._fromIP(self._xdata0, None, dt)
+			self._kernel_propagationFunc(psi0.size, self._k, self._xdata0,
+				self._potentials, cast(dt0), numpy.int32(stage))
+			self._toIP(self._xdata0, None, dt)
+
+		self._kernel_sumResults(psi0.size, self._xdata0,
+			self._k, psi0.data)
+
+	def _propagate_rk5_2comp(self, psi0, psi1, dt0):
+
+		cast = self._constants.scalar.cast
+
+		for stage in xrange(6):
+			self._kernel_createData_2comp(psi0.size, self._xdata0, self._xdata1,
+				psi0.data, psi1.data, self._k, numpy.int32(stage))
+			dt = a[stage] * dt0
+			self._fromIP(self._xdata0, self._xdata1, dt)
+			self._kernel_propagationFunc_2comp(psi0.size, self._k, self._xdata0, self._xdata1,
+				self._potentials, cast(dt0), numpy.int32(stage))
+			self._toIP(self._xdata0, self._xdata1, dt)
+
+		self._kernel_sumResults_2comp(psi0.size, self._xdata0, self._xdata1,
+			self._k, psi0.data, psi1.data)
+
+	def _propagate(self, psi0, psi1):
+
+		safety = 0.9
+		eps = self._eps
+		#tiny = self._tiny
+
+		dt = self._dt
+		cast = self._constants.scalar.cast
+
+		# Estimate scale for this step
+
+		if psi1 is None:
+			self._kernel_propagationFunc(psi0.size, self._k, psi0.data, self._potentials,
+				cast(dt), numpy.int32(0))
+			self._kernel_calculateScale(psi0.size, self._scale0, self._k, psi0.data)
+
+		else:
+			self._kernel_propagationFunc_2comp(psi0.size, self._k, psi0.data, psi1.data,
+				self._potentials, cast(dt), numpy.int32(0))
+			self._kernel_calculateScale_2comp(psi0.size, self._scale0, self._scale1,
+				self._k, psi0.data, psi1.data)
+
+		# Propagate
+
+		while True:
+			#print "Trying with step " + str(dt)
+			if psi1 is None:
+				self._propagate_rk5(psi0, dt)
+				self._kernel_calculateError(psi0.size, self._k, self._scale0)
+				errmax = self._maxFinder(self._k, length=psi0.size)
+			else:
+				self._propagate_rk5_2comp(psi0, psi1, dt)
+				self._kernel_calculateError_2comp(psi0.size, self._k, self._scale0, self._scale1)
+				errmax = self._maxFinder(self._k, length=psi0.size * 2)
+
+			#print "Error: " + str(errmax)
+			if errmax < 1.0:
+			#	if dt > remaining_time:
+			#		# Step is fine in terms of error, but bigger then necessary
+			#		dt = remaining_time
+			#		continue
+			#	else:
+			#		#print "Seems ok"
+			#		break
+			#	print "Seems ok"
+				break
+
+			# reducing step size and retrying step
+			dt_temp = safety * dt * (errmax ** (-0.25))
+			dt = max(dt_temp, 0.1 * dt)
+
+		self._dt_used = dt
+
+		if errmax > (5.0 / safety) ** (-1.0 / 0.2):
+			self._dt = safety * dt * (errmax ** (-0.2))
+		else:
+			self._dt = 5.0 * dt
+
+		self._env.copyBuffer(self._xdata0, dest=psi0.data)
+		if psi1 is not None:
+			self._env.copyBuffer(self._xdata1, dest=psi1.data)
+
+		self._fromIP(psi0.data, psi1.data if psi1 is not None else None, self._dt_used)
+
+	def _toIP(self, data0, data1, dt):
+		if dt == 0.0:
+			return
+
+		self._plan.execute(data0)
+		if data1 is not None:
+			self._plan.execute(data1)
+
+		if data1 is not None:
+			self._kernel_transformIP_2comp(data0.size, data0, data1,
+				self._energy, self._constants.scalar.cast(dt))
+		else:
+			self._kernel_transformIP(data0.size, data0,
+				self._energy, self._constants.scalar.cast(dt))
+
+		self._plan.execute(data0, inverse=True)
+		if data1 is not None:
+			self._plan.execute(data1, inverse=True)
+
+	def _fromIP(self, data0, data1, dt):
+		self._toIP(data0, data1, -dt)
+
+	def _toMeasurementSpace(self, psi0, psi1):
+		pass
+
+	def _toEvolutionSpace(self, psi0, psi1):
+		pass
+
+	def _renormalize(self, psi0, psi1, c0, c1):
+		cast = self._constants.scalar.cast
+		if psi1 is None:
+			self._kernel_multiplyConstantCS(psi0.size, psi0.data, cast(c0))
+		else:
+			self._kernel_multiplyConstantCS_2comp(psi0.size, psi0.data, psi1.data, cast(c0), cast(c1))
+
+	def _create(self, psi0, psi1, N0, N1, precision, **kwds):
+
+		two_component = psi1 is not None
+
+		# it would be nice to use two-component TF state here,
+		# but the formula is quite complex, and it is much easier
+		# just to start from something approximately correct
+		self._tf_gs.fillWithTF(psi0, N0)
+		if two_component:
+			self._tf_gs.fillWithTF(psi1, N1)
+
+		verbose = kwds.pop('verbose', False)
+		g_by_hbar = self._constants.g / self._constants.hbar
+		kwds['g00'] = g_by_hbar[psi0.comp, psi0.comp]
+		if two_component:
+			kwds['g01'] = g_by_hbar[psi0.comp, psi1.comp]
+			kwds['g11'] = g_by_hbar[psi1.comp, psi1.comp]
+
+		# Criterion for 'tiny' limit is a bit different for imaginary time method
+		# We want propagation to be accurate, but if the steps are too small,
+		# the precision will be reached too soon.
+		# So we are setting quite a big 'tiny' and hoping that it will be ok.
+		peak = numpy.abs(self._env.fromDevice(psi0.data)).max()
+		if two_component:
+			peak = min(peak, numpy.abs(self._env.fromDevice(psi1.data)).max())
+
+		self._tiny = peak / 1e2
+
+		self._prepare(**kwds)
+
+		stats = self._statistics
+
+		if two_component:
+			total_N = lambda psi0, psi1: stats.getN(psi0) + stats.getN(psi1)
+			total_E = lambda psi0, psi1, N: stats.getEnergy2comp(psi0, psi1, N=N)
+			total_mu = lambda psi0, psi1, N: stats.getMu2comp(psi0, psi1, N=N)
+		else:
+			total_N = lambda psi0, psi1: stats.getN(psi0)
+			total_E = lambda psi0, psi1, N: stats.getEnergy(psi0, N=N)
+			total_mu = lambda psi0, psi1, N: stats.getMu(psi0, N=N)
+
+		E = 0.0
+		new_E = total_E(psi0, psi1, N0 + N1)
+		self._toEvolutionSpace(psi0, psi1)
+
+		# Reducing the dependence on time step
+		# Now we can use small time steps not being afraid that
+		# propagation will be terminated too soon (because dE is too small)
+		# (TODO: dE ~ dt, but not exactly; see W. Bao and Q. Du, 2004, eqn. 2.7
+		# Now default precision is chosen so that usual dt's work well with it)
+		while abs(E - new_E) / new_E > precision * self._dt:
+
+			self._propagate(psi0, psi1)
+			self._toMeasurementSpace(psi0, psi1)
+
+			# renormalize
+			if two_component:
+				new_N0 = stats.getN(psi0)
+				new_N1 = stats.getN(psi1)
+				c0 = numpy.sqrt(N0 / new_N0)
+				c1 = numpy.sqrt(N1 / new_N1)
+				self._renormalize(psi0, psi1, c0, c1)
+			else:
+				new_N0 = stats.getN(psi0)
+				self._renormalize(psi0, psi1, numpy.sqrt(N0 / new_N0), None)
+
+			E = new_E
+			new_E = total_E(psi0, psi1, N0 + N1)
+			self._toEvolutionSpace(psi0, psi1)
+			if new_E > E:
+				print "Warning: energy starts to rise, propagation aborted"
+				break
+
+		self._toMeasurementSpace(psi0, psi1)
+
+		if verbose:
+			postfix = "(two components)" if two_component else "(one component)"
+			pop = str(stats.getN(psi0)) + " + " + str(stats.getN(psi1)) if two_component else \
+				str(stats.getN(psi0))
+
+			print "Ground state calculation " + postfix + " :" + \
+					" N = " + N + \
+					" E = " + str(total_E(psi0, psi1, N0 + N1)) + \
+					" mu = " + str(total_mu(psi0, psi1, N0 + N1))
+
+	def create(self, N, comp=0, precision=1e-1, **kwds):
+		psi = Wavefunction(self._env, self._constants, self._grid, comp=comp)
+		self._create(psi, None, N, 0, precision, **kwds)
+		return psi
+
+	def createCloud(self, N, ratio=1.0, precision=1e-1, **kwds):
+		cloud = TwoComponentCloud(self._env, self._constants, self._grid)
+		if ratio == 1.0:
+			self._create(cloud.psi0, None, N, 0, precision, **kwds)
+		else:
+			self._create(cloud.psi0, cloud.psi1, N * ratio, N * (1.0 - ratio),
+				precision, **kwds)
+		return cloud
