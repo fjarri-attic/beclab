@@ -69,7 +69,7 @@ class ParticleStatistics(PairedCalculation):
 				res[GLOBAL_INDEX] = nonlinear + differential.x;
 			}
 
-			EXPORTED_FUNC void invariant2comp(GLOBAL_MEM SCALAR *res,
+			EXPORTED_FUNC void invariant_2comp(GLOBAL_MEM SCALAR *res,
 				GLOBAL_MEM COMPLEX *xstate1, GLOBAL_MEM COMPLEX *kstate1,
 				GLOBAL_MEM COMPLEX *xstate2, GLOBAL_MEM COMPLEX *kstate2,
 				GLOBAL_MEM SCALAR *potentials,
@@ -125,7 +125,7 @@ class ParticleStatistics(PairedCalculation):
 
 		self._kernel_interaction = self._program.interaction
 		self._kernel_invariant = self._program.invariant
-		self._kernel_invariant2comp = self._program.invariant2comp
+		self._kernel_invariant_2comp = self._program.invariant_2comp
 		self._kernel_density = self._program.density
 		self._kernel_multiplyTiledSS = self._program.multiplyTiledSS
 		self._kernel_multiplyTiledCS = self._program.multiplyTiledCS
@@ -143,13 +143,13 @@ class ParticleStatistics(PairedCalculation):
 		data.flat *= numpy.tile(coeffs.flat, ensembles)
 
 	def _cpu__kernel_invariant(self, gsize, res, xdata, mdata, potentials,
-			energy, g_by_hbar, coeff, ensembles):
+			g_by_hbar, coeff, potentials_coeff, ensembles):
 
 		tile = (ensembles,) + (1,) * self._grid.dim
 
 		n = numpy.abs(xdata) ** 2
-		nonlinear = n * (numpy.tile(potentials, tile) + g_by_hbar * n / coeff)
-		differential = xdata.conj() * numpy.tile(energy, tile) * mdata
+		nonlinear = n * (potentials_coeff * numpy.tile(potentials, tile) + g_by_hbar * n / coeff)
+		differential = xdata.conj() * mdata
 
 		self._env.copyBuffer(nonlinear + differential.real, dest=res)
 
@@ -202,18 +202,23 @@ class ParticleStatistics(PairedCalculation):
 		if N is None:
 			N = self.getN(psi)
 
-		psi.toMSpace()
-		mdata = self._env.copyBuffer(psi.data)
-		psi.toXSpace()
+		# FIXME: need to allocate memory in constructor
+		psi_copy = psi.copy()
+		psi_copy.toMSpace()
+		self._kernel_multiplyTiledCS(psi_copy.size, psi_copy.data, self._energy, psi.shape[0])
+		psi_copy.toXSpace()
 
 		cast = self._constants.scalar.cast
 		g_by_hbar = cast(self._constants.g[psi.comp, psi.comp] / self._constants.hbar)
+		potentials_coeff = 0 if isinstance(self._grid, HarmonicGrid) else 1
 
 		res = self._env.allocate(psi.shape, dtype=self._constants.scalar.dtype)
 		self._kernel_invariant(psi.size, res,
-			psi.data, mdata,
-			self._potentials, self._energy,
-			g_by_hbar, numpy.int32(coeff), numpy.int32(psi.shape[0]))
+			psi.data, psi_copy.data,
+			self._potentials,
+			g_by_hbar, numpy.int32(coeff),
+			numpy.int32(potentials_coeff), numpy.int32(psi.shape[0]))
+		#print res
 		self._kernel_multiplyTiledSS(res.size, res, self._dV, numpy.int32(psi.shape[0]))
 		return self._reduce(res) / psi.shape[0] / N * self._constants.hbar
 
