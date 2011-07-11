@@ -460,10 +460,6 @@ class RK5IPGroundState(PairedCalculation):
 		self._energy = getPlaneWaveEnergy(self._env, self._constants, self._grid)
 		self._maxFinder = createMaxFinder(self._env, self._constants.scalar.dtype)
 
-		self._prepare()
-
-	def _prepare(self, g00=0.0, g01=0.0, g11=0.0):
-		self._dt_used = 0
 		shape = self._grid.mshape
 		cdtype = self._constants.complex.dtype
 		sdtype = self._constants.scalar.dtype
@@ -475,6 +471,9 @@ class RK5IPGroundState(PairedCalculation):
 
 		self._scale0 = self._env.allocate((1,) + shape, dtype=cdtype)
 		self._scale1 = self._env.allocate((1,) + shape, dtype=cdtype)
+
+	def _prepare(self, g00=0.0, g01=0.0, g11=0.0):
+		self._dt_used = 0
 
 		self._g00 = g00
 		self._g01 = g01
@@ -491,6 +490,270 @@ class RK5IPGroundState(PairedCalculation):
 		])
 		self._c = numpy.array([37.0 / 378, 0, 250.0 / 621, 125.0 / 594, 0, 512.0 / 1771])
 		self._cs = numpy.array([2825.0 / 27648, 0, 18575.0 / 48384.0, 13525.0 / 55296, 277.0 / 14336, 0.25])
+
+		self._prepare_specific(g00=g00, g01=g01, g11=g11, a=self._a, b=self._b, cval=self._c,
+			cerr=self._cs, eps=self._eps, tiny=self._tiny)
+
+	def _cpu__prepare_specific(self, **kwds):
+		pass
+
+	def _gpu__prepare_specific(self, **kwds):
+		kernel_template = """
+			EXPORTED_FUNC void multiplyConstantCS(GLOBAL_MEM COMPLEX *data, SCALAR c)
+			{
+				LIMITED_BY_GRID;
+				COMPLEX val = data[GLOBAL_INDEX];
+				data[GLOBAL_INDEX] = complex_mul_scalar(val, c);
+			}
+
+			EXPORTED_FUNC void multiplyConstantCS_2comp(GLOBAL_MEM COMPLEX *data0,
+				GLOBAL_MEM COMPLEX *data1, SCALAR c)
+			{
+				LIMITED_BY_GRID;
+				COMPLEX val;
+				val = data0[GLOBAL_INDEX];
+				data0[GLOBAL_INDEX] = complex_mul_scalar(val, c);
+				val = data1[GLOBAL_INDEX];
+				data1[GLOBAL_INDEX] = complex_mul_scalar(val, c);
+			}
+
+			EXPORTED_FUNC void transformIP(GLOBAL_MEM COMPLEX *data,
+				GLOBAL_MEM SCALAR *energy, SCALAR dt)
+			{
+				LIMITED_BY_GRID;
+				COMPLEX val = data[GLOBAL_INDEX];
+				SCALAR e = energy[GLOBAL_INDEX];
+				data[GLOBAL_INDEX] = complex_mul_scalar(val, exp(e * dt));
+			}
+
+			EXPORTED_FUNC void transformIP_2comp(GLOBAL_MEM COMPLEX *data0,
+				GLOBAL_MEM COMPLEX *data1, GLOBAL_MEM SCALAR *energy, SCALAR dt)
+			{
+				LIMITED_BY_GRID;
+				COMPLEX val;
+				SCALAR e = energy[GLOBAL_INDEX];
+
+				val = data0[GLOBAL_INDEX];
+				data0[GLOBAL_INDEX] = complex_mul_scalar(val, exp(e * dt));
+				val = data1[GLOBAL_INDEX];
+				data1[GLOBAL_INDEX] = complex_mul_scalar(val, exp(e * dt));
+			}
+
+			EXPORTED_FUNC void calculateScale(GLOBAL_MEM COMPLEX *res,
+				GLOBAL_MEM COMPLEX *k, GLOBAL_MEM COMPLEX *data)
+			{
+				LIMITED_BY_GRID;
+				COMPLEX deriv = k[GLOBAL_INDEX];
+				COMPLEX val = data[GLOBAL_INDEX];
+				res[GLOBAL_INDEX] = complex_ctr(
+					abs(deriv.x) + abs(val.x) + (SCALAR)${tiny},
+					abs(deriv.y) + abs(val.y) + (SCALAR)${tiny}
+				);
+			}
+
+			EXPORTED_FUNC void calculateScale_2comp(GLOBAL_MEM COMPLEX *res0,
+				GLOBAL_MEM COMPLEX *res1,
+				GLOBAL_MEM COMPLEX *k, GLOBAL_MEM COMPLEX *data0,
+				GLOBAL_MEM COMPLEX *data1)
+			{
+				LIMITED_BY_GRID;
+				COMPLEX deriv, val;
+
+				deriv = k[GLOBAL_INDEX];
+				val = data0[GLOBAL_INDEX];
+				res0[GLOBAL_INDEX] = complex_ctr(
+					abs(deriv.x) + abs(val.x) + (SCALAR)${tiny},
+					abs(deriv.y) + abs(val.y) + (SCALAR)${tiny}
+				);
+
+				deriv = k[GLOBAL_INDEX + ${g.size}];
+				val = data1[GLOBAL_INDEX];
+				res1[GLOBAL_INDEX] = complex_ctr(
+					abs(deriv.x) + abs(val.x) + (SCALAR)${tiny},
+					abs(deriv.y) + abs(val.y) + (SCALAR)${tiny}
+				);
+			}
+
+			EXPORTED_FUNC void calculateError(GLOBAL_MEM COMPLEX *k,
+				GLOBAL_MEM COMPLEX *scale)
+			{
+				LIMITED_BY_GRID;
+				COMPLEX val = k[GLOBAL_INDEX];
+				COMPLEX s = scale[GLOBAL_INDEX];
+				k[GLOBAL_INDEX] = complex_ctr(
+					val.x / s.x / (SCALAR)${eps},
+					val.y / s.y / (SCALAR)${eps}
+				);
+			}
+
+			EXPORTED_FUNC void calculateError_2comp(GLOBAL_MEM COMPLEX *k,
+				GLOBAL_MEM COMPLEX *scale0, GLOBAL_MEM COMPLEX *scale1)
+			{
+				LIMITED_BY_GRID;
+				COMPLEX val, s;
+
+				val = k[GLOBAL_INDEX];
+				s = scale0[GLOBAL_INDEX];
+				k[GLOBAL_INDEX] = complex_ctr(
+					val.x / s.x / (SCALAR)${eps},
+					val.y / s.y / (SCALAR)${eps}
+				);
+
+				val = k[GLOBAL_INDEX + ${g.size}];
+				s = scale1[GLOBAL_INDEX];
+				k[GLOBAL_INDEX + ${g.size}] = complex_ctr(
+					val.x / s.x / (SCALAR)${eps},
+					val.y / s.y / (SCALAR)${eps}
+				);
+			}
+
+			EXPORTED_FUNC void propagationFunc(GLOBAL_MEM COMPLEX *k, GLOBAL_MEM COMPLEX *data,
+				GLOBAL_MEM SCALAR *potentials, SCALAR dt0, int stage)
+			{
+				LIMITED_BY_GRID;
+				COMPLEX val = data[GLOBAL_INDEX];
+				SCALAR n = squared_abs(val);
+				SCALAR p = potentials[GLOBAL_INDEX];
+				k[GLOBAL_INDEX + ${g.size} * stage] = complex_mul_scalar(
+					val, -dt0 * (p + n * (SCALAR)${g00}));
+			}
+
+			EXPORTED_FUNC void propagationFunc_2comp(GLOBAL_MEM COMPLEX *k,
+				GLOBAL_MEM COMPLEX *data0, GLOBAL_MEM COMPLEX *data1,
+				GLOBAL_MEM SCALAR *potentials, SCALAR dt0, int stage)
+			{
+				LIMITED_BY_GRID;
+				COMPLEX val0 = data0[GLOBAL_INDEX];
+				COMPLEX val1 = data1[GLOBAL_INDEX];
+				SCALAR n0 = squared_abs(val0);
+				SCALAR n1 = squared_abs(val1);
+				SCALAR p = potentials[GLOBAL_INDEX];
+
+				k[GLOBAL_INDEX + ${g.size} * stage] = complex_mul_scalar(
+					val0, -dt0 * (p + n0 * (SCALAR)${g00} + n1 * (SCALAR)${g01}));
+				k[GLOBAL_INDEX + ${g.size} * stage + ${g.size * 6}] = complex_mul_scalar(
+					val1, -dt0 * (p + n0 * (SCALAR)${g01} + n1 * (SCALAR)${g11}));
+			}
+
+			EXPORTED_FUNC void createData(GLOBAL_MEM COMPLEX *res, GLOBAL_MEM COMPLEX *data,
+				GLOBAL_MEM COMPLEX *k, int stage)
+			{
+				LIMITED_BY_GRID;
+				COMPLEX val = data[GLOBAL_INDEX];
+				COMPLEX kval;
+
+				const SCALAR b[6][5] = {
+					%for stage in xrange(6):
+					{
+						%for s in xrange(5):
+						(SCALAR)${b[stage, s]},
+						%endfor
+					},
+					%endfor
+				};
+
+				for(int s = 0; s < stage; s++)
+				{
+					kval = k[GLOBAL_INDEX + s * ${g.size}];
+					val = val + complex_mul_scalar(kval, b[stage][s]);
+				}
+
+				res[GLOBAL_INDEX] = val;
+			}
+
+			EXPORTED_FUNC void createData_2comp(GLOBAL_MEM COMPLEX *res0,
+				GLOBAL_MEM COMPLEX *res1, GLOBAL_MEM COMPLEX *data0,
+				GLOBAL_MEM COMPLEX *data1, GLOBAL_MEM COMPLEX *k, int stage)
+			{
+				LIMITED_BY_GRID;
+				COMPLEX val0 = data0[GLOBAL_INDEX];
+				COMPLEX val1 = data1[GLOBAL_INDEX];
+				COMPLEX kval;
+				SCALAR bval;
+
+				const SCALAR b[6][5] = {
+					%for stage in xrange(6):
+					{
+						%for s in xrange(5):
+						(SCALAR)${b[stage, s]},
+						%endfor
+					},
+					%endfor
+				};
+
+				for(int s = 0; s < stage; s++)
+				{
+					bval = b[stage][s];
+					kval = k[GLOBAL_INDEX + s * ${g.size}];
+					val0 = val0 + complex_mul_scalar(kval, bval);
+
+					kval = k[GLOBAL_INDEX + s * ${g.size} + ${g.size * 6}];
+					val1 = val1 + complex_mul_scalar(kval, bval);
+				}
+
+				res0[GLOBAL_INDEX] = val0;
+				res1[GLOBAL_INDEX] = val1;
+			}
+
+			EXPORTED_FUNC void sumResults(GLOBAL_MEM COMPLEX *res,
+				GLOBAL_MEM COMPLEX *k, GLOBAL_MEM COMPLEX *data)
+			{
+				LIMITED_BY_GRID;
+				COMPLEX res_val = data[GLOBAL_INDEX];
+				COMPLEX err_val = complex_ctr(0, 0);
+				COMPLEX kval;
+
+				%for s in xrange(6):
+					kval = k[GLOBAL_INDEX + ${g.size * s}];
+					res_val = res_val + complex_mul_scalar(kval, (SCALAR)${cval[s]});
+					err_val = err_val + complex_mul_scalar(kval, (SCALAR)${cval[s] - cerr[s]});
+				%endfor
+				res[GLOBAL_INDEX] = res_val;
+				k[GLOBAL_INDEX] = complex_ctr(abs(err_val.x), abs(err_val.y));
+			}
+
+			EXPORTED_FUNC void sumResults_2comp(GLOBAL_MEM COMPLEX *res0,
+				GLOBAL_MEM COMPLEX *res1,
+				GLOBAL_MEM COMPLEX *k, GLOBAL_MEM COMPLEX *data0,
+				GLOBAL_MEM COMPLEX *data1)
+			{
+				LIMITED_BY_GRID;
+				COMPLEX res_val;
+				COMPLEX err_val;
+				COMPLEX kval;
+
+				res_val = data0[GLOBAL_INDEX];
+				err_val = complex_ctr(0, 0);
+				%for s in xrange(6):
+					kval = k[GLOBAL_INDEX + ${g.size * s}];
+					res_val = res_val + complex_mul_scalar(kval, (SCALAR)${cval[s]});
+					err_val = err_val + complex_mul_scalar(kval, (SCALAR)${cval[s] - cerr[s]});
+				%endfor
+				res0[GLOBAL_INDEX] = res_val;
+				k[GLOBAL_INDEX] = complex_ctr(abs(err_val.x), abs(err_val.y));
+
+				res_val = data1[GLOBAL_INDEX];
+				err_val = complex_ctr(0, 0);
+				%for s in xrange(6):
+					kval = k[GLOBAL_INDEX + ${g.size * s + g.size * 6}];
+					res_val = res_val + complex_mul_scalar(kval, (SCALAR)${cval[s]});
+					err_val = err_val + complex_mul_scalar(kval, (SCALAR)${cval[s] - cerr[s]});
+				%endfor
+				res1[GLOBAL_INDEX] = res_val;
+				k[GLOBAL_INDEX + ${g.size}] = complex_ctr(abs(err_val.x), abs(err_val.y));
+			}
+		"""
+
+		self._program = self._env.compileProgram(kernel_template, self._constants,
+			self._grid, **kwds)
+
+		self._kernel_multiplyConstantCS = self._program.multiplyConstantCS
+		self._kernel_transformIP = self._program.transformIP
+		self._kernel_calculateScale = self._program.calculateScale
+		self._kernel_calculateError = self._program.calculateError
+		self._kernel_propagationFunc = self._program.propagationFunc
+		self._kernel_createData = self._program.createData
+		self._kernel_sumResults = self._program.sumResults
 
 	def _cpu__kernel_multiplyConstantCS(self, gsize, data, c):
 		data *= c
@@ -602,7 +865,6 @@ class RK5IPGroundState(PairedCalculation):
 			self._fromIP(self._xdata0, None, dt)
 			self._kernel_propagationFunc(psi0.size, self._k, self._xdata0,
 				self._potentials, cast(dt0), numpy.int32(stage))
-			self._toIP(self._xdata0, None, dt)
 
 		self._kernel_sumResults(psi0.size, self._xdata0,
 			self._k, psi0.data)
@@ -627,7 +889,6 @@ class RK5IPGroundState(PairedCalculation):
 
 		safety = 0.9
 		eps = self._eps
-		#tiny = self._tiny
 
 		dt = self._dt
 		cast = self._constants.scalar.cast
@@ -638,7 +899,6 @@ class RK5IPGroundState(PairedCalculation):
 			self._kernel_propagationFunc(psi0.size, self._k, psi0.data, self._potentials,
 				cast(dt), numpy.int32(0))
 			self._kernel_calculateScale(psi0.size, self._scale0, self._k, psi0.data)
-
 		else:
 			self._kernel_propagationFunc_2comp(psi0.size, self._k, psi0.data, psi1.data,
 				self._potentials, cast(dt), numpy.int32(0))
@@ -748,7 +1008,7 @@ class RK5IPGroundState(PairedCalculation):
 		if two_component:
 			peak = min(peak, numpy.abs(self._env.fromDevice(psi1.data)).max())
 
-		self._tiny = peak / 1e2
+		self._tiny = peak / 1e0
 
 		self._prepare(**kwds)
 
