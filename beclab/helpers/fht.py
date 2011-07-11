@@ -336,6 +336,24 @@ class FHT3D(PairedCalculation):
 
 				res[output_index] = sum;
 			}
+
+			EXPORTED_FUNC void matrixMulCS2(GLOBAL_MEM COMPLEX *res,
+				GLOBAL_MEM COMPLEX *m1, GLOBAL_MEM SCALAR *m2,
+				int w1, int h1, int w2, SCALAR coeff)
+			{
+				int output_index = GLOBAL_INDEX;
+				if(output_index >= h1 * w2)
+					return;
+
+				COMPLEX sum = complex_ctr(0, 0);
+				int target_x = output_index % w2;
+				int target_y = output_index / w2;
+
+				for(int i = 0; i < w1; i++)
+					sum = sum + complex_mul_scalar(m1[target_y * w1 + i], m2[i * w2 + target_x]);
+
+				res[output_index] = complex_mul_scalar(sum, coeff);
+			}
 		"""
 
 		self._program = self._env.compileProgram(kernel_template, self._constants,
@@ -344,11 +362,17 @@ class FHT3D(PairedCalculation):
 		self._kernel_multiplyTiledCS = self._program.multiplyTiledCS
 		self._kernel_multiplyConstantCS = self._program.multiplyConstantCS
 		self._kernel_matrixMulCS = self._program.matrixMulCS
+		self._kernel_matrixMulCS2 = self._program.matrixMulCS2
 
 	def _cpu__kernel_matrixMulCS(self, gsize, res, m1, m2, w1, h1, w2):
 		m1 = m1.flat[:w1*h1].reshape(h1, w1)
 		m2 = m2.flat[:w1*w2].reshape(w1, w2)
 		res.flat[:gsize] = numpy.dot(m1, m2).flat
+
+	def _cpu__kernel_matrixMulCS2(self, gsize, res, m1, m2, w1, h1, w2, coeff):
+		m1 = m1.flat[:w1*h1].reshape(h1, w1)
+		m2 = m2.flat[:w1*w2].reshape(w1, w2)
+		res.flat[:gsize] = numpy.dot(m1, m2).flat * coeff
 
 	def _cpu__kernel_multiplyTiledCS(self, gsize, res, data, coeffs, batch):
 		self._env.copyBuffer(data.flat * numpy.tile(coeffs.flat, batch), dest=res)
@@ -409,11 +433,13 @@ class FHT3D(PairedCalculation):
 				self._temp2, self._temp1, self._Py_tr,
 				cast(My), cast(batch * Mx * Nz), cast(Ny))
 			self._permute(self._temp2, self._temp1, (Mx, Nz, Ny), batch=batch)
-			self._kernel_matrixMulCS(batch * Nz * Ny * Nx,
+			self._kernel_matrixMulCS2(batch * Nz * Ny * Nx,
 				result, self._temp1, self._Px_tr,
-				cast(Mx), cast(batch * Nz * Ny), cast(Nx))
-			self._kernel_multiplyConstantCS(Nz * Ny * Nx, result, result,
-				self._scalar_cast(self._fwd_scale), cast(batch))
+				cast(Mx), cast(batch * Nz * Ny), cast(Nx), self._scalar_cast(self._fwd_scale))
+			# FIXME: for some reason this function damages nearby buffers;
+			# multiplication in matrixMul seems to work well.
+			#self._kernel_multiplyConstantCS(Nz * Ny * Nx, result, result,
+			#	self._scalar_cast(self._fwd_scale), cast(batch))
 
 			"""
 			Xi = self.getXiVector(data, batch=batch) # batch, Mz, My, Mx
@@ -432,6 +458,7 @@ class FHT3D(PairedCalculation):
 
 			result.flat[:] = (res * self._fwd_scale).flat
 			"""
+
 
 class TestFunction:
 
