@@ -88,7 +88,10 @@ def getHarmonicGrid(N, l):
 	# Looks like it is not a bug, just inability to integrate Hermite function
 	# in x-space precisely (oscillates too fast maybe?).
 	# But this still requres investigation.
-	#points += 10
+	# In addition: with dp != 0 X-M-X transform of TF state
+	# gives non-smooth curve. Certainly TF state has some higher harmonics
+	# (infinite number of them, to be precise), but why it is smooth when dp = 0?
+	#points += 5
 
 	roots, weights = my_h_roots(points)
 
