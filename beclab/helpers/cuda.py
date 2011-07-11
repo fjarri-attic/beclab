@@ -23,8 +23,11 @@ class _KernelWrapper:
 		self._stream = env.stream
 		self._kernel = kernel
 
-		self._max_block_size = 2 ** log2(min(self._env.max_block_size,
-			self._env.max_registers / self._kernel.num_regs))
+		if self._kernel.num_regs > 0:
+			self._max_block_size = 2 ** log2(min(self._env.max_block_size,
+				self._env.max_registers / self._kernel.num_regs))
+		else:
+			self._max_block_size = self._env.max_block_size
 
 	def _getSupportedGrid(self, x, y):
 		max_x = self._env.max_grid_size_x_pow2
