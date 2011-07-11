@@ -52,18 +52,15 @@ class ParticleStatistics(PairedCalculation):
 
 			EXPORTED_FUNC void invariant(GLOBAL_MEM SCALAR *res,
 				GLOBAL_MEM COMPLEX *xdata, GLOBAL_MEM COMPLEX *mdata,
-				GLOBAL_MEM SCALAR *potentials, GLOBAL_MEM SCALAR *energy,
-				SCALAR g_by_hbar, int coeff, int ensembles)
+				GLOBAL_MEM SCALAR *potentials,
+				SCALAR g_by_hbar, int coeff, int potentials_coeff, int ensembles)
 			{
 				LIMITED_BY(ensembles);
 				SCALAR potential = potentials[CELL_INDEX];
-				SCALAR e = energy[CELL_INDEX];
 
 				SCALAR n = squared_abs(xdata[GLOBAL_INDEX]);
-				SCALAR nonlinear = n * (potential + g_by_hbar * n / coeff);
-				COMPLEX differential = complex_mul_scalar(
-					complex_mul(conj(xdata[GLOBAL_INDEX]), mdata[GLOBAL_INDEX]), e
-				);
+				SCALAR nonlinear = n * (potentials_coeff * potential + g_by_hbar * n / coeff);
+				COMPLEX differential = complex_mul(conj(xdata[GLOBAL_INDEX]), mdata[GLOBAL_INDEX]);
 
 				// differential.y will be equal to 0, because \psi * D \psi is a real number
 				res[GLOBAL_INDEX] = nonlinear + differential.x;
@@ -205,7 +202,8 @@ class ParticleStatistics(PairedCalculation):
 		# FIXME: need to allocate memory in constructor
 		psi_copy = psi.copy()
 		psi_copy.toMSpace()
-		self._kernel_multiplyTiledCS(psi_copy.size, psi_copy.data, self._energy, psi.shape[0])
+		self._kernel_multiplyTiledCS(psi_copy.size, psi_copy.data, self._energy,
+			numpy.int32(psi_copy.shape[0]))
 		psi_copy.toXSpace()
 
 		cast = self._constants.scalar.cast
@@ -218,7 +216,7 @@ class ParticleStatistics(PairedCalculation):
 			self._potentials,
 			g_by_hbar, numpy.int32(coeff),
 			numpy.int32(potentials_coeff), numpy.int32(psi.shape[0]))
-		#print res
+
 		self._kernel_multiplyTiledSS(res.size, res, self._dV, numpy.int32(psi.shape[0]))
 		return self._reduce(res) / psi.shape[0] / N * self._constants.hbar
 
