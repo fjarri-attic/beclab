@@ -268,6 +268,7 @@ class SplitStepGroundState(PairedCalculation):
 		self._kernel_xpropagate_2comp = self._program.xpropagate_2comp
 
 	def _prepare(self, dt=1e-5, g00=0.0, g01=0.0, g11=0.0, itmax=3):
+		self._dt = dt
 		self._potentials = getPotentials(self._env, self._constants, self._grid)
 		energy = getPlaneWaveEnergy(None, self._constants, self._grid)
 		self._mode_prop = self._env.toDevice(numpy.exp(energy * (-dt / 2)))
