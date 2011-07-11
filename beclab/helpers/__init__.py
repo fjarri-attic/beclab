@@ -1,7 +1,7 @@
 from .fft import createFFTPlan
 from .fht import FHT1D, FHT3D, getHarmonicGrid
 from .transpose import createTranspose
-from .reduce import createReduce
+from .reduce import createReduce, createMaxFinder
 from .misc import PairedCalculation, log2, tile3D
 from .typenames import double_precision, single_precision
 from .random import createRandom
