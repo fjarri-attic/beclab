@@ -27,12 +27,9 @@ class TFGroundState(PairedCalculation):
 		if isinstance(grid, HarmonicGrid):
 			self._plan = createFHTPlan(env, constants, grid, 1)
 
-		self._prepare()
+		self._initParameters()
 
-	def _cpu__prepare(self):
-		pass
-
-	def _gpu__prepare(self):
+	def _gpu__prepare_specific(self):
 		kernel_template = """
 			// fill given buffer with ground state, obtained from Thomas-Fermi approximation
 			EXPORTED_FUNC void fillWithTFGroundState(GLOBAL_MEM COMPLEX *res,
@@ -125,7 +122,7 @@ class SplitStepGroundState(PairedCalculation):
 	Calculates GPE ground state using split-step propagation in imaginary time.
 	"""
 
-	def __init__(self, env, constants, grid):
+	def __init__(self, env, constants, grid, **kwds):
 		PairedCalculation.__init__(self, env)
 
 		assert isinstance(grid, UniformGrid)
@@ -133,15 +130,20 @@ class SplitStepGroundState(PairedCalculation):
 		self._constants = constants.copy()
 		self._grid = grid.copy()
 
+		self._potentials = getPotentials(self._env, self._constants, self._grid)
 		self._tf_gs = TFGroundState(env, constants, grid)
 		self._statistics = ParticleStatistics(env, constants, grid)
 
-	def _cpu__prepare_specific(self, **kwds):
-		self._dt = kwds['dt']
-		self._g00 = kwds['g00']
-		self._g01 = kwds['g01']
-		self._g11 = kwds['g11']
-		self._itmax = kwds['itmax']
+		self._initParameters(kwds, dt=1e-5, comp0=0, comp1=1, itmax=3, precision=1e-2)
+
+	def _prepare(self):
+		g_by_hbar = self._constants.g / self._constants.hbar
+		self._p.g00 = g_by_hbar[self._p.comp0, self._p.comp0]
+		self._p.g01 = g_by_hbar[self._p.comp0, self._p.comp1]
+		self._p.g11 = g_by_hbar[self._p.comp1, self._p.comp1]
+
+		energy = getPlaneWaveEnergy(None, self._constants, self._grid)
+		self._mode_prop = self._env.toDevice(numpy.exp(energy * (-self._p.dt / 2)))
 
 	def _gpu__prepare_specific(self, **kwds):
 		kernel_template = """
@@ -205,10 +207,10 @@ class SplitStepGroundState(PairedCalculation):
 				SCALAR V = potentials[GLOBAL_INDEX];
 
 				// iterate to midpoint solution
-				%for i in range(itmax):
+				%for i in range(p.itmax):
 					// calculate midpoint log derivative and exponentiate
-					dval = exp((SCALAR)${dt / 2.0} *
-						(-V - (SCALAR)${g00} * squared_abs(val)));
+					dval = exp((SCALAR)${p.dt / 2.0} *
+						(-V - (SCALAR)${p.g00} * squared_abs(val)));
 
 					//propagate to midpoint using log derivative
 					val = complex_mul_scalar(val_copy, dval);
@@ -235,15 +237,15 @@ class SplitStepGroundState(PairedCalculation):
 				SCALAR V = potentials[GLOBAL_INDEX];
 
 				// iterate to midpoint solution
-				%for i in range(itmax):
+				%for i in range(p.itmax):
 					// calculate midpoint log derivative and exponentiate
 					n0 = squared_abs(val0);
 					n1 = squared_abs(val1);
 
-					dval0 = exp((SCALAR)${dt / 2.0} *
-						(-V - (SCALAR)${g00} * n0 - (SCALAR)${g01} * n1));
-					dval1 = exp((SCALAR)${dt / 2.0} *
-						(-V - (SCALAR)${g01} * n0 - (SCALAR)${g11} * n1));
+					dval0 = exp((SCALAR)${p.dt / 2.0} *
+						(-V - (SCALAR)${p.g00} * n0 - (SCALAR)${p.g01} * n1));
+					dval1 = exp((SCALAR)${p.dt / 2.0} *
+						(-V - (SCALAR)${p.g01} * n0 - (SCALAR)${p.g11} * n1));
 
 					// propagate to midpoint using log derivative
 					val0 = complex_mul_scalar(val0_copy, dval0);
@@ -257,8 +259,7 @@ class SplitStepGroundState(PairedCalculation):
 		"""
 
 		self._program = self._env.compileProgram(kernel_template, self._constants,
-			self._grid, dt=kwds['dt'], g00=kwds['g00'], g01=kwds['g01'], g11=kwds['g11'],
-			itmax=kwds['itmax'])
+			self._grid, p=self._p)
 
 		self._kernel_multiplyConstantCS = self._program.multiplyConstantCS
 		self._kernel_multiplyConstantCS_2comp = self._program.multiplyConstantCS_2comp
@@ -266,13 +267,6 @@ class SplitStepGroundState(PairedCalculation):
 		self._kernel_mpropagate_2comp = self._program.mpropagate_2comp
 		self._kernel_xpropagate = self._program.xpropagate
 		self._kernel_xpropagate_2comp = self._program.xpropagate_2comp
-
-	def _prepare(self, dt=1e-5, g00=0.0, g01=0.0, g11=0.0, itmax=3):
-		self._dt = dt
-		self._potentials = getPotentials(self._env, self._constants, self._grid)
-		energy = getPlaneWaveEnergy(None, self._constants, self._grid)
-		self._mode_prop = self._env.toDevice(numpy.exp(energy * (-dt / 2)))
-		self._prepare_specific(dt=dt, g00=g00, g01=g01, g11=g11, itmax=itmax)
 
 	def _cpu__kernel_multiplyConstantCS(self, gsize, data, c):
 		data *= c
@@ -290,10 +284,10 @@ class SplitStepGroundState(PairedCalculation):
 
 	def _cpu__kernel_xpropagate(self, gsize, data, potentials):
 		data_copy = data.copy()
-		g = self._g00
-		dt = -self._dt / 2
+		g = self._p.g00
+		dt = -self._p.dt / 2
 
-		for i in xrange(self._itmax):
+		for i in xrange(self._p.itmax):
 			n = numpy.abs(data) ** 2
 			d = numpy.exp((potentials + n * g) * dt)
 			data.flat[:] = (data_copy * d).flat
@@ -301,15 +295,15 @@ class SplitStepGroundState(PairedCalculation):
 
 	def _cpu__kernel_xpropagate_2comp(self, gsize, data0, data1, potentials):
 
-		dt = -self._dt / 2
-		g00 = self._g00
-		g01 = self._g01
-		g11 = self._g11
+		dt = -self._p.dt / 2
+		g00 = self._p.g00
+		g01 = self._p.g01
+		g11 = self._p.g11
 
 		data0_copy = data0.copy()
 		data1_copy = data1.copy()
 
-		for i in xrange(self._constants.itmax):
+		for i in xrange(self._p.itmax):
 			n0 = numpy.abs(data0) ** 2
 			n1 = numpy.abs(data1) ** 2
 
@@ -341,17 +335,10 @@ class SplitStepGroundState(PairedCalculation):
 		else:
 			self._kernel_multiplyConstantCS_2comp(psi0.size, psi0.data, psi1.data, cast(c0), cast(c1))
 
-	def _create(self, psi0, psi1, N0, N1, precision, **kwds):
+	def _create(self, psi0, psi1, N0, N1):
 
 		two_component = psi1 is not None
-		verbose = kwds.pop('verbose', False)
-
-		g_by_hbar = self._constants.g / self._constants.hbar
-		kwds['g00'] = g_by_hbar[psi0.comp, psi0.comp]
-		if two_component:
-			kwds['g01'] = g_by_hbar[psi0.comp, psi1.comp]
-			kwds['g11'] = g_by_hbar[psi1.comp, psi1.comp]
-		self._prepare(**kwds)
+		verbose = False
 
 		# it would be nice to use two-component TF state here,
 		# but the formula is quite complex, and it is much easier
@@ -361,6 +348,7 @@ class SplitStepGroundState(PairedCalculation):
 			self._tf_gs.fillWithTF(psi1, N1)
 
 		stats = self._statistics
+		precision = self._p.precision * self._p.dt
 
 		if two_component:
 			total_N = lambda psi0, psi1: stats.getN(psi0) + stats.getN(psi1)
@@ -385,7 +373,7 @@ class SplitStepGroundState(PairedCalculation):
 		# propagation will be terminated too soon (because dE is too small)
 		# (TODO: dE ~ dt, but not exactly; see W. Bao and Q. Du, 2004, eqn. 2.7
 		# Now default precision is chosen so that usual dt's work well with it)
-		while abs(E - new_E) / new_E > precision * self._dt:
+		while abs(E - new_E) / new_E > precision:
 
 			# propagation
 			self._mpropagate(psi0, psi1)
@@ -424,18 +412,19 @@ class SplitStepGroundState(PairedCalculation):
 					" E = " + str(total_E(psi0, psi1, N0 + N1)) + \
 					" mu = " + str(total_mu(psi0, psi1, N0 + N1))
 
-	def create(self, N, comp=0, precision=1e-2, dt=1e-5):
+	def create(self, N, comp, verbose=False, **kwds):
 		psi = Wavefunction(self._env, self._constants, self._grid, comp=comp)
-		self._create(psi, None, N, 0, precision, dt=dt)
+		self.prepare(comp0=comp, **kwds)
+		self._create(psi, None, N, 0)
 		return psi
 
-	def createCloud(self, N, ratio=1.0, precision=1e-2, dt=1e-5):
+	def createCloud(self, N, ratio=1.0, verbose=False, **kwds):
 		cloud = TwoComponentCloud(self._env, self._constants, self._grid)
+		self.prepare(comp0=cloud.psi0.comp, comp1=cloud.psi1.comp, **kwds)
 		if ratio == 1.0:
-			self._create(cloud.psi0, None, N, 0, precision, dt=dt)
+			self._create(cloud.psi0, None, N, 0)
 		else:
-			self._create(cloud.psi0, cloud.psi1, N * ratio, N * (1.0 - ratio),
-				precision, dt=dt)
+			self._create(cloud.psi0, cloud.psi1, N * ratio, N * (1.0 - ratio))
 		return cloud
 
 

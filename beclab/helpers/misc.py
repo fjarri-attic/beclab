@@ -1,5 +1,32 @@
 import numpy
 
+
+class Parameters(dict):
+
+	def __init__(self, **kwds):
+		dict.__init__(self, **kwds)
+		self._default_keys = list(kwds.keys())
+
+	def need_update(self, other):
+		for key in other:
+			assert key in self._default_keys, "Unknown key: " + key
+			if self[key] != other[key]:
+				return True
+
+		return False
+
+	def safe_update(self, kwds):
+		for key in kwds:
+			assert key in self._default_keys, "Unknown key: " + key
+		self.update(kwds)
+
+	def __getattr__(self, attr):
+		return self[attr]
+
+	def __setattr__(self, attr, value):
+		self[attr] = value
+
+
 class PairedCalculation:
 	"""
 	Base class for paired GPU/CPU calculations.
@@ -11,6 +38,27 @@ class PairedCalculation:
 		self.__gpu = env.gpu
 		self.__createAliases()
 		self._env = env
+
+	def _initParameters(self, *args, **kwds):
+		self._p = Parameters(**kwds)
+		if len(args) > 0:
+			self._p.safe_update(kwds)
+
+		self._prepare()
+		self._prepare_specific()
+
+	def _prepare(self):
+		pass
+
+	def _prepare_specific(self):
+		pass
+
+	def prepare(self, **kwds):
+		if self._p.need_update(kwds):
+			return
+		self._p.safe_update(kwds)
+		self._prepare()
+		self._prepare_specific()
 
 	def __findPrefixedMethods(self):
 		if self.__gpu:
