@@ -117,35 +117,21 @@ class TFGroundState(PairedCalculation):
 		return cloud
 
 
-class SplitStepGroundState(PairedCalculation):
-	"""
-	Calculates GPE ground state using split-step propagation in imaginary time.
-	"""
+class ImaginaryTimeGroundState(PairedCalculation):
 
-	def __init__(self, env, constants, grid, **kwds):
+	def __init__(self, env, constants, grid):
 		PairedCalculation.__init__(self, env)
-
-		assert isinstance(grid, UniformGrid)
-
 		self._constants = constants.copy()
 		self._grid = grid.copy()
-
-		self._potentials = getPotentials(self._env, self._constants, self._grid)
 		self._tf_gs = TFGroundState(env, constants, grid)
 		self._statistics = ParticleStatistics(env, constants, grid)
 
-		self._initParameters(kwds, dt=1e-5, comp0=0, comp1=1, itmax=3, precision=1e-2)
-
 	def _prepare(self):
-		g_by_hbar = self._constants.g / self._constants.hbar
-		self._p.g00 = g_by_hbar[self._p.comp0, self._p.comp0]
-		self._p.g01 = g_by_hbar[self._p.comp0, self._p.comp1]
-		self._p.g11 = g_by_hbar[self._p.comp1, self._p.comp1]
+		#self._statistics.prepare()
+		pass
 
-		energy = getPlaneWaveEnergy(None, self._constants, self._grid)
-		self._mode_prop = self._env.toDevice(numpy.exp(energy * (-self._p.dt / 2)))
-
-	def _gpu__prepare_specific(self, **kwds):
+	def _gpu__prepare_specific(self):
+		print "preparation called"
 		kernel_template = """
 			EXPORTED_FUNC void multiplyConstantCS(GLOBAL_MEM COMPLEX *data, SCALAR c)
 			{
@@ -165,7 +151,139 @@ class SplitStepGroundState(PairedCalculation):
 				d = data1[GLOBAL_INDEX];
 				data1[GLOBAL_INDEX] = complex_mul_scalar(d, c1);
 			}
+		"""
 
+		self._program = self._env.compileProgram(kernel_template, self._constants,
+			self._grid, p=self._p)
+
+		self._kernel_multiplyConstantCS = self._program.multiplyConstantCS
+		self._kernel_multiplyConstantCS_2comp = self._program.multiplyConstantCS_2comp
+
+	def _cpu__kernel_multiplyConstantCS(self, gsize, data, c):
+		data *= c
+
+	def _cpu__kernel_multiplyConstantCS_2comp(self, gsize, data0, data1, c0, c1):
+		data0 *= c0
+		data1 *= c1
+
+	def _renormalize(self, psi0, psi1, c0, c1):
+		cast = self._constants.scalar.cast
+		if psi1 is None:
+			self._kernel_multiplyConstantCS(psi0.size, psi0.data, cast(c0))
+		else:
+			self._kernel_multiplyConstantCS_2comp(psi0.size,
+				psi0.data, psi1.data, cast(c0), cast(c1))
+
+	def _create(self, psi0, psi1, N0, N1):
+
+		two_component = psi1 is not None
+		verbose = False
+
+		# it would be nice to use two-component TF state here,
+		# but the formula is quite complex, and it is much easier
+		# just to start from something approximately correct
+		self._tf_gs.fillWithTF(psi0, N0)
+		if two_component:
+			self._tf_gs.fillWithTF(psi1, N1)
+
+		stats = self._statistics
+		precision = self._p.precision
+		dt_used = self._p.dt
+
+		if two_component:
+			total_N = lambda psi0, psi1: stats.getN(psi0) + stats.getN(psi1)
+			total_E = lambda psi0, psi1, N: stats.getEnergy2comp(psi0, psi1, N=N)
+			total_mu = lambda psi0, psi1, N: stats.getMu2comp(psi0, psi1, N=N)
+		else:
+			total_N = lambda psi0, psi1: stats.getN(psi0)
+			total_E = lambda psi0, psi1, N: stats.getEnergy(psi0, N=N)
+			total_mu = lambda psi0, psi1, N: stats.getMu(psi0, N=N)
+
+		E = 0.0
+
+		new_E = total_E(psi0, psi1, N0 + N1)
+		self._toEvolutionSpace(psi0, psi1)
+
+		# Reducing the dependence on time step
+		# Now we can use small time steps not being afraid that
+		# propagation will be terminated too soon (because dE is too small)
+		# (TODO: dE ~ dt, but not exactly; see W. Bao and Q. Du, 2004, eqn. 2.7
+		# Now default precision is chosen so that usual dt's work well with it)
+		while abs(E - new_E) / new_E > precision * dt_used:
+
+			# propagation
+			dt_used = self._propagate(psi0, psi1)
+
+			# renormalization
+			self._toMeasurementSpace(psi0, psi1)
+			if two_component:
+				new_N0 = stats.getN(psi0)
+				new_N1 = stats.getN(psi1)
+				c0 = numpy.sqrt(N0 / new_N0)
+				c1 = numpy.sqrt(N1 / new_N1)
+				self._renormalize(psi0, psi1, c0, c1)
+			else:
+				new_N0 = stats.getN(psi0)
+				self._renormalize(psi0, psi1, numpy.sqrt(N0 / new_N0), None)
+
+			E = new_E
+			new_E = total_E(psi0, psi1, N0 + N1)
+			self._toEvolutionSpace(psi0, psi1)
+
+		self._toMeasurementSpace(psi0, psi1)
+
+		if verbose:
+			postfix = "(two components)" if two_component else "(one component)"
+			pop = str(stats.getN(psi0)) + " + " + str(stats.getN(psi1)) if two_component else \
+				str(stats.getN(psi0))
+
+			print "Ground state calculation " + postfix + " :" + \
+					" N = " + N + \
+					" E = " + str(total_E(psi0, psi1, N0 + N1)) + \
+					" mu = " + str(total_mu(psi0, psi1, N0 + N1))
+
+	def create(self, N, comp, verbose=False, **kwds):
+		psi = Wavefunction(self._env, self._constants, self._grid, comp=comp)
+		self.prepare(comp0=comp, **kwds)
+		self._create(psi, None, N, 0)
+		return psi
+
+	def createCloud(self, N, ratio=1.0, verbose=False, **kwds):
+		cloud = TwoComponentCloud(self._env, self._constants, self._grid)
+		self.prepare(comp0=cloud.psi0.comp, comp1=cloud.psi1.comp, **kwds)
+		if ratio == 1.0:
+			self._create(cloud.psi0, None, N, 0)
+		else:
+			self._create(cloud.psi0, cloud.psi1, N * ratio, N * (1.0 - ratio))
+		return cloud
+
+
+class SplitStepGroundState(ImaginaryTimeGroundState):
+	"""
+	Calculates GPE ground state using split-step propagation in imaginary time.
+	"""
+
+	def __init__(self, env, constants, grid, **kwds):
+		assert isinstance(grid, UniformGrid)
+		ImaginaryTimeGroundState.__init__(self, env, constants, grid)
+		self._potentials = getPotentials(env, constants, grid)
+		self._initParameters(kwds, dt=1e-5, comp0=0, comp1=1, itmax=3, precision=1e-2)
+
+	def _prepare(self):
+		ImaginaryTimeGroundState._prepare(self)
+
+		g_by_hbar = self._constants.g / self._constants.hbar
+		self._p.g00 = g_by_hbar[self._p.comp0, self._p.comp0]
+		self._p.g01 = g_by_hbar[self._p.comp0, self._p.comp1]
+		self._p.g11 = g_by_hbar[self._p.comp1, self._p.comp1]
+
+		energy = getPlaneWaveEnergy(None, self._constants, self._grid)
+		self._mode_prop = self._env.toDevice(numpy.exp(energy * (-self._p.dt / 2)))
+
+	def _gpu__prepare_specific(self, **kwds):
+		ImaginaryTimeGroundState._gpu__prepare_specific(self)
+
+		kernel_template = """
 			// Propagates psi function in mode space
 			EXPORTED_FUNC void mpropagate(GLOBAL_MEM COMPLEX *data,
 				GLOBAL_MEM SCALAR *mode_prop)
@@ -261,19 +379,10 @@ class SplitStepGroundState(PairedCalculation):
 		self._program = self._env.compileProgram(kernel_template, self._constants,
 			self._grid, p=self._p)
 
-		self._kernel_multiplyConstantCS = self._program.multiplyConstantCS
-		self._kernel_multiplyConstantCS_2comp = self._program.multiplyConstantCS_2comp
 		self._kernel_mpropagate = self._program.mpropagate
 		self._kernel_mpropagate_2comp = self._program.mpropagate_2comp
 		self._kernel_xpropagate = self._program.xpropagate
 		self._kernel_xpropagate_2comp = self._program.xpropagate_2comp
-
-	def _cpu__kernel_multiplyConstantCS(self, gsize, data, c):
-		data *= c
-
-	def _cpu__kernel_multiplyConstantCS_2comp(self, gsize, data0, data1, c0, c1):
-		data0 *= c0
-		data1 *= c1
 
 	def _cpu__kernel_mpropagate(self, gsize, data0, mode_prop):
 		data0 *= mode_prop
@@ -328,104 +437,23 @@ class SplitStepGroundState(PairedCalculation):
 		else:
 			self._propagateXSpace2(psi0.size, psi0.data, psi1.data, self._potentials)
 
-	def _renormalize(self, psi0, psi1, c0, c1):
-		cast = self._constants.scalar.cast
-		if psi1 is None:
-			self._kernel_multiplyConstantCS(psi0.size, psi0.data, cast(c0))
-		else:
-			self._kernel_multiplyConstantCS_2comp(psi0.size, psi0.data, psi1.data, cast(c0), cast(c1))
+	def _toEvolutionSpace(self, psi0, psi1):
+		psi0.toMSpace()
+		if psi1 is not None:
+			psi1.toMSpace()
 
-	def _create(self, psi0, psi1, N0, N1):
+	def _toMeasurementSpace(self, psi0, psi1):
+		psi0.toXSpace()
+		if psi1 is not None:
+			psi1.toXSpace()
 
-		two_component = psi1 is not None
-		verbose = False
-
-		# it would be nice to use two-component TF state here,
-		# but the formula is quite complex, and it is much easier
-		# just to start from something approximately correct
-		self._tf_gs.fillWithTF(psi0, N0)
-		if two_component:
-			self._tf_gs.fillWithTF(psi1, N1)
-
-		stats = self._statistics
-		precision = self._p.precision * self._p.dt
-
-		if two_component:
-			total_N = lambda psi0, psi1: stats.getN(psi0) + stats.getN(psi1)
-			total_E = lambda psi0, psi1, N: stats.getEnergy2comp(psi0, psi1, N=N)
-			total_mu = lambda psi0, psi1, N: stats.getMu2comp(psi0, psi1, N=N)
-			to_xspace = lambda psi0, psi1: psi0.toXSpace(), psi1.toXSpace()
-			to_mspace = lambda psi0, psi1: psi0.toMSpace(), psi1.toMSpace()
-		else:
-			total_N = lambda psi0, psi1: stats.getN(psi0)
-			total_E = lambda psi0, psi1, N: stats.getEnergy(psi0, N=N)
-			total_mu = lambda psi0, psi1, N: stats.getMu(psi0, N=N)
-			to_xspace = lambda psi0, psi1: psi0.toXSpace()
-			to_mspace = lambda psi0, psi1: psi0.toMSpace()
-
-		E = 0.0
-		new_E = total_E(psi0, psi1, N0 + N1)
-
-		to_mspace(psi0, psi1)
-
-		# Reducing the dependence on time step
-		# Now we can use small time steps not being afraid that
-		# propagation will be terminated too soon (because dE is too small)
-		# (TODO: dE ~ dt, but not exactly; see W. Bao and Q. Du, 2004, eqn. 2.7
-		# Now default precision is chosen so that usual dt's work well with it)
-		while abs(E - new_E) / new_E > precision:
-
-			# propagation
-			self._mpropagate(psi0, psi1)
-			to_xspace(psi0, psi1)
-			self._xpropagate(psi0, psi1)
-			to_mspace(psi0, psi1)
-			self._mpropagate(psi0, psi1)
-
-			# normalization
-			to_xspace(psi0, psi1)
-
-			# renormalize
-			if two_component:
-				new_N0 = stats.getN(psi0)
-				new_N1 = stats.getN(psi1)
-				c0 = numpy.sqrt(N0 / new_N0)
-				c1 = numpy.sqrt(N1 / new_N1)
-				self._renormalize(psi0, psi1, c0, c1)
-			else:
-				new_N0 = stats.getN(psi0)
-				self._renormalize(psi0, psi1, numpy.sqrt(N0 / new_N0), None)
-
-			E = new_E
-			new_E = total_E(psi0, psi1, N0 + N1)
-			to_mspace(psi0, psi1)
-
-		to_xspace(psi0, psi1)
-
-		if verbose:
-			postfix = "(two components)" if two_component else "(one component)"
-			pop = str(stats.getN(psi0)) + " + " + str(stats.getN(psi1)) if two_component else \
-				str(stats.getN(psi0))
-
-			print "Ground state calculation " + postfix + " :" + \
-					" N = " + N + \
-					" E = " + str(total_E(psi0, psi1, N0 + N1)) + \
-					" mu = " + str(total_mu(psi0, psi1, N0 + N1))
-
-	def create(self, N, comp, verbose=False, **kwds):
-		psi = Wavefunction(self._env, self._constants, self._grid, comp=comp)
-		self.prepare(comp0=comp, **kwds)
-		self._create(psi, None, N, 0)
-		return psi
-
-	def createCloud(self, N, ratio=1.0, verbose=False, **kwds):
-		cloud = TwoComponentCloud(self._env, self._constants, self._grid)
-		self.prepare(comp0=cloud.psi0.comp, comp1=cloud.psi1.comp, **kwds)
-		if ratio == 1.0:
-			self._create(cloud.psi0, None, N, 0)
-		else:
-			self._create(cloud.psi0, cloud.psi1, N * ratio, N * (1.0 - ratio))
-		return cloud
+	def _propagate(self, psi0, psi1):
+		self._mpropagate(psi0, psi1)
+		self._toMeasurementSpace(psi0, psi1)
+		self._xpropagate(psi0, psi1)
+		self._toEvolutionSpace(psi0, psi1)
+		self._mpropagate(psi0, psi1)
+		return self._p.dt
 
 
 class RK5IPGroundState(PairedCalculation):
