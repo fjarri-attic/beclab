@@ -131,7 +131,6 @@ class ImaginaryTimeGroundState(PairedCalculation):
 		pass
 
 	def _gpu__prepare_specific(self):
-		print "preparation called"
 		kernel_template = """
 			EXPORTED_FUNC void multiplyConstantCS(GLOBAL_MEM COMPLEX *data, SCALAR c)
 			{
