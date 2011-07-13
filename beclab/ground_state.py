@@ -173,6 +173,12 @@ class ImaginaryTimeGroundState(PairedCalculation):
 			self._kernel_multiplyConstantCS_2comp(psi0.size,
 				psi0.data, psi1.data, cast(c0), cast(c1))
 
+	def _toEvolutionSpace(self, psi0, psi1):
+		pass
+
+	def _toMeasurementSpace(self, psi0, psi1):
+		pass
+
 	def _create(self, psi0, psi1, N0, N1):
 
 		two_component = psi1 is not None
