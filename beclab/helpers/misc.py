@@ -42,7 +42,7 @@ class PairedCalculation:
 	def _initParameters(self, *args, **kwds):
 		self._p = Parameters(**kwds)
 		if len(args) > 0:
-			self._p.safe_update(kwds)
+			self._p.safe_update(args[0])
 
 		self._prepare()
 		self._prepare_specific()
