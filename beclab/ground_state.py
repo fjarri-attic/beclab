@@ -192,7 +192,7 @@ class ImaginaryTimeGroundState(PairedCalculation):
 			self._tf_gs.fillWithTF(psi1, N1)
 
 		stats = self._statistics
-		precision = self._p.precision
+		precision = self._p.relative_precision
 		dt_used = self._p.dt
 
 		if two_component:
