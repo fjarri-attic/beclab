@@ -234,6 +234,9 @@ class ImaginaryTimeGroundState(PairedCalculation):
 			E = new_E
 			new_E = total_E(psi0, psi1, N0 + N1)
 			self._toEvolutionSpace(psi0, psi1)
+			if new_E > E:
+				print "Warning: energy started to rise, propagation aborted."
+				break
 
 		self._toMeasurementSpace(psi0, psi1)
 
