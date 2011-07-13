@@ -193,7 +193,7 @@ class ImaginaryTimeGroundState(PairedCalculation):
 
 		stats = self._statistics
 		precision = self._p.relative_precision
-		dt_used = self._p.dt
+		dt_used = 0
 
 		if two_component:
 			total_N = lambda psi0, psi1: stats.getN(psi0) + stats.getN(psi1)
