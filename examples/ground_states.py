@@ -33,7 +33,9 @@ def testThomasFermi(gpu, grid_type, dim, gs_type):
 	if gs_type == "TF":
 		gs = TFGroundState(env, constants, grid)
 	elif gs_type == "split-step":
-		gs = SplitStepGroundState(env, constants, grid)
+		# set special time step for 1D case (because evolution is faster in this case)
+		params = dict(dt=1e-6) if dim == '1d' else {}
+		gs = SplitStepGroundState(env, constants, grid, **params)
 	elif gs_type == "rk5":
 		if isinstance(grid, UniformGrid):
 			gs = RK5IPGroundState(env, constants, grid)

@@ -275,11 +275,12 @@ class SplitStepGroundState(ImaginaryTimeGroundState):
 		assert isinstance(grid, UniformGrid)
 		ImaginaryTimeGroundState.__init__(self, env, constants, grid)
 		self._potentials = getPotentials(env, constants, grid)
-		self._initParameters(kwds, dt=1e-5, comp0=0, comp1=1, itmax=3, precision=1e-2)
+		self._initParameters(kwds, dt=1e-5, comp0=0, comp1=1, itmax=3, precision=1e-6)
 
 	def _prepare(self):
 		ImaginaryTimeGroundState._prepare(self)
 
+		self._p.relative_precision = self._p.precision / self._p.dt
 		g_by_hbar = self._constants.g / self._constants.hbar
 		self._p.g00 = g_by_hbar[self._p.comp0, self._p.comp0]
 		self._p.g01 = g_by_hbar[self._p.comp0, self._p.comp1]
