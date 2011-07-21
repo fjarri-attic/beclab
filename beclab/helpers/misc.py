@@ -5,7 +5,11 @@ class Parameters(dict):
 
 	def __init__(self, **kwds):
 		dict.__init__(self, **kwds)
-		self._default_keys = list(kwds.keys())
+		self._default_keys = set(kwds.keys())
+
+	def add_defaults(self, kwds):
+		self._default_keys.update(kwds.keys())
+		self.update(kwds)
 
 	def need_update(self, other):
 		for key in other:
@@ -27,7 +31,7 @@ class Parameters(dict):
 		self[attr] = value
 
 
-class PairedCalculation:
+class PairedCalculation(object):
 	"""
 	Base class for paired GPU/CPU calculations.
 	Depending on initializing parameter, it will make visible either _gpu_
@@ -38,14 +42,17 @@ class PairedCalculation:
 		self.__gpu = env.gpu
 		self.__createAliases()
 		self._env = env
+		self._p = None
+		self.__prepared = False
 
-	def _initParameters(self, *args, **kwds):
-		self._p = Parameters(**kwds)
+	def _addParameters(self, *args, **kwds):
+		if self._p is None:
+			self._p = Parameters(**kwds)
+		else:
+			self._p.add_defaults(kwds)
+
 		if len(args) > 0:
 			self._p.safe_update(args[0])
-
-		self._prepare()
-		self._prepare_specific()
 
 	def _prepare(self):
 		pass
@@ -53,12 +60,26 @@ class PairedCalculation:
 	def _prepare_specific(self):
 		pass
 
+	def _prepare_hierarchy(self):
+		super(parent_cls)._prepare_hierarchy()
+
 	def prepare(self, **kwds):
-		if self._p.need_update(kwds):
+		if self.__prepared and not self._p.need_update(kwds):
 			return
+
+		self.__prepared = True
 		self._p.safe_update(kwds)
-		self._prepare()
-		self._prepare_specific()
+
+		for c in reversed(type(self).__mro__):
+			if hasattr(c, '_prepare'):
+				c._prepare(self)
+				if self._env.gpu:
+					if hasattr(c, '_gpu__prepare_specific'): c._gpu__prepare_specific(self)
+				else:
+					if hasattr(c, '_cpu__prepare_specific'): c._cpu__prepare_specific(self)
+
+	def compileProgram(self, template, **kwds):
+		return self._env.compileProgram(template, self._constants, self._grid, p=self._p, **kwds)
 
 	def __findPrefixedMethods(self):
 		if self.__gpu:
