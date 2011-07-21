@@ -138,13 +138,16 @@ class CUDAEnvironment:
 		else:
 			return gpuarray.to_gpu(buf)
 
-	def copyBuffer(self, buf, dest=None):
-		if dest is None:
-			buf_copy = self.allocate(buf.shape, buf.dtype)
-		else:
-			buf_copy = dest
+	def copyBuffer(self, buf, dest, src_offset=0, dest_offset=0, length=None):
 
-		cuda.memcpy_dtod_async(buf_copy.gpudata, buf.gpudata, buf.nbytes, stream=self.stream)
+		elem_size = buf.dtype.itemsize
+		size = buf.nbytes if length is None else elem_size * length
+		src_offset *= elem_size
+		dest_offset *= elem_size
+
+		cuda.memcpy_dtod_async(int(dest.gpudata) + src_offset,
+			int(buf.gpudata) + dest_offset,
+			size, stream=self.stream)
 
 		if dest is None:
 			return buf_copy
