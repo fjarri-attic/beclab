@@ -169,11 +169,11 @@ class GPUReduce:
 
 			data_in = data_out
 
-		if final_length == 1:
+#		if final_length == 1:
 		# return reduction result
-			return self._env.fromDevice(data_in)[0]
-		else:
-			return data_in
+#			return self._env.fromDevice(data_in)[0]
+#		else:
+		return data_in
 
 	def sparse(self, array, final_length=1, final_shape=None):
 		if final_length == 1:
@@ -361,7 +361,7 @@ class CPUReduce:
 	def __call__(self, array, final_length=1):
 
 		if final_length == 1:
-			return numpy.sum(array)
+			return numpy.sum(array).reshape((1,))
 
 		return array.reshape(final_length, array.size / final_length).sum(1)
 
