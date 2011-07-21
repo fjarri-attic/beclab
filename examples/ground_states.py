@@ -30,43 +30,46 @@ def testThomasFermi(gpu, grid_type, dim, gs_type):
 
 	# Prepare 'apparatus'
 
+	args = (env, constants, grid)
+
 	if gs_type == "TF":
-		gs = TFGroundState(env, constants, grid)
+		gs = TFGroundState(*args)
 	elif gs_type == "split-step":
 		# set special time step for 1D case (because evolution is faster in this case)
 		params = dict(dt=1e-6) if dim == '1d' else {}
-		gs = SplitStepGroundState(env, constants, grid, **params)
+		gs = SplitStepGroundState(*args, **params)
 	elif gs_type == "rk5":
 		if isinstance(grid, UniformGrid):
-			gs = RK5IPGroundState(env, constants, grid)
+			gs = RK5IPGroundState(*args)
 		else:
-			gs = RK5HarmonicGroundState(env, constants, grid)
+			gs = RK5HarmonicGroundState(*args)
 
-	prj = DensityProfile(env, constants, grid)
-	stats = ParticleStatistics(env, constants, grid)
+	prj = DensityProfile(*args)
+	stats = ParticleStatistics(*args, components=2)
 
 	# Create ground state
 
 	t1 = time.time()
-	cloud = gs.createCloud(N)
+	psi = gs.create((N, 0))
 	t2 = time.time()
 	t_gs = t2 - t1
 
-	psi = cloud.psi0
-
-	# population in x-space
+	# check that 2-component stats object works properly
 	N_xspace1 = stats.getN(psi)
+	assert N_xspace1.shape == (2,) # test for correct return value
+	assert N_xspace1[1] == 0 # check that second component is unpopulated
+	N_xspace1 = N_xspace1.sum()
 
 	# population in mode space
 	psi.toMSpace()
-	N_mspace = stats.getN(psi)
+	N_mspace = stats.getN(psi).sum()
 	psi.toXSpace()
 
 	# population in x-space after double transformation (should not change)
-	N_xspace2 = stats.getN(psi)
+	N_xspace2 = stats.getN(psi).sum()
 
-	E = stats.getEnergy(psi) / constants.hbar / constants.wz
-	mu = stats.getMu(psi) / constants.hbar / constants.wz
+	E = stats.getEnergy(psi).sum() / constants.hbar / constants.wz
+	mu = stats.getMu(psi).sum() / constants.hbar / constants.wz
 	mu_tf = constants.muTF(N, dim=grid.dim) / constants.hbar / constants.wz
 
 	print ("N(x-space) = {Nx}, N(m-space) = {Nm},\n" +

@@ -10,12 +10,11 @@ class ParticleStatistics(PairedCalculation):
 	chemical potential per particle for given state.
 	"""
 
-	def __init__(self, env, constants, grid):
+	def __init__(self, env, constants, grid, **kwds):
 		PairedCalculation.__init__(self, env)
 		self._constants = constants.copy()
 		self._grid = grid.copy()
 
-		#self._plan = createFFTPlan(env, constants.shape, constants.complex.dtype)
 		self._reduce = createReduce(env, constants.scalar.dtype)
 		self._creduce = createReduce(env, constants.complex.dtype)
 
@@ -28,101 +27,107 @@ class ParticleStatistics(PairedCalculation):
 
 		self._dV = grid.get_dV(env)
 
-		self._prepare()
+		self._addParameters(components=2, ensembles=1)
+		self.prepare(**kwds)
 
-	def _cpu__prepare(self):
-		pass
+	def _prepare(self):
+		self._p.g = self._constants.g / self._constants.hbar
+		self._p.need_potentials = isinstance(self._grid, UniformGrid)
+		self._p.density_modifier = 0.0
+		#modifier = self._grid.modes / (2.0 * self._constants.V)
 
-	def _gpu__prepare(self):
+		self._c_mspace_buffer = self._env.allocate(
+			(self._p.components, self._p.ensembles) + self._grid.mshape,
+			self._constants.complex.dtype)
+		self._c_xspace_buffer = self._env.allocate(
+			(self._p.components, self._p.ensembles) + self._grid.shape,
+			self._constants.complex.dtype)
+		self._s_xspace_buffer = self._env.allocate(
+			(self._p.components, self._p.ensembles) + self._grid.shape,
+			self._constants.scalar.dtype)
+
+	def _gpu__prepare_specific(self):
 		kernel_template = """
 			EXPORTED_FUNC void interaction(GLOBAL_MEM COMPLEX *res,
-				GLOBAL_MEM COMPLEX *a_state, GLOBAL_MEM COMPLEX *b_state, int ensembles)
+				GLOBAL_MEM COMPLEX *a_state, GLOBAL_MEM COMPLEX *b_state)
 			{
-				LIMITED_BY(ensembles);
+				LIMITED_BY(${p.ensembles});
 				res[GLOBAL_INDEX] = complex_mul(
 					a_state[GLOBAL_INDEX], conj(b_state[GLOBAL_INDEX]));
 			}
 
 			EXPORTED_FUNC void density(GLOBAL_MEM SCALAR *res,
-				GLOBAL_MEM COMPLEX *state, int ensembles, SCALAR modifier, int size)
+				GLOBAL_MEM COMPLEX *state, int coeff)
 			{
-				LIMITED_BY(ensembles);
-				res[GLOBAL_INDEX] = (squared_abs(state[GLOBAL_INDEX]) - modifier) / ensembles;
+				LIMITED_BY(${p.ensembles});
+				int id;
+				%for comp in xrange(p.components):
+				id = GLOBAL_INDEX + ${g.size * p.ensembles * comp};
+				res[id] = (squared_abs(state[id]) - (SCALAR)${p.density_modifier}) / coeff;
+				%endfor
 			}
 
 			EXPORTED_FUNC void invariant(GLOBAL_MEM SCALAR *res,
 				GLOBAL_MEM COMPLEX *xdata, GLOBAL_MEM COMPLEX *mdata,
-				GLOBAL_MEM SCALAR *potentials,
-				SCALAR g_by_hbar, int coeff, int potentials_coeff, int ensembles)
+				GLOBAL_MEM SCALAR *potentials, int coeff)
 			{
-				LIMITED_BY(ensembles);
-				SCALAR potential = potentials[CELL_INDEX];
+				LIMITED_BY(${p.ensembles});
 
-				SCALAR n = squared_abs(xdata[GLOBAL_INDEX]);
-				SCALAR nonlinear = n * (potentials_coeff * potential + g_by_hbar * n / coeff);
-				COMPLEX differential = complex_mul(conj(xdata[GLOBAL_INDEX]), mdata[GLOBAL_INDEX]);
+				%if p.need_potentials:
+				SCALAR potential = potentials[CELL_INDEX];
+				%endif
+
+				%for comp in xrange(p.components):
+				int id${comp} = GLOBAL_INDEX + ${g.size * p.ensembles * comp};
+				SCALAR n${comp} = squared_abs(xdata[id${comp}]);
+				%endfor
+
+				%for comp in xrange(p.components):
+				SCALAR nonlinear${comp} = ${'potential' if p.need_potentials else '0'};
+					%for comp_other in xrange(p.components):
+					nonlinear${comp} += (SCALAR)${p.g[comp, comp_other]} * n${comp_other} / coeff;
+					%endfor
+				nonlinear${comp} *= n${comp};
+				COMPLEX differential${comp} = complex_mul(
+					conj(xdata[id${comp}]), mdata[id${comp}]);
 
 				// differential.y will be equal to 0, because \psi * D \psi is a real number
-				res[GLOBAL_INDEX] = nonlinear + differential.x;
+				res[id${comp}] = nonlinear${comp} + differential${comp}.x;
+				%endfor
 			}
 
-			EXPORTED_FUNC void invariant_2comp(GLOBAL_MEM SCALAR *res,
-				GLOBAL_MEM COMPLEX *xstate1, GLOBAL_MEM COMPLEX *kstate1,
-				GLOBAL_MEM COMPLEX *xstate2, GLOBAL_MEM COMPLEX *kstate2,
-				GLOBAL_MEM SCALAR *potentials,
-				SCALAR g11_by_hbar, SCALAR g22_by_hbar,
-				SCALAR g12_by_hbar, int coeff, int ensembles)
+			EXPORTED_FUNC void multiplyTiledSS(GLOBAL_MEM SCALAR *data, GLOBAL_MEM SCALAR *coeffs)
 			{
-				LIMITED_BY(ensembles);
-
-				SCALAR potential = potentials[CELL_INDEX];
-
-				SCALAR n1 = squared_abs(xstate1[GLOBAL_INDEX]);
-				SCALAR n2 = squared_abs(xstate2[GLOBAL_INDEX]);
-
-				COMPLEX differential1 =
-					complex_mul(conj(xstate1[GLOBAL_INDEX]), kstate1[GLOBAL_INDEX]);
-				COMPLEX differential2 =
-					complex_mul(conj(xstate2[GLOBAL_INDEX]), kstate2[GLOBAL_INDEX]);
-
-				SCALAR nonlinear1 = n1 * (potential +
-					g11_by_hbar * n1 / coeff +
-					g12_by_hbar * n2 / coeff);
-				SCALAR nonlinear2 = n2 * (potential +
-					g12_by_hbar * n1 / coeff +
-					g22_by_hbar * n2 / coeff);
-
-				// differential.y will be equal to 0, because \psi * D \psi is a real number
-				res[GLOBAL_INDEX] = nonlinear1 + differential1.x +
-					nonlinear2 + differential2.x;
-			}
-
-			EXPORTED_FUNC void multiplyTiledSS(GLOBAL_MEM SCALAR *data, GLOBAL_MEM SCALAR *coeffs,
-				int ensembles)
-			{
-				LIMITED_BY(ensembles);
+				LIMITED_BY(${p.ensembles});
 
 				SCALAR coeff_val = coeffs[CELL_INDEX];
-				SCALAR data_val = data[GLOBAL_INDEX];
-				data[GLOBAL_INDEX] = data_val * coeff_val;
+				SCALAR data_val;
+
+				%for comp in xrange(p.components):
+				data_val = data[GLOBAL_INDEX + ${g.size * p.ensembles * comp}];
+				data[GLOBAL_INDEX + ${g.size * p.ensembles * comp}] = data_val * coeff_val;
+				%endfor
 			}
 
-			EXPORTED_FUNC void multiplyTiledCS(GLOBAL_MEM COMPLEX *data, GLOBAL_MEM SCALAR *coeffs,
-				int ensembles)
+			EXPORTED_FUNC void multiplyTiledCS(GLOBAL_MEM COMPLEX *data, GLOBAL_MEM SCALAR *coeffs)
 			{
-				LIMITED_BY(ensembles);
+				LIMITED_BY(${p.ensembles});
 
 				SCALAR coeff_val = coeffs[CELL_INDEX];
-				COMPLEX data_val = data[GLOBAL_INDEX];
-				data[GLOBAL_INDEX] = complex_mul_scalar(data_val, coeff_val);
+				COMPLEX data_val;
+
+				%for comp in xrange(p.components):
+				data_val = data[GLOBAL_INDEX + ${g.size * p.ensembles * comp}];
+				data[GLOBAL_INDEX + ${g.size * p.ensembles * comp}] =
+					complex_mul_scalar(data_val, coeff_val);
+				%endfor
 			}
 		"""
 
-		self._program = self._env.compileProgram(kernel_template, self._constants, self._grid)
+		self._program = self.compileProgram(kernel_template)
 
 		self._kernel_interaction = self._program.interaction
 		self._kernel_invariant = self._program.invariant
-		self._kernel_invariant_2comp = self._program.invariant_2comp
 		self._kernel_density = self._program.density
 		self._kernel_multiplyTiledSS = self._program.multiplyTiledSS
 		self._kernel_multiplyTiledCS = self._program.multiplyTiledCS
@@ -130,25 +135,32 @@ class ParticleStatistics(PairedCalculation):
 	def _cpu__kernel_calculateInteraction(self, gsize, res, data0, data1):
 		self._env.copyBuffer(data0 * data1.conj(), dest=res)
 
-	def _cpu__kernel_density(self, gsize, density, data, coeff, modifier):
-		self._env.copyBuffer((numpy.abs(data) ** 2 - modifier) / coeff, dest=density)
+	def _cpu__kernel_density(self, gsize, density, data, coeff):
+		self._env.copyBuffer((numpy.abs(data) ** 2 -
+			self._p.density_modifier) / coeff, dest=density)
 
-	def _cpu__kernel_multiplyTiledSS(self, gsize, data, coeffs, ensembles):
-		data.flat *= numpy.tile(coeffs.flat, ensembles)
+	def _cpu__kernel_multiplyTiledSS(self, gsize, data, coeffs):
+		data.flat *= numpy.tile(coeffs.flat, self._p.ensembles * self._p.components)
 
-	def _cpu__kernel_multiplyTiledCS(self, gsize, data, coeffs, ensembles):
-		data.flat *= numpy.tile(coeffs.flat, ensembles)
+	def _cpu__kernel_multiplyTiledCS(self, gsize, data, coeffs):
+		data.flat *= numpy.tile(coeffs.flat, self._p.ensembles * self._p.components)
 
-	def _cpu__kernel_invariant(self, gsize, res, xdata, mdata, potentials,
-			g_by_hbar, coeff, potentials_coeff, ensembles):
+	def _cpu__kernel_invariant(self, gsize, res, xdata, mdata, potentials, coeff):
 
-		tile = (ensembles,) + (1,) * self._grid.dim
-
+		tile = (self._p.ensembles,) + (1,) * self._grid.dim
+		g = self._p.g
 		n = numpy.abs(xdata) ** 2
-		nonlinear = n * (potentials_coeff * numpy.tile(potentials, tile) + g_by_hbar * n / coeff)
-		differential = xdata.conj() * mdata
+		components = self._p.components
 
-		self._env.copyBuffer(nonlinear + differential.real, dest=res)
+		self._env.copyBuffer(numpy.zeros_like(res), dest=res)
+		if self._p.need_potentials:
+			for comp in xrange(components):
+				res[comp] += numpy.tile(potentials, tile) * n[comp]
+
+		for comp in xrange(components):
+			for comp_other in xrange(components):
+				res[comp] += n[comp] * (g[comp, comp_other] * n[comp_other] / coeff)
+			res[comp] += (xdata[comp].conj() * mdata[comp]).real
 
 	def getVisibility(self, psi0, psi1):
 		N0 = self.getN(psi0)
@@ -164,29 +176,26 @@ class ParticleStatistics(PairedCalculation):
 	def getDensity(self, psi, coeff=1):
 		if psi.type == WIGNER:
 			raise NotImplementedError()
-			# Need to find modifier value for harmonic case
-			#modifier = self._grid.modes / (2.0 * self._constants.V)
-		else:
-			modifier = 0.0
 
 		density = self._env.allocate(psi.shape, self._constants.scalar.dtype)
-		self._kernel_density(psi.size, density, psi.data, numpy.int32(coeff),
-			self._constants.scalar.cast(modifier))
+		self._kernel_density(psi.size, density, psi.data, numpy.int32(coeff))
 		return density
 
 	def getAverageDensity(self, psi):
 		# Using psi.size and .shape instead of grid here, to make it work
 		# for both x- and mode-space.
-		ensembles = psi.shape[0]
+		ensembles = psi.ensembles
+		components = psi.components
 		density = self.getDensity(psi, coeff=ensembles)
-		average_density = self._reduce.sparse(density, final_length=psi.size / ensembles,
-			final_shape=psi.shape[1:])
+		average_density = self._reduce.sparse(density,
+			final_length=components * psi.size,
+			final_shape=(components, psi.size))
 		return average_density
 
 	def getAveragePopulation(self, psi):
 		density = self.getAverageDensity(psi)
 		if not psi.in_mspace:
-			self._kernel_multiplyTiledSS(density.size, density, self._dV, numpy.int32(psi.shape[0]))
+			self._kernel_multiplyTiledSS(density.size, density, self._dV)
 		return density
 
 	def _getInvariant(self, psi, coeff, N):
@@ -197,60 +206,28 @@ class ParticleStatistics(PairedCalculation):
 
 		# If N is not known beforehand, we have to calculate it first
 		if N is None:
-			N = self.getN(psi)
+			N = self.getN(psi).sum()
+
+		batch = self._p.ensembles * self._p.components
+		xsize = self._grid.size * batch
+		msize = self._grid.msize * batch
+
+		# FIXME: not a good way to provide transformation
+		psi._plan.execute(psi.data, self._c_mspace_buffer, batch=batch)
+		self._kernel_multiplyTiledCS(msize, self._c_mspace_buffer, self._energy)
+		psi._plan.execute(self._c_mspace_buffer, self._c_xspace_buffer,
+			batch=batch, inverse=True)
+
+		cast = self._constants.scalar.cast
 
 		# FIXME: need to allocate memory in constructor
-		psi_copy = psi.copy()
-		psi_copy.toMSpace()
-		self._kernel_multiplyTiledCS(psi_copy.size, psi_copy.data, self._energy,
-			numpy.int32(psi_copy.shape[0]))
-		psi_copy.toXSpace()
+		self._kernel_invariant(xsize, self._s_xspace_buffer,
+			psi.data, self._c_xspace_buffer,
+			self._potentials, numpy.int32(coeff))
 
-		cast = self._constants.scalar.cast
-		g_by_hbar = cast(self._constants.g[psi.comp, psi.comp] / self._constants.hbar)
-		potentials_coeff = 0 if isinstance(self._grid, HarmonicGrid) else 1
-
-		res = self._env.allocate(psi.shape, dtype=self._constants.scalar.dtype)
-		self._kernel_invariant(psi.size, res,
-			psi.data, psi_copy.data,
-			self._potentials,
-			g_by_hbar, numpy.int32(coeff),
-			numpy.int32(potentials_coeff), numpy.int32(psi.shape[0]))
-
-		self._kernel_multiplyTiledSS(res.size, res, self._dV, numpy.int32(psi.shape[0]))
-		return self._reduce(res) / psi.shape[0] / N * self._constants.hbar
-
-	def _getInvariant2comp(self, psi0, psi1, coeff, N):
-
-		# TODO: work out the correct formula for Wigner function's E/mu
-		if psi0.type != CLASSICAL or psi1.type != CLASSICAL:
-			raise NotImplementedError()
-
-		# If N is not known beforehand, we have to calculate it first
-		if N is None:
-			N = self.getN(psi0) + self.getN(psi1)
-
-		psi0.toMSpace()
-		psi1.toMSpace()
-		mdata0 = self._env.copyBuffer(psi0.data)
-		mdata1 = self._env.copyBuffer(psi1.data)
-		psi0.toXSpace()
-		psi1.toXSpace()
-
-		g = self._constants.g
-		cast = self._constants.scalar.cast
-		g00 = cast(g[psi0.comp, psi0.comp])
-		g01 = cast(g[psi0.comp, psi1.comp])
-		g11 = cast(g[psi1.comp, psi1.comp])
-
-		res = self._env.allocate(psi0.shape, dtype=self._constants.complex.dtype)
-		self._kernel_invariant2comp(psi0.size, res,
-			psi0.data, psi1.data,
-			mdata0, mdata1,
-			self._potentials, self._energy,
-			g00, g01, g11, numpy.int32(coeff))
-		self._kernel_multiplyTiledSS(res.size, res, self._dV, psi0.shape[0])
-		return self._reduce(res) / psi0.shape[0] / N * self._constants.hbar
+		self._kernel_multiplyTiledSS(xsize, self._s_xspace_buffer, self._dV)
+		return self._reduce(self._s_xspace_buffer, final_length=self._p.components) / \
+			self._p.ensembles / N * self._constants.hbar
 
 	def _getInteraction(self, psi0, psi1):
 		interaction = self._env.allocate(psi0.shape, self._constants.complex.dtype)
@@ -310,23 +287,15 @@ class ParticleStatistics(PairedCalculation):
 	def getN(self, psi):
 		"""Returns particle count for wavefunction"""
 		p = self.getAveragePopulation(psi)
-		return self._reduce(p)
+		return self._env.fromDevice(self._reduce(p, final_length=self._p.components))
 
 	def getEnergy(self, psi, N=None):
 		"""Returns average energy per particle"""
-		return self._getInvariant(psi, 2, N)
+		return self._env.fromDevice(self._getInvariant(psi, 2, N))
 
 	def getMu(self, psi, N=None):
 		"""Returns average chemical potential per particle"""
-		return self._getInvariant(psi, 1, N)
-
-	def getEnergy2comp(self, psi0, psi1, N=None):
-		"""Returns average energy per particle for two-component cloud"""
-		return self._getInvatiant2comp(psi0, psi1, 2, N)
-
-	def getMu2comp(self, psi0, psi1, N=None):
-		"""Returns average chemical potential per particle for two-component cloud"""
-		return self._getInvariant2comp(psi0, psi1, 1, N)
+		return self._env.fromDevice(self._getInvariant(psi, 1, N))
 
 
 class DensityProfile:
