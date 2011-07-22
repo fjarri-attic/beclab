@@ -379,28 +379,11 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 		self._energy = getPlaneWaveEnergy(self._env, self._constants, self._grid)
 		self._maxFinder = createMaxFinder(self._env, self._constants.scalar.dtype)
 
-		shape = self._grid.mshape
-		cdtype = self._constants.complex.dtype
-		sdtype = self._constants.scalar.dtype
-
-		self._xdata0 = self._env.allocate((1,) + shape, dtype=cdtype)
-		self._xdata1 = self._env.allocate((1,) + shape, dtype=cdtype)
-
-		self._k = self._env.allocate((2, 6) + shape, dtype=cdtype)
-
-		self._scale0 = self._env.allocate((1,) + shape, dtype=cdtype)
-		self._scale1 = self._env.allocate((1,) + shape, dtype=cdtype)
-
-		self._initParameters(kwds, comp0=0, comp1=1, dt_guess=1e-4, eps=1e-7, tiny=1e-6,
-			relative_precision=1e-0)
+		self._addParameters(dt_guess=1e-4, eps=1e-7, tiny=1e-4, relative_precision=1e-0)
+		self.prepare(**kwds)
 
 	def _prepare(self):
-		ImaginaryTimeGroundState._prepare(self)
-
-		g_by_hbar = self._constants.g / self._constants.hbar
-		self._p.g00 = g_by_hbar[self._p.comp0, self._p.comp0]
-		self._p.g01 = g_by_hbar[self._p.comp0, self._p.comp1]
-		self._p.g11 = g_by_hbar[self._p.comp1, self._p.comp1]
+		self._p.g = self._constants.g / self._constants.hbar
 
 		self._p.dt = self._p.dt_guess
 		self._p.a = numpy.array([0, 0.2, 0.3, 0.6, 1, 0.875])
@@ -415,6 +398,14 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 		self._p.cval = numpy.array([37.0 / 378, 0, 250.0 / 621, 125.0 / 594, 0, 512.0 / 1771])
 		self._p.cerr = numpy.array([2825.0 / 27648, 0, 18575.0 / 48384.0, 13525.0 / 55296, 277.0 / 14336, 0.25])
 
+		shape = self._grid.mshape
+		cdtype = self._constants.complex.dtype
+		sdtype = self._constants.scalar.dtype
+
+		self._xdata = self._env.allocate((self._p.components, 1) + shape, dtype=cdtype)
+		self._k = self._env.allocate((6, self._p.components, 1) + shape, dtype=cdtype)
+		self._scale = self._env.allocate((self._p.components, 1) + shape, dtype=cdtype)
+
 	def _gpu__prepare_specific(self):
 		ImaginaryTimeGroundState._gpu__prepare_specific(self)
 
@@ -423,126 +414,84 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 				GLOBAL_MEM SCALAR *energy, SCALAR dt)
 			{
 				LIMITED_BY_GRID;
-				COMPLEX val = data[GLOBAL_INDEX];
-				SCALAR e = energy[GLOBAL_INDEX];
-				data[GLOBAL_INDEX] = complex_mul_scalar(val, exp(e * dt));
-			}
-
-			EXPORTED_FUNC void transformIP_2comp(GLOBAL_MEM COMPLEX *data0,
-				GLOBAL_MEM COMPLEX *data1, GLOBAL_MEM SCALAR *energy, SCALAR dt)
-			{
-				LIMITED_BY_GRID;
 				COMPLEX val;
+				int id;
 				SCALAR e = energy[GLOBAL_INDEX];
 
-				val = data0[GLOBAL_INDEX];
-				data0[GLOBAL_INDEX] = complex_mul_scalar(val, exp(e * dt));
-				val = data1[GLOBAL_INDEX];
-				data1[GLOBAL_INDEX] = complex_mul_scalar(val, exp(e * dt));
+				%for comp in xrange(p.components):
+				id = GLOBAL_INDEX + ${comp * g.size};
+				val = data[id];
+				data[id] = complex_mul_scalar(val, exp(e * dt));
+				%endfor
 			}
 
 			EXPORTED_FUNC void calculateScale(GLOBAL_MEM COMPLEX *res,
 				GLOBAL_MEM COMPLEX *k, GLOBAL_MEM COMPLEX *data)
 			{
 				LIMITED_BY_GRID;
-				COMPLEX deriv = k[GLOBAL_INDEX];
-				COMPLEX val = data[GLOBAL_INDEX];
-				res[GLOBAL_INDEX] = complex_ctr(
-					abs(deriv.x) + abs(val.x) + (SCALAR)${p.tiny},
-					abs(deriv.y) + abs(val.y) + (SCALAR)${p.tiny}
-				);
-			}
-
-			EXPORTED_FUNC void calculateScale_2comp(GLOBAL_MEM COMPLEX *res0,
-				GLOBAL_MEM COMPLEX *res1,
-				GLOBAL_MEM COMPLEX *k, GLOBAL_MEM COMPLEX *data0,
-				GLOBAL_MEM COMPLEX *data1)
-			{
-				LIMITED_BY_GRID;
 				COMPLEX deriv, val;
+				int id;
 
-				deriv = k[GLOBAL_INDEX];
-				val = data0[GLOBAL_INDEX];
-				res0[GLOBAL_INDEX] = complex_ctr(
+				%for comp in xrange(p.components):
+				id = GLOBAL_INDEX + ${comp * g.size};
+				deriv = k[id];
+				val = data[id];
+				res[id] = complex_ctr(
 					abs(deriv.x) + abs(val.x) + (SCALAR)${p.tiny},
 					abs(deriv.y) + abs(val.y) + (SCALAR)${p.tiny}
 				);
-
-				deriv = k[GLOBAL_INDEX + ${g.size}];
-				val = data1[GLOBAL_INDEX];
-				res1[GLOBAL_INDEX] = complex_ctr(
-					abs(deriv.x) + abs(val.x) + (SCALAR)${p.tiny},
-					abs(deriv.y) + abs(val.y) + (SCALAR)${p.tiny}
-				);
+				%endfor
 			}
 
 			EXPORTED_FUNC void calculateError(GLOBAL_MEM COMPLEX *k,
 				GLOBAL_MEM COMPLEX *scale)
 			{
 				LIMITED_BY_GRID;
-				COMPLEX val = k[GLOBAL_INDEX];
-				COMPLEX s = scale[GLOBAL_INDEX];
-				k[GLOBAL_INDEX] = complex_ctr(
-					val.x / s.x / (SCALAR)${p.eps},
-					val.y / s.y / (SCALAR)${p.eps}
-				);
-			}
-
-			EXPORTED_FUNC void calculateError_2comp(GLOBAL_MEM COMPLEX *k,
-				GLOBAL_MEM COMPLEX *scale0, GLOBAL_MEM COMPLEX *scale1)
-			{
-				LIMITED_BY_GRID;
 				COMPLEX val, s;
+				int id;
 
-				val = k[GLOBAL_INDEX];
-				s = scale0[GLOBAL_INDEX];
-				k[GLOBAL_INDEX] = complex_ctr(
+				%for comp in xrange(p.components):
+				id = GLOBAL_INDEX + ${comp * g.size};
+				val = k[id];
+				s = scale[id];
+				k[id] = complex_ctr(
 					val.x / s.x / (SCALAR)${p.eps},
 					val.y / s.y / (SCALAR)${p.eps}
 				);
-
-				val = k[GLOBAL_INDEX + ${g.size}];
-				s = scale1[GLOBAL_INDEX];
-				k[GLOBAL_INDEX + ${g.size}] = complex_ctr(
-					val.x / s.x / (SCALAR)${p.eps},
-					val.y / s.y / (SCALAR)${p.eps}
-				);
+				%endfor
 			}
 
 			EXPORTED_FUNC void propagationFunc(GLOBAL_MEM COMPLEX *k, GLOBAL_MEM COMPLEX *data,
 				GLOBAL_MEM SCALAR *potentials, SCALAR dt0, int stage)
 			{
 				LIMITED_BY_GRID;
-				COMPLEX val = data[GLOBAL_INDEX];
-				SCALAR n = squared_abs(val);
-				SCALAR p = potentials[GLOBAL_INDEX];
-				k[GLOBAL_INDEX + ${g.size} * stage] = complex_mul_scalar(
-					val, -dt0 * (p + n * (SCALAR)${p.g00}));
-			}
-
-			EXPORTED_FUNC void propagationFunc_2comp(GLOBAL_MEM COMPLEX *k,
-				GLOBAL_MEM COMPLEX *data0, GLOBAL_MEM COMPLEX *data1,
-				GLOBAL_MEM SCALAR *potentials, SCALAR dt0, int stage)
-			{
-				LIMITED_BY_GRID;
-				COMPLEX val0 = data0[GLOBAL_INDEX];
-				COMPLEX val1 = data1[GLOBAL_INDEX];
-				SCALAR n0 = squared_abs(val0);
-				SCALAR n1 = squared_abs(val1);
 				SCALAR p = potentials[GLOBAL_INDEX];
 
-				k[GLOBAL_INDEX + ${g.size} * stage] = complex_mul_scalar(
-					val0, -dt0 * (p + n0 * (SCALAR)${p.g00} + n1 * (SCALAR)${p.g01}));
-				k[GLOBAL_INDEX + ${g.size} * stage + ${g.size * 6}] = complex_mul_scalar(
-					val1, -dt0 * (p + n0 * (SCALAR)${p.g01} + n1 * (SCALAR)${p.g11}));
+				%for comp in xrange(p.components):
+				COMPLEX val${comp};
+				SCALAR n${comp};
+				%endfor
+
+				%for comp in xrange(p.components):
+				val${comp} = data[GLOBAL_INDEX + ${g.size * comp}];
+				n${comp} = squared_abs(val${comp});
+				%endfor
+
+				%for comp in xrange(p.components):
+				k[GLOBAL_INDEX + ${g.size * p.components} * stage + ${g.size * comp}] =
+					complex_mul_scalar(val${comp}, -dt0 * (p
+						%for comp_other in xrange(p.components):
+						+ n${comp_other} * (SCALAR)${p.g[comp, comp_other]}
+						%endfor
+					));
+				%endfor
 			}
 
 			EXPORTED_FUNC void createData(GLOBAL_MEM COMPLEX *res, GLOBAL_MEM COMPLEX *data,
 				GLOBAL_MEM COMPLEX *k, int stage)
 			{
 				LIMITED_BY_GRID;
-				COMPLEX val = data[GLOBAL_INDEX];
-				COMPLEX kval;
+				COMPLEX val, kval;
 
 				const SCALAR b[6][5] = {
 					%for stage in xrange(6):
@@ -554,100 +503,39 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 					%endfor
 				};
 
+				%for comp in xrange(p.components):
+				val = data[GLOBAL_INDEX + ${g.size * comp}];
 				for(int s = 0; s < stage; s++)
 				{
-					kval = k[GLOBAL_INDEX + s * ${g.size}];
+					kval = k[GLOBAL_INDEX + s * ${g.size * p.components} + ${g.size * comp}];
 					val = val + complex_mul_scalar(kval, b[stage][s]);
 				}
 
-				res[GLOBAL_INDEX] = val;
-			}
-
-			EXPORTED_FUNC void createData_2comp(GLOBAL_MEM COMPLEX *res0,
-				GLOBAL_MEM COMPLEX *res1, GLOBAL_MEM COMPLEX *data0,
-				GLOBAL_MEM COMPLEX *data1, GLOBAL_MEM COMPLEX *k, int stage)
-			{
-				LIMITED_BY_GRID;
-				COMPLEX val0 = data0[GLOBAL_INDEX];
-				COMPLEX val1 = data1[GLOBAL_INDEX];
-				COMPLEX kval;
-				SCALAR bval;
-
-				const SCALAR b[6][5] = {
-					%for stage in xrange(6):
-					{
-						%for s in xrange(5):
-						(SCALAR)${p.b[stage, s]},
-						%endfor
-					},
-					%endfor
-				};
-
-				for(int s = 0; s < stage; s++)
-				{
-					bval = b[stage][s];
-					kval = k[GLOBAL_INDEX + s * ${g.size}];
-					val0 = val0 + complex_mul_scalar(kval, bval);
-
-					kval = k[GLOBAL_INDEX + s * ${g.size} + ${g.size * 6}];
-					val1 = val1 + complex_mul_scalar(kval, bval);
-				}
-
-				res0[GLOBAL_INDEX] = val0;
-				res1[GLOBAL_INDEX] = val1;
+				res[GLOBAL_INDEX + ${g.size * comp}] = val;
+				%endfor
 			}
 
 			EXPORTED_FUNC void sumResults(GLOBAL_MEM COMPLEX *res,
 				GLOBAL_MEM COMPLEX *k, GLOBAL_MEM COMPLEX *data)
 			{
 				LIMITED_BY_GRID;
-				COMPLEX res_val = data[GLOBAL_INDEX];
-				COMPLEX err_val = complex_ctr(0, 0);
-				COMPLEX kval;
+				COMPLEX res_val, err_val, kval;
 
-				%for s in xrange(6):
-					kval = k[GLOBAL_INDEX + ${g.size * s}];
-					res_val = res_val + complex_mul_scalar(kval, (SCALAR)${p.cval[s]});
-					err_val = err_val + complex_mul_scalar(kval, (SCALAR)${p.cval[s] - p.cerr[s]});
-				%endfor
-				res[GLOBAL_INDEX] = res_val;
-				k[GLOBAL_INDEX] = complex_ctr(abs(err_val.x), abs(err_val.y));
-			}
-
-			EXPORTED_FUNC void sumResults_2comp(GLOBAL_MEM COMPLEX *res0,
-				GLOBAL_MEM COMPLEX *res1,
-				GLOBAL_MEM COMPLEX *k, GLOBAL_MEM COMPLEX *data0,
-				GLOBAL_MEM COMPLEX *data1)
-			{
-				LIMITED_BY_GRID;
-				COMPLEX res_val;
-				COMPLEX err_val;
-				COMPLEX kval;
-
-				res_val = data0[GLOBAL_INDEX];
+				%for comp in xrange(p.components):
+				res_val = data[GLOBAL_INDEX + ${g.size * comp}];
 				err_val = complex_ctr(0, 0);
 				%for s in xrange(6):
-					kval = k[GLOBAL_INDEX + ${g.size * s}];
+					kval = k[GLOBAL_INDEX + ${g.size * p.components * s} + ${g.size * comp}];
 					res_val = res_val + complex_mul_scalar(kval, (SCALAR)${p.cval[s]});
 					err_val = err_val + complex_mul_scalar(kval, (SCALAR)${p.cval[s] - p.cerr[s]});
 				%endfor
-				res0[GLOBAL_INDEX] = res_val;
-				k[GLOBAL_INDEX] = complex_ctr(abs(err_val.x), abs(err_val.y));
-
-				res_val = data1[GLOBAL_INDEX];
-				err_val = complex_ctr(0, 0);
-				%for s in xrange(6):
-					kval = k[GLOBAL_INDEX + ${g.size * s + g.size * 6}];
-					res_val = res_val + complex_mul_scalar(kval, (SCALAR)${p.cval[s]});
-					err_val = err_val + complex_mul_scalar(kval, (SCALAR)${p.cval[s] - p.cerr[s]});
+				res[GLOBAL_INDEX + ${g.size * comp}] = res_val;
+				k[GLOBAL_INDEX + ${g.size * comp}] = complex_ctr(abs(err_val.x), abs(err_val.y));
 				%endfor
-				res1[GLOBAL_INDEX] = res_val;
-				k[GLOBAL_INDEX + ${g.size}] = complex_ctr(abs(err_val.x), abs(err_val.y));
 			}
 		"""
 
-		self._program = self._env.compileProgram(kernel_template, self._constants,
-			self._grid, p=self._p)
+		self._program = self.compileProgram(kernel_template)
 
 		self._kernel_transformIP = self._program.transformIP
 		self._kernel_calculateScale = self._program.calculateScale
@@ -657,135 +545,74 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 		self._kernel_sumResults = self._program.sumResults
 
 	def _cpu__kernel_transformIP(self, gsize, data, energy, dt):
-		data *= numpy.exp(energy * dt)
-
-	def _cpu__kernel_transformIP_2comp(self, gsize, data0, data1, energy, dt):
-		coeffs = numpy.exp(energy * dt)
-		data0 *= coeffs
-		data1 *= coeffs
+		for c in xrange(self._p.components):
+			data[c] *= numpy.exp(energy * dt)
 
 	def _cpu__kernel_calculateScale(self, gsize, res, k, data):
-		res.flat[:] = (
-			numpy.abs(k[0, 0].real) + 1j * numpy.abs(k[0, 0].imag) +
-			numpy.abs(data.real) + 1j * numpy.abs(data.imag) +
-			(1 + 1j) * self._p.tiny).flat
-
-	def _cpu__kernel_calculateScale_2comp(self, gsize, res0, res1, k, data0, data1):
-		res0.flat[:] = (
-			numpy.abs(k[0, 0].real) + 1j * numpy.abs(k[0, 0].imag) +
-			numpy.abs(data0.real) + 1j * numpy.abs(data0.imag) +
-			(1 + 1j) * self._p.tiny).flat
-
-		res1.flat[:] = (
-			numpy.abs(k[1, 0].real) + 1j * numpy.abs(k[1, 0].imag) +
-			numpy.abs(data1.real) + 1j * numpy.abs(data1.imag) +
-			(1 + 1j) * self._p.tiny).flat
+		for c in xrange(self._p.components):
+			res[c].flat[:] = (
+				numpy.abs(k[0, c].real) + 1j * numpy.abs(k[0, c].imag) +
+				numpy.abs(data[c].real) + 1j * numpy.abs(data[c].imag) +
+				(1 + 1j) * self._p.tiny).flat
 
 	def _cpu__kernel_calculateError(self, gsize, k, scale):
 		shape = k.shape[2:]
 		scale = scale.reshape(shape)
-		k[0, 0].real /= scale.real * self._p.eps
-		k[0, 0].imag /= scale.imag * self._p.eps
-
-	def _cpu__kernel_calculateError_2comp(self, gsize, k, scale0, scale1):
-		shape = k.shape[2:]
-		k[0, 0] /= scale0.reshape(shape) * self._p.eps
-		k[1, 0] /= scale1.reshape(shape) * self._p.eps
+		for c in xrange(self._p.components):
+			k[0, c].real /= scale.real * self._p.eps
+			k[0, c].imag /= scale.imag * self._p.eps
 
 	def _cpu__kernel_propagationFunc(self, gsize, k, data, potentials, dt0, stage):
-		g = self._p.g00
+		g = self._p.g
 		n = numpy.abs(data) ** 2
-		k[0, stage] = -((potentials + n * g) * data) * dt0
 
-	def _cpu__kernel_propagationFunc_2comp(self, gsize, k, data0, data1, potentials, dt0, stage):
-		g00 = self._p.g00
-		g01 = self._p.g01
-		g11 = self._p.g11
+		tile = (self._p.components,) + (1,) * self._grid.dim
+		p_tiled = numpy.tile(potentials, tile)
 
-		n0 = numpy.abs(data0) ** 2
-		n1 = numpy.abs(data1) ** 2
-
-		k[0, stage] = -((potentials + n0 * g00 + n1 * g01) * data0) * dt0
-		k[1, stage] = -((potentials + n0 * g01 + n1 * g11) * data1) * dt0
+		k[stage] = p_tiled.copy()
+		for c in xrange(self._p.components):
+			for other_c in xrange(self._p.components):
+				k[stage, c] += n[other_c, 0] * g[c, other_c]
+			k[stage, c] *= -dt0 * data[c, 0]
 
 	def _cpu__kernel_createData(self, gsize, res, data, k, stage):
-		res.flat[:] = data.flat
-
 		b = self._p.b[stage, :]
-		for s in xrange(stage):
- 			res += k[0, s] * b[s]
-
-	def _cpu__kernel_createData_2comp(self, gsize, res0, res1, data0, data1, k, stage):
-		res0.flat[:] = data0.flat
-		res1.flat[:] = data1.flat
-
-		b = self._p.b[stage, :]
-		for s in xrange(stage):
- 			res0 += k[0, s] * b[s]
-			res1 += k[1, s] * b[s]
+		for c in xrange(self._p.components):
+			res[c].flat[:] = data[c].flat
+			for s in xrange(stage):
+ 				res[c] += k[s, c] * b[s]
 
 	def _cpu__kernel_sumResults(self, gsize, res, k, data):
-		res.flat[:] = data.flat
+		cval = self._p.cval
+		cerr = cval - self._p.cerr
 
-		c = self._p.cval
-		c_err = c - self._p.cerr
+		for c in xrange(self._p.components):
+			res[c].flat[:] = data[c].flat
 
-		for s in xrange(6):
-			res += k[0, s] * c[s]
+			for s in xrange(6):
+				res[c] += k[s, c] * cval[s]
 
-		k[0, 0] *= c_err[0]
-		for s in xrange(1, 6):
-			k[0, 0] += k[0, s] * c_err[s]
-		k[0, 0] = numpy.abs(k[0, 0].real) + 1j * numpy.abs(k[0, 0].imag)
+			k[0, c] *= cerr[0]
+			for s in xrange(1, 6):
+				k[0, c] += k[s, c] * cerr[s]
 
-	def _cpu__kernel_sumResults_2comp(self, gsize, res0, res1, k, data0, data1):
-		res0.flat[:] = data0.flat
-		res1.flat[:] = data1.flat
+			k[0, c] = numpy.abs(k[0, c].real) + 1j * numpy.abs(k[0, c].imag)
 
-		c = self._p.cval
-		c_err = c - self._p.cerr
-
-		for s in xrange(6):
-			res0 += k[0, s] * c[s]
-			res1 += k[0, s] * c[s]
-
-		k[0, 0] *= c_err[0]
-		k[1, 0] *= c_err[0]
-		for s in xrange(1, 6):
-			k[0, 0] += k[0, s] * c_err[s]
-			k[1, 0] += k[1, s] * c_err[s]
-
-	def _propagate_rk5(self, psi0, dt0):
+	def _propagate_rk5(self, psi, dt0):
 
 		cast = self._constants.scalar.cast
-
 		for stage in xrange(6):
-			self._kernel_createData(psi0.size, self._xdata0,
-				psi0.data, self._k, numpy.int32(stage))
+			self._kernel_createData(psi.size, self._xdata,
+				psi.data, self._k, numpy.int32(stage))
 			dt = self._p.a[stage] * dt0
-			self._fromIP(self._xdata0, None, dt)
-			self._kernel_propagationFunc(psi0.size, self._k, self._xdata0,
+			self._fromIP(self._xdata, dt)
+			self._kernel_propagationFunc(psi.size, self._k, self._xdata,
 				self._potentials, cast(dt0), numpy.int32(stage))
 
-		self._kernel_sumResults(psi0.size, self._xdata0,
-			self._k, psi0.data)
+		self._kernel_sumResults(psi.size, self._xdata,
+			self._k, psi.data)
 
-	def _propagate_rk5_2comp(self, psi0, psi1, dt0):
-
-		cast = self._constants.scalar.cast
-
-		for stage in xrange(6):
-			self._kernel_createData_2comp(psi0.size, self._xdata0, self._xdata1,
-				psi0.data, psi1.data, self._k, numpy.int32(stage))
-			dt = self._p.a[stage] * dt0
-			self._fromIP(self._xdata0, self._xdata1, dt)
-			self._kernel_propagationFunc_2comp(psi0.size, self._k, self._xdata0, self._xdata1,
-				self._potentials, cast(dt0), numpy.int32(stage))
-
-		self._kernel_sumResults_2comp(psi0.size, self._xdata0, self._xdata1,
-			self._k, psi0.data, psi1.data)
-
-	def _propagate(self, psi0, psi1):
+	def _propagate(self, psi):
 
 		safety = 0.9
 		eps = self._p.eps
@@ -794,30 +621,18 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 		cast = self._constants.scalar.cast
 
 		# Estimate scale for this step
-
-		if psi1 is None:
-			self._kernel_propagationFunc(psi0.size, self._k, psi0.data, self._potentials,
+		self._kernel_propagationFunc(psi.size, self._k, psi.data, self._potentials,
 				cast(dt), numpy.int32(0))
-			self._kernel_calculateScale(psi0.size, self._scale0, self._k, psi0.data)
-		else:
-			self._kernel_propagationFunc_2comp(psi0.size, self._k, psi0.data, psi1.data,
-				self._potentials, cast(dt), numpy.int32(0))
-			self._kernel_calculateScale_2comp(psi0.size, self._scale0, self._scale1,
-				self._k, psi0.data, psi1.data)
+		self._kernel_calculateScale(psi.size, self._scale, self._k, psi.data)
 
 		# Propagate
 
 		while True:
 			#print "Trying with step " + str(dt)
-			if psi1 is None:
-				self._propagate_rk5(psi0, dt)
-				self._kernel_calculateError(psi0.size, self._k, self._scale0)
-				errmax = self._maxFinder(self._k, length=psi0.size)
-			else:
-				self._propagate_rk5_2comp(psi0, psi1, dt)
-				self._kernel_calculateError_2comp(psi0.size, self._k, self._scale0, self._scale1)
-				errmax = self._maxFinder(self._k, length=psi0.size * 2)
+			self._propagate_rk5(psi, dt)
+			self._kernel_calculateError(psi.size, self._k, self._scale)
 
+			errmax = self._maxFinder(self._k, length=psi.size * self._p.components)
 			#print "Error: " + str(errmax)
 			if errmax < 1.0:
 			#	if dt > remaining_time:
@@ -841,34 +656,20 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 		else:
 			self._p.dt = 5.0 * dt
 
-		self._env.copyBuffer(self._xdata0, dest=psi0.data)
-		if psi1 is not None:
-			self._env.copyBuffer(self._xdata1, dest=psi1.data)
-
-		self._fromIP(psi0.data, psi1.data if psi1 is not None else None, dt_used)
+		self._env.copyBuffer(self._xdata, dest=psi.data)
+		self._fromIP(psi.data, dt_used)
 		return dt_used
 
-	def _toIP(self, data0, data1, dt):
+	def _toIP(self, data, dt):
 		if dt == 0.0:
 			return
 
-		self._plan.execute(data0)
-		if data1 is not None:
-			self._plan.execute(data1)
+		self._plan.execute(data, batch=self._p.components)
+		self._kernel_transformIP(data.size, data, self._energy, self._constants.scalar.cast(dt))
+		self._plan.execute(data, batch=self._p.components, inverse=True)
 
-		if data1 is not None:
-			self._kernel_transformIP_2comp(data0.size, data0, data1,
-				self._energy, self._constants.scalar.cast(dt))
-		else:
-			self._kernel_transformIP(data0.size, data0,
-				self._energy, self._constants.scalar.cast(dt))
-
-		self._plan.execute(data0, inverse=True)
-		if data1 is not None:
-			self._plan.execute(data1, inverse=True)
-
-	def _fromIP(self, data0, data1, dt):
-		self._toIP(data0, data1, -dt)
+	def _fromIP(self, data, dt):
+		self._toIP(data, -dt)
 
 
 class RK5HarmonicGroundState(ImaginaryTimeGroundState):
