@@ -377,7 +377,7 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 		self._plan = createFFTPlan(self._env, self._constants, self._grid)
 		self._potentials = getPotentials(self._env, self._constants, self._grid)
 		self._energy = getPlaneWaveEnergy(self._env, self._constants, self._grid)
-		self._maxFinder = createMaxFinder(self._env, self._constants.scalar.dtype)
+		self._maxFinder = createMaxFinder(self._env, self._constants.complex.dtype)
 
 		self._addParameters(dt_guess=1e-4, eps=1e-7, tiny=1e-4, relative_precision=1e-0)
 		self.prepare(**kwds)
@@ -639,8 +639,6 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 			#print "Trying with step " + str(dt)
 			self._propagate_rk5(psi, dt)
 			self._kernel_calculateError(psi.size, self._k, self._scale)
-			# FIXME: for some reason, maxFinder gives wrong values without synchronize here
-			self._env.synchronize()
 			errmax = self._maxFinder(self._k, length=psi.size * self._p.components)
 
 			#print "Error: " + str(errmax)
