@@ -386,6 +386,8 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 		self._p.g = self._constants.g / self._constants.hbar
 
 		self._p.dt = self._p.dt_guess
+		self._err_old = 1.0
+
 		self._p.a = numpy.array([0, 0.2, 0.3, 0.6, 1, 0.875])
 		self._p.b = numpy.array([
 			[0, 0, 0, 0, 0],
@@ -625,14 +627,22 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 				cast(dt), numpy.int32(0))
 		self._kernel_calculateScale(psi.size, self._scale, self._k, psi.data)
 
-		# Propagate
+		# parameters for error controller
+		k = 4 # order of the method (order - 1 if using dt * psi' in scale)
+		beta = 0.4 / k
+		alpha = 1.0 / k - 0.75 * beta
+		minscale = 0.1
+		maxscale = 5.0
 
+		# Propagate
 		while True:
 			#print "Trying with step " + str(dt)
 			self._propagate_rk5(psi, dt)
 			self._kernel_calculateError(psi.size, self._k, self._scale)
-
+			# FIXME: for some reason, maxFinder gives wrong values without synchronize here
+			self._env.synchronize()
 			errmax = self._maxFinder(self._k, length=psi.size * self._p.components)
+
 			#print "Error: " + str(errmax)
 			if errmax < 1.0:
 			#	if dt > remaining_time:
@@ -646,15 +656,20 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 				break
 
 			# reducing step size and retrying step
-			dt_temp = safety * dt * (errmax ** (-0.25))
-			dt = max(dt_temp, 0.1 * dt)
+			dt = max(safety * errmax ** (-alpha), minscale) * dt
 
 		dt_used = dt
 
-		if errmax > (5.0 / safety) ** (-1.0 / 0.2):
-			self._p.dt = safety * dt * (errmax ** (-0.2))
+		if errmax == 0.0:
+			scale = maxscale
 		else:
-			self._p.dt = 5.0 * dt
+			scale = safety * errmax ** (-alpha) * self._err_old ** beta
+			if scale < minscale:
+				scale = minscale
+			if scale > maxscale:
+				scale = maxscale
+		self._err_old = errmax
+		self._p.dt = dt * scale
 
 		self._env.copyBuffer(self._xdata, dest=psi.data)
 		self._fromIP(psi.data, dt_used)
