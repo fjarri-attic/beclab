@@ -379,7 +379,8 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 		self._energy = getPlaneWaveEnergy(self._env, self._constants, self._grid)
 		self._maxFinder = createMaxFinder(self._env, self._constants.complex.dtype)
 
-		self._addParameters(dt_guess=1e-4, eps=1e-7, tiny=1e-4, relative_precision=1e-0)
+		self._addParameters(dt_guess=1e-4, eps=1e-6, tiny=0, relative_precision=1e-0,
+			atol_coeff=1e-4)
 		self.prepare(**kwds)
 
 	def _prepare(self):
@@ -683,6 +684,23 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 
 	def _fromIP(self, data, dt):
 		self._toIP(data, -dt)
+
+	def create(self, N, **kwds):
+		if isinstance(N, int):
+			N = (N,)
+
+		densities = []
+		for c, n in enumerate(N):
+			if n == 0.0:
+				continue
+			mu = self._constants.muTF(n, dim=self._grid.dim, comp=c)
+			densities.append(numpy.sqrt(mu / self._constants.g[c, c]))
+
+		atol_coeff = self._p.atol_coeff if 'atol_coeff' not in kwds else kwds['atol_coeff']
+		kwds['tiny'] = max(densities) * atol_coeff
+		print kwds['tiny']
+
+		return ImaginaryTimeGroundState.create(self, N, **kwds)
 
 
 class RK5HarmonicGroundState(ImaginaryTimeGroundState):
