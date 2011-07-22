@@ -78,6 +78,8 @@ class PairedCalculation(object):
 				else:
 					if hasattr(c, '_cpu__prepare_specific'): c._cpu__prepare_specific(self)
 
+		return self
+
 	def compileProgram(self, template, **kwds):
 		return self._env.compileProgram(template, self._constants, self._grid, p=self._p, **kwds)
 
