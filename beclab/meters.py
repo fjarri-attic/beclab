@@ -298,14 +298,18 @@ class ParticleStatistics(PairedCalculation):
 		return self._env.fromDevice(self._getInvariant(psi, 1, N))
 
 
-class DensityProfile:
+class DensityProfile(PairedCalculation):
 
 	def __init__(self, env, constants, grid):
-		self._env = env
+		PairedCalculation.__init__(self, env)
 		self._constants = constants.copy()
 		self._grid = grid.copy()
 		self._reduce = createReduce(env, constants.scalar.dtype)
 		self._stats = ParticleStatistics(env, constants, grid)
+		self._addParameters(components=2)
+
+	def _prepare(self):
+		self._stats.prepare(self._p.components)
 
 	def getXY(self, psi):
 		p = self._stats.getAveragePopulation(psi)
@@ -326,7 +330,9 @@ class DensityProfile:
 	def getZ(self, psi):
 		p = self._stats.getAveragePopulation(psi)
 		z = self._grid.shape[0]
-		return self._env.fromDevice(self._reduce(p, final_length=z)) / self._grid.dz
+		res = self._env.fromDevice(self._reduce(p, final_length=z * self._p.components))
+		return res.reshape(self._p.components, z) / \
+			numpy.tile(self._grid.dz, (self._p.components, 1))
 
 
 class Slice:

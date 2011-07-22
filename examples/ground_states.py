@@ -78,7 +78,7 @@ def testThomasFermi(gpu, grid_type, dim, gs_type):
 		Nx=N_xspace2, Nm=N_mspace, E=E, mu=mu, mu_tf=mu_tf, t_gs=t_gs)
 
 	z = grid.z * 1e6 # cast to micrometers
-	profile = prj.getZ(psi) / 1e6 # cast to micrometers^-1
+	profile = prj.getZ(psi)[0] / 1e6 # cast to micrometers^-1
 	plot = XYData(str(env) + ", " + grid_type + ", " + gs_type,
 		z, profile,
 		xname="Z ($\\mu$m)", yname="Axial density ($\\mu$m$^{-1}$)", ymin=0)
