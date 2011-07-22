@@ -268,8 +268,16 @@ class GPUMaxFinder:
 				#else
 				SHARED_MEM ${typename} *smem = shared_mem;
 				#endif
+
+				${typename} ttt;
 				%for reduction_pow in xrange(min(log2_warp_size, log2_block_size - 1), -1, -1):
-					smem[tid] = OP(smem[tid], smem[tid + ${2 ** reduction_pow}]);
+				ttt = OP(smem[tid], smem[tid + ${2 ** reduction_pow}]);
+				%if typename.endswith('2'):
+					smem[tid].x = ttt.x;
+					smem[tid].y = ttt.y;
+				%else:
+					smem[tid] = ttt;
+				%endif
 				%endfor
 				}
 				%endif
