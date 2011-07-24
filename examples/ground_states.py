@@ -40,7 +40,8 @@ def testThomasFermi(gpu, grid_type, dim, gs_type):
 		gs = SplitStepGroundState(*args, **params)
 	elif gs_type == "rk5":
 		if isinstance(grid, UniformGrid):
-			gs = RK5IPGroundState(*args)
+			# reduced eps to make it converge in single precision
+			gs = RK5IPGroundState(*args, eps=1e-6, Nscale=N)
 		else:
 			gs = RK5HarmonicGroundState(*args)
 
