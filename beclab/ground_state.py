@@ -368,23 +368,18 @@ class SplitStepGroundState(ImaginaryTimeGroundState):
 		return self._p.dt
 
 
-class RK5IPGroundState(ImaginaryTimeGroundState):
+class RK5Propagation(PairedCalculation):
 
-	def __init__(self, env, constants, grid, **kwds):
-		assert isinstance(grid, UniformGrid)
-		ImaginaryTimeGroundState.__init__(self, env, constants, grid)
+	def __init__(self, env, constants, grid, mspace):
+		PairedCalculation.__init__(self, env)
+		self._constants = constants.copy()
+		self._grid = grid.copy()
 
-		self._plan = createFFTPlan(self._env, self._constants, self._grid)
-		self._potentials = getPotentials(self._env, self._constants, self._grid)
-		self._energy = getPlaneWaveEnergy(self._env, self._constants, self._grid)
 		self._maxFinder = createMaxFinder(self._env, self._constants.complex.dtype)
 
-		self._addParameters(dt_guess=1e-4, eps=1e-6, tiny=0, relative_precision=1e-0,
-			atol_coeff=1e-4)
-		self.prepare(**kwds)
+		self._addParameters(dt_guess=1e-4, eps=1e-6, tiny=0, mspace=mspace, components=1)
 
 	def _prepare(self):
-		self._p.g = self._constants.g / self._constants.hbar
 
 		self._p.dt = self._p.dt_guess
 		self._err_old = 1.0
@@ -401,7 +396,11 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 		self._p.cval = numpy.array([37.0 / 378, 0, 250.0 / 621, 125.0 / 594, 0, 512.0 / 1771])
 		self._p.cerr = numpy.array([2825.0 / 27648, 0, 18575.0 / 48384.0, 13525.0 / 55296, 277.0 / 14336, 0.25])
 
-		shape = self._grid.mshape
+		if self._p.mspace:
+			shape = self._grid.mshape
+		else:
+			shape = self._grid.shape
+
 		cdtype = self._constants.complex.dtype
 		sdtype = self._constants.scalar.dtype
 
@@ -410,24 +409,7 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 		self._scale = self._env.allocate((self._p.components, 1) + shape, dtype=cdtype)
 
 	def _gpu__prepare_specific(self):
-		ImaginaryTimeGroundState._gpu__prepare_specific(self)
-
 		kernel_template = """
-			EXPORTED_FUNC void transformIP(GLOBAL_MEM COMPLEX *data,
-				GLOBAL_MEM SCALAR *energy, SCALAR dt)
-			{
-				LIMITED_BY_GRID;
-				COMPLEX val;
-				int id;
-				SCALAR e = energy[GLOBAL_INDEX];
-
-				%for comp in xrange(p.components):
-				id = GLOBAL_INDEX + ${comp * g.size};
-				val = data[id];
-				data[id] = complex_mul_scalar(val, exp(e * dt));
-				%endfor
-			}
-
 			EXPORTED_FUNC void calculateScale(GLOBAL_MEM COMPLEX *res,
 				GLOBAL_MEM COMPLEX *k, GLOBAL_MEM COMPLEX *data)
 			{
@@ -461,32 +443,6 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 					val.x / s.x / (SCALAR)${p.eps},
 					val.y / s.y / (SCALAR)${p.eps}
 				);
-				%endfor
-			}
-
-			EXPORTED_FUNC void propagationFunc(GLOBAL_MEM COMPLEX *k, GLOBAL_MEM COMPLEX *data,
-				GLOBAL_MEM SCALAR *potentials, SCALAR dt0, int stage)
-			{
-				LIMITED_BY_GRID;
-				SCALAR p = potentials[GLOBAL_INDEX];
-
-				%for comp in xrange(p.components):
-				COMPLEX val${comp};
-				SCALAR n${comp};
-				%endfor
-
-				%for comp in xrange(p.components):
-				val${comp} = data[GLOBAL_INDEX + ${g.size * comp}];
-				n${comp} = squared_abs(val${comp});
-				%endfor
-
-				%for comp in xrange(p.components):
-				k[GLOBAL_INDEX + ${g.size * p.components} * stage + ${g.size * comp}] =
-					complex_mul_scalar(val${comp}, -dt0 * (p
-						%for comp_other in xrange(p.components):
-						+ n${comp_other} * (SCALAR)${p.g[comp, comp_other]}
-						%endfor
-					));
 				%endfor
 			}
 
@@ -540,16 +496,10 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 
 		self._program = self.compileProgram(kernel_template)
 
-		self._kernel_transformIP = self._program.transformIP
 		self._kernel_calculateScale = self._program.calculateScale
 		self._kernel_calculateError = self._program.calculateError
-		self._kernel_propagationFunc = self._program.propagationFunc
 		self._kernel_createData = self._program.createData
 		self._kernel_sumResults = self._program.sumResults
-
-	def _cpu__kernel_transformIP(self, gsize, data, energy, dt):
-		for c in xrange(self._p.components):
-			data[c] *= numpy.exp(energy * dt)
 
 	def _cpu__kernel_calculateScale(self, gsize, res, k, data):
 		for c in xrange(self._p.components):
@@ -564,19 +514,6 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 		for c in xrange(self._p.components):
 			k[0, c].real /= scale.real * self._p.eps
 			k[0, c].imag /= scale.imag * self._p.eps
-
-	def _cpu__kernel_propagationFunc(self, gsize, k, data, potentials, dt0, stage):
-		g = self._p.g
-		n = numpy.abs(data) ** 2
-
-		tile = (self._p.components,) + (1,) * self._grid.dim
-		p_tiled = numpy.tile(potentials, tile)
-
-		k[stage] = p_tiled.copy()
-		for c in xrange(self._p.components):
-			for other_c in xrange(self._p.components):
-				k[stage, c] += n[other_c, 0] * g[c, other_c]
-			k[stage, c] *= -dt0 * data[c, 0]
 
 	def _cpu__kernel_createData(self, gsize, res, data, k, stage):
 		b = self._p.b[stage, :]
@@ -601,21 +538,19 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 
 			k[0, c] = numpy.abs(k[0, c].real) + 1j * numpy.abs(k[0, c].imag)
 
-	def _propagate_rk5(self, psi, dt0):
+	def _propagate_rk5(self, prop, psi, dt0):
 
 		cast = self._constants.scalar.cast
 		for stage in xrange(6):
 			self._kernel_createData(psi.size, self._xdata,
 				psi.data, self._k, numpy.int32(stage))
 			dt = self._p.a[stage] * dt0
-			self._fromIP(self._xdata, dt)
-			self._kernel_propagationFunc(psi.size, self._k, self._xdata,
-				self._potentials, cast(dt0), numpy.int32(stage))
+			prop(self._k, self._xdata, dt, dt0, stage)
 
 		self._kernel_sumResults(psi.size, self._xdata,
 			self._k, psi.data)
 
-	def _propagate(self, psi):
+	def propagate(self, prop, finalize, psi):
 
 		safety = 0.9
 		eps = self._p.eps
@@ -624,8 +559,7 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 		cast = self._constants.scalar.cast
 
 		# Estimate scale for this step
-		self._kernel_propagationFunc(psi.size, self._k, psi.data, self._potentials,
-				cast(dt), numpy.int32(0))
+		prop(self._k, psi.data, 0.0, dt, 0)
 		self._kernel_calculateScale(psi.size, self._scale, self._k, psi.data)
 
 		# parameters for error controller
@@ -638,7 +572,7 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 		# Propagate
 		while True:
 			#print "Trying with step " + str(dt)
-			self._propagate_rk5(psi, dt)
+			self._propagate_rk5(prop, psi, dt)
 			self._kernel_calculateError(psi.size, self._k, self._scale)
 			errmax = self._maxFinder(self._k, length=psi.size * self._p.components)
 
@@ -671,8 +605,112 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 		self._p.dt = dt * scale
 
 		self._env.copyBuffer(self._xdata, dest=psi.data)
-		self._fromIP(psi.data, dt_used)
+		finalize(psi, dt_used)
 		return dt_used
+
+
+class RK5IPGroundState(ImaginaryTimeGroundState):
+
+	def __init__(self, env, constants, grid, **kwds):
+		assert isinstance(grid, UniformGrid)
+		ImaginaryTimeGroundState.__init__(self, env, constants, grid)
+
+		self._plan = createFFTPlan(self._env, self._constants, self._grid)
+		self._potentials = getPotentials(self._env, self._constants, self._grid)
+		self._energy = getPlaneWaveEnergy(self._env, self._constants, self._grid)
+		self._maxFinder = createMaxFinder(self._env, self._constants.complex.dtype)
+
+		self._propagator = RK5Propagation(self._env, self._constants, self._grid, mspace=False)
+
+		self._addParameters(relative_precision=1e-0, atol_coeff=1e-6,
+			eps=1e-6, dt_guess=1e-4, Nscale=10000)
+		self.prepare(**kwds)
+
+	def _prepare(self):
+		self._p.g = self._constants.g / self._constants.hbar
+
+		mu = self._constants.muTF(self._p.Nscale, dim=self._grid.dim, comp=0)
+		peak_density = numpy.sqrt(mu / self._constants.g[0, 0])
+
+		self._propagator.prepare(eps=self._p.eps, dt_guess=self._p.dt_guess, mspace=False,
+			tiny=peak_density, components=self._p.components)
+
+	def _gpu__prepare_specific(self):
+		kernel_template = """
+			EXPORTED_FUNC void transformIP(GLOBAL_MEM COMPLEX *data,
+				GLOBAL_MEM SCALAR *energy, SCALAR dt)
+			{
+				LIMITED_BY_GRID;
+				COMPLEX val;
+				int id;
+				SCALAR e = energy[GLOBAL_INDEX];
+
+				%for comp in xrange(p.components):
+				id = GLOBAL_INDEX + ${comp * g.size};
+				val = data[id];
+				data[id] = complex_mul_scalar(val, exp(e * dt));
+				%endfor
+			}
+
+			EXPORTED_FUNC void propagationFunc(GLOBAL_MEM COMPLEX *k, GLOBAL_MEM COMPLEX *data,
+				GLOBAL_MEM SCALAR *potentials, SCALAR dt0, int stage)
+			{
+				LIMITED_BY_GRID;
+				SCALAR p = potentials[GLOBAL_INDEX];
+
+				%for comp in xrange(p.components):
+				COMPLEX val${comp};
+				SCALAR n${comp};
+				%endfor
+
+				%for comp in xrange(p.components):
+				val${comp} = data[GLOBAL_INDEX + ${g.size * comp}];
+				n${comp} = squared_abs(val${comp});
+				%endfor
+
+				%for comp in xrange(p.components):
+				k[GLOBAL_INDEX + ${g.size * p.components} * stage + ${g.size * comp}] =
+					complex_mul_scalar(val${comp}, -dt0 * (p
+						%for comp_other in xrange(p.components):
+						+ n${comp_other} * (SCALAR)${p.g[comp, comp_other]}
+						%endfor
+					));
+				%endfor
+			}
+		"""
+
+		self._program = self.compileProgram(kernel_template)
+
+		self._kernel_transformIP = self._program.transformIP
+		self._kernel_propagationFunc = self._program.propagationFunc
+
+	def _cpu__kernel_transformIP(self, gsize, data, energy, dt):
+		for c in xrange(self._p.components):
+			data[c] *= numpy.exp(energy * dt)
+
+	def _cpu__kernel_propagationFunc(self, gsize, k, data, potentials, dt0, stage):
+		g = self._p.g
+		n = numpy.abs(data) ** 2
+
+		tile = (self._p.components,) + (1,) * self._grid.dim
+		p_tiled = numpy.tile(potentials, tile)
+
+		k[stage] = p_tiled.copy()
+		for c in xrange(self._p.components):
+			for other_c in xrange(self._p.components):
+				k[stage, c] += n[other_c, 0] * g[c, other_c]
+			k[stage, c] *= -dt0 * data[c, 0]
+
+	def _propFunc(self, results, values, dt, dt_full, stage):
+		self._fromIP(values, dt)
+		self._kernel_propagationFunc(self._grid.size, results, values,
+			self._potentials, self._constants.scalar.cast(dt_full), numpy.int32(stage))
+
+	def _finalizeFunc(self, psi, dt_used):
+		self._fromIP(psi.data, dt_used)
+
+	def _propagate(self, psi):
+		return self._propagator.propagate(self._propFunc, self._finalizeFunc, psi)
 
 	def _toIP(self, data, dt):
 		if dt == 0.0:
@@ -686,20 +724,7 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 		self._toIP(data, -dt)
 
 	def create(self, N, **kwds):
-		if isinstance(N, int):
-			N = (N,)
-
-		densities = []
-		for c, n in enumerate(N):
-			if n == 0.0:
-				continue
-			mu = self._constants.muTF(n, dim=self._grid.dim, comp=c)
-			densities.append(numpy.sqrt(mu / self._constants.g[c, c]))
-
-		atol_coeff = self._p.atol_coeff if 'atol_coeff' not in kwds else kwds['atol_coeff']
-		kwds['tiny'] = max(densities) * atol_coeff
-		print kwds['tiny']
-
+		kwds['Nscale'] = max(N)
 		return ImaginaryTimeGroundState.create(self, N, **kwds)
 
 
