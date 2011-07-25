@@ -223,7 +223,7 @@ class FHT1D(PairedCalculation):
 		else:
 			assert data.shape[-1:] == self._xshape
 			self._allocateXi(batch)
-			self._kernel_multiplyTiledCS(self._xshape[0], self._Xi, data,
+			self._kernel_multiplyTiledCS(batch * self._xshape[0], self._Xi, data,
 				self._weights_x, cast(batch))
 
 			self._kernel_matrixMulCS(batch * self.N,
@@ -386,6 +386,8 @@ class FHT3D(PairedCalculation):
 
 		cast = numpy.int32
 
+		self._allocateTempArrays(batch)
+
 		if inverse:
 			assert data.shape[-3:] == self.N
 			self._permute(data, self._temp1, (Nz, Ny, Nx), batch=batch)
@@ -400,7 +402,7 @@ class FHT3D(PairedCalculation):
 			self._kernel_matrixMulCS(batch * Mz * My * Mx,
 				result, self._temp1, self._Px,
 				cast(Nx), cast(batch * Mz * My), cast(Mx))
-			self._kernel_multiplyConstantCS(Mz * My * Mx, result, result,
+			self._kernel_multiplyConstantCS(batch * Mz * My * Mx, result, result,
 				self._scalar_cast(self._inv_scale), cast(batch))
 
 			"""
@@ -421,8 +423,7 @@ class FHT3D(PairedCalculation):
 			"""
 		else:
 			assert data.shape[-3:] == (Mz, My, Mx)
-
-			self._kernel_multiplyTiledCS(Mz * My * Mx, self._temp2,
+			self._kernel_multiplyTiledCS(batch * Mz * My * Mx, self._temp2,
 				data, self._weights, cast(batch))
 			self._permute(self._temp2, self._temp1, (Mz, My, Mx), batch=batch)
 			self._kernel_matrixMulCS(batch * My * Mx * Nz,
