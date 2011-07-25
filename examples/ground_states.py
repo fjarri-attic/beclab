@@ -5,7 +5,15 @@ import itertools
 import time
 
 
-def testThomasFermi(gpu, grid_type, dim, gs_type):
+def testGroundState(gpu, grid_type, dim, gs_type):
+	env = envs.cuda() if gpu else envs.cpu()
+	try:
+		return runTest(env, grid_type, dim, gs_type)
+	except:
+		env.release()
+		raise
+
+def runTest(env, grid_type, dim, gs_type):
 	"""
 	Creates Thomas-Fermi ground state using different types of representations
 	"""
@@ -17,7 +25,6 @@ def testThomasFermi(gpu, grid_type, dim, gs_type):
 	else:
 		parameters = {}
 
-	env = envs.cuda() if gpu else envs.cpu()
 	constants = Constants(double=False if gpu else True, **parameters)
 	N = 50000 if dim == '3d' else 60 # number of atoms
 
@@ -84,8 +91,6 @@ def testThomasFermi(gpu, grid_type, dim, gs_type):
 		z, profile,
 		xname="Z ($\\mu$m)", yname="Axial density ($\\mu$m$^{-1}$)", ymin=0)
 
-	env.release()
-
 	# Checks
 
 	# check that double transform did not change N
@@ -121,5 +126,5 @@ if __name__ == '__main__':
 			if grid_type == 'harmonic' and gs_type == 'split-step':
 				continue
 			print "* Testing", grid_type, "grid and", gs_type, "on", ("GPU" if gpu else "CPU")
-			plots.append(testThomasFermi(gpu, grid_type, dim, gs_type))
+			plots.append(testGroundState(gpu, grid_type, dim, gs_type))
 		XYPlot(plots).save(prefix + dim + '.pdf')
