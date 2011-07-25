@@ -9,9 +9,8 @@ def testGroundState(gpu, grid_type, dim, gs_type):
 	env = envs.cuda() if gpu else envs.cpu()
 	try:
 		return runTest(env, grid_type, dim, gs_type)
-	except:
+	finally:
 		env.release()
-		raise
 
 def runTest(env, grid_type, dim, gs_type):
 	"""
