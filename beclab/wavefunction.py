@@ -49,8 +49,8 @@ class WavefunctionSet(PairedCalculation):
 			self.size = self._size = self._grid.size * self.ensembles
 			self._msize = self._grid.msize
 
-			self.data = self._mdata = self._env.allocate(self._mshape, dtype)
-			self._data = self._env.allocate(self._shape, dtype)
+			self._mdata = self._env.allocate(self._mshape, dtype)
+			self.data = self._data = self._env.allocate(self._shape, dtype)
 
 	def _gpu__prepare_specific(self):
 		kernel_template = """
