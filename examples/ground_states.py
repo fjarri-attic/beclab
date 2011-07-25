@@ -80,9 +80,9 @@ def runTest(env, grid_type, dim, gs_type):
 	mu = stats.getMu(psi).sum() / constants.hbar / constants.wz
 	mu_tf = constants.muTF(N, dim=grid.dim) / constants.hbar / constants.wz
 
-	print ("N(x-space) = {Nx}, N(m-space) = {Nm},\n" +
-		"E = {E} hbar w_z, mu = {mu} hbar w_z (mu_analytical = {mu_tf})\n" +
-		"Time spent: {t_gs} s").format(
+	print ("  N(x-space) = {Nx}, N(m-space) = {Nm},\n" +
+		"  E = {E} hbar w_z, mu = {mu} hbar w_z (mu_analytical = {mu_tf})\n" +
+		"  Time spent: {t_gs} s").format(
 		Nx=N_xspace2, Nm=N_mspace, E=E, mu=mu, mu_tf=mu_tf, t_gs=t_gs)
 
 	z = grid.z * 1e6 # cast to micrometers
