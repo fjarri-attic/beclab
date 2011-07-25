@@ -48,37 +48,37 @@ class ParticleStatistics(PairedCalculation):
 
 	def _gpu__prepare_specific(self):
 		kernel_template = """
-			EXPORTED_FUNC void interaction(GLOBAL_MEM COMPLEX *res,
+			EXPORTED_FUNC void interaction(int gsize, GLOBAL_MEM COMPLEX *res,
 				GLOBAL_MEM COMPLEX *a_state, GLOBAL_MEM COMPLEX *b_state)
 			{
-				LIMITED_BY(${p.ensembles});
+				LIMITED_BY(gsize);
 				res[GLOBAL_INDEX] = complex_mul(
 					a_state[GLOBAL_INDEX], conj(b_state[GLOBAL_INDEX]));
 			}
 
-			EXPORTED_FUNC void density(GLOBAL_MEM SCALAR *res,
+			EXPORTED_FUNC void density(int gsize, GLOBAL_MEM SCALAR *res,
 				GLOBAL_MEM COMPLEX *state, int coeff)
 			{
-				LIMITED_BY(${p.ensembles});
+				LIMITED_BY(gsize);
 				int id;
 				%for comp in xrange(p.components):
-				id = GLOBAL_INDEX + ${g.size * p.ensembles * comp};
+				id = GLOBAL_INDEX + gsize * ${comp};
 				res[id] = (squared_abs(state[id]) - (SCALAR)${p.density_modifier}) / coeff;
 				%endfor
 			}
 
-			EXPORTED_FUNC void invariant(GLOBAL_MEM SCALAR *res,
+			EXPORTED_FUNC void invariant(int gsize, GLOBAL_MEM SCALAR *res,
 				GLOBAL_MEM COMPLEX *xdata, GLOBAL_MEM COMPLEX *mdata,
 				GLOBAL_MEM SCALAR *potentials, int coeff)
 			{
-				LIMITED_BY(${p.ensembles});
+				LIMITED_BY(gsize);
 
 				%if p.need_potentials:
-				SCALAR potential = potentials[CELL_INDEX];
+				SCALAR potential = potentials[GLOBAL_INDEX % (gsize / ${p.ensembles})];
 				%endif
 
 				%for comp in xrange(p.components):
-				int id${comp} = GLOBAL_INDEX + ${g.size * p.ensembles * comp};
+				int id${comp} = GLOBAL_INDEX + gsize * ${comp};
 				SCALAR n${comp} = squared_abs(xdata[id${comp}]);
 				%endfor
 
@@ -96,29 +96,31 @@ class ParticleStatistics(PairedCalculation):
 				%endfor
 			}
 
-			EXPORTED_FUNC void multiplyTiledSS(GLOBAL_MEM SCALAR *data, GLOBAL_MEM SCALAR *coeffs)
+			EXPORTED_FUNC void multiplyTiledSS(int gsize,
+				GLOBAL_MEM SCALAR *data, GLOBAL_MEM SCALAR *coeffs)
 			{
-				LIMITED_BY(${p.ensembles});
+				LIMITED_BY(gsize);
 
-				SCALAR coeff_val = coeffs[CELL_INDEX];
+				SCALAR coeff_val = coeffs[GLOBAL_INDEX % (gsize / ${p.ensembles})];
 				SCALAR data_val;
 
 				%for comp in xrange(p.components):
-				data_val = data[GLOBAL_INDEX + ${g.size * p.ensembles * comp}];
-				data[GLOBAL_INDEX + ${g.size * p.ensembles * comp}] = data_val * coeff_val;
+				data_val = data[GLOBAL_INDEX + gsize * ${comp}];
+				data[GLOBAL_INDEX + gsize * ${comp}] = data_val * coeff_val;
 				%endfor
 			}
 
-			EXPORTED_FUNC void multiplyTiledCS(GLOBAL_MEM COMPLEX *data, GLOBAL_MEM SCALAR *coeffs)
+			EXPORTED_FUNC void multiplyTiledCS(int gsize,
+				GLOBAL_MEM COMPLEX *data, GLOBAL_MEM SCALAR *coeffs)
 			{
-				LIMITED_BY(${p.ensembles});
+				LIMITED_BY(gsize);
 
-				SCALAR coeff_val = coeffs[CELL_INDEX];
+				SCALAR coeff_val = coeffs[GLOBAL_INDEX % (gsize / ${p.ensembles})];
 				COMPLEX data_val;
 
 				%for comp in xrange(p.components):
-				data_val = data[GLOBAL_INDEX + ${g.size * p.ensembles * comp}];
-				data[GLOBAL_INDEX + ${g.size * p.ensembles * comp}] =
+				data_val = data[GLOBAL_INDEX + gsize * ${comp}];
+				data[GLOBAL_INDEX + gsize * ${comp}] =
 					complex_mul_scalar(data_val, coeff_val);
 				%endfor
 			}
@@ -188,14 +190,16 @@ class ParticleStatistics(PairedCalculation):
 		components = psi.components
 		density = self.getDensity(psi, coeff=ensembles)
 		average_density = self._reduce.sparse(density,
-			final_length=components * psi.size,
-			final_shape=(components, psi.size))
+			final_length=components * self._grid.size,
+			final_shape=(components,) + psi.shape[-3:])
+
 		return average_density
 
 	def getAveragePopulation(self, psi):
 		density = self.getAverageDensity(psi)
 		if not psi.in_mspace:
-			self._kernel_multiplyTiledSS(density.size, density, self._dV)
+			self._kernel_multiplyTiledSS(psi.size, density, self._dV)
+
 		return density
 
 	def _getInvariant(self, psi, coeff, N):
@@ -209,22 +213,19 @@ class ParticleStatistics(PairedCalculation):
 			N = self.getN(psi).sum()
 
 		batch = self._p.ensembles * self._p.components
-		xsize = self._grid.size * batch
-		msize = self._grid.msize * batch
+		xsize = self._grid.size * self._p.ensembles
+		msize = self._grid.msize * self._p.ensembles
 
 		# FIXME: not a good way to provide transformation
 		psi._plan.execute(psi.data, self._c_mspace_buffer, batch=batch)
 		self._kernel_multiplyTiledCS(msize, self._c_mspace_buffer, self._energy)
 		psi._plan.execute(self._c_mspace_buffer, self._c_xspace_buffer,
 			batch=batch, inverse=True)
-
 		cast = self._constants.scalar.cast
 
-		# FIXME: need to allocate memory in constructor
 		self._kernel_invariant(xsize, self._s_xspace_buffer,
 			psi.data, self._c_xspace_buffer,
 			self._potentials, numpy.int32(coeff))
-
 		self._kernel_multiplyTiledSS(xsize, self._s_xspace_buffer, self._dV)
 		return self._reduce(self._s_xspace_buffer, final_length=self._p.components) / \
 			self._p.ensembles / N * self._constants.hbar

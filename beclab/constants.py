@@ -349,6 +349,9 @@ class HarmonicGrid:
 	def get_dV(self, env, order=1):
 		return env.toDevice(self.dVs[order].astype(self._constants.scalar.dtype))
 
+	def __eq__(self, other):
+		return self.mshape == other.mshape
+
 
 class Constants:
 

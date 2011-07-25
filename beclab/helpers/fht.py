@@ -167,24 +167,22 @@ class FHT1D(PairedCalculation):
 
 	def _gpu__prepare(self):
 		kernel_template = """
-			EXPORTED_FUNC void multiplyTiledCS(
+			EXPORTED_FUNC void multiplyTiledCS(int gsize,
 				GLOBAL_MEM COMPLEX *res, GLOBAL_MEM COMPLEX *data,
 				GLOBAL_MEM SCALAR *coeffs, int batch)
 			{
-				if(GLOBAL_INDEX >= ${size} * batch)
-					return;
+				LIMITED_BY(gsize);
 
 				SCALAR coeff_val = coeffs[GLOBAL_INDEX % ${size}];
 				COMPLEX data_val = data[GLOBAL_INDEX];
 				res[GLOBAL_INDEX] = complex_mul_scalar(data_val, coeff_val);
 			}
 
-			EXPORTED_FUNC void matrixMulCS(GLOBAL_MEM COMPLEX *res,
+			EXPORTED_FUNC void matrixMulCS(int gsize, GLOBAL_MEM COMPLEX *res,
 				GLOBAL_MEM COMPLEX *m1, GLOBAL_MEM SCALAR *m2,
 				int w1, int h1, int w2, SCALAR scale)
 			{
-				if(GLOBAL_INDEX >= h1 * w2)
-					return;
+				LIMITED_BY(gsize);
 
 				COMPLEX sum = complex_ctr(0, 0);
 				int target_x = GLOBAL_INDEX % w2;
@@ -296,36 +294,31 @@ class FHT3D(PairedCalculation):
 
 	def _gpu__prepare(self):
 		kernel_template = """
-			EXPORTED_FUNC void multiplyTiledCS(
+			EXPORTED_FUNC void multiplyTiledCS(int gsize,
 				GLOBAL_MEM COMPLEX *res, GLOBAL_MEM COMPLEX *data,
 				GLOBAL_MEM SCALAR *coeffs, int batch)
 			{
-				if(GLOBAL_INDEX >= ${size} * batch)
-					return;
-
+				LIMITED_BY(gsize);
 				SCALAR coeff_val = coeffs[GLOBAL_INDEX % ${size}];
 				COMPLEX data_val = data[GLOBAL_INDEX];
 				res[GLOBAL_INDEX] = complex_mul_scalar(data_val, coeff_val);
 			}
 
-			EXPORTED_FUNC void multiplyConstantCS(
+			EXPORTED_FUNC void multiplyConstantCS(int gsize,
 				GLOBAL_MEM COMPLEX *res, GLOBAL_MEM COMPLEX *data,
 				GLOBAL_MEM SCALAR coeff, int batch)
 			{
-				if(GLOBAL_INDEX >= ${size} * batch)
-					return;
-
+				LIMITED_BY(gsize);
 				COMPLEX data_val = data[GLOBAL_INDEX];
 				res[GLOBAL_INDEX] = complex_mul_scalar(data_val, coeff);
 			}
 
-			EXPORTED_FUNC void matrixMulCS(GLOBAL_MEM COMPLEX *res,
+			EXPORTED_FUNC void matrixMulCS(int gsize, GLOBAL_MEM COMPLEX *res,
 				GLOBAL_MEM COMPLEX *m1, GLOBAL_MEM SCALAR *m2,
 				int w1, int h1, int w2)
 			{
+				LIMITED_BY(gsize);
 				int output_index = GLOBAL_INDEX;
-				if(output_index >= h1 * w2)
-					return;
 
 				COMPLEX sum = complex_ctr(0, 0);
 				int target_x = output_index % w2;
@@ -337,13 +330,12 @@ class FHT3D(PairedCalculation):
 				res[output_index] = sum;
 			}
 
-			EXPORTED_FUNC void matrixMulCS2(GLOBAL_MEM COMPLEX *res,
+			EXPORTED_FUNC void matrixMulCS2(int gsize, GLOBAL_MEM COMPLEX *res,
 				GLOBAL_MEM COMPLEX *m1, GLOBAL_MEM SCALAR *m2,
 				int w1, int h1, int w2, SCALAR coeff)
 			{
+				LIMITED_BY(gsize);
 				int output_index = GLOBAL_INDEX;
-				if(output_index >= h1 * w2)
-					return;
 
 				COMPLEX sum = complex_ctr(0, 0);
 				int target_x = output_index % w2;

@@ -58,36 +58,36 @@ class WavefunctionSet(PairedCalculation):
 				from math import sqrt
 			%>
 
-			EXPORTED_FUNC void fillWithZeros(GLOBAL_MEM COMPLEX *res)
+			EXPORTED_FUNC void fillWithZeros(int gsize, GLOBAL_MEM COMPLEX *res)
 			{
-				LIMITED_BY_GRID;
-				%for component in xrange(p.components):
-					res[${component * g.size} + GLOBAL_INDEX] = complex_ctr(0, 0);
+				LIMITED_BY(gsize);
+				%for comp in xrange(p.components):
+					res[gsize * ${comp} + GLOBAL_INDEX] = complex_ctr(0, 0);
 				%endfor
 			}
 
 			// Initialize ensembles with the copy of the current state
-			EXPORTED_FUNC void fillEnsembles(GLOBAL_MEM COMPLEX *res,
+			EXPORTED_FUNC void fillEnsembles(int gsize, GLOBAL_MEM COMPLEX *res,
 				GLOBAL_MEM COMPLEX *src)
 			{
-				LIMITED_BY(${p.ensembles});
-				%for component in xrange(p.components):
-					res[GLOBAL_INDEX + ${component * g.size * p.ensembles}] =
-						src[CELL_INDEX + ${component * g.size}];
+				LIMITED_BY(gsize);
+				%for comp in xrange(p.components):
+					res[GLOBAL_INDEX + gsize * ${comp}] =
+						src[GLOBAL_INDEX % (gsize / ${p.ensembles}) + gsize * ${comp}];
 				%endfor
 			}
 
-			EXPORTED_FUNC void addVacuumParticles(GLOBAL_MEM COMPLEX *data,
+			EXPORTED_FUNC void addVacuumParticles(int gsize, GLOBAL_MEM COMPLEX *data,
 				GLOBAL_MEM COMPLEX *randoms, GLOBAL_MEM SCALAR *mask)
 			{
-				LIMITED_BY(${p.ensembles});
+				LIMITED_BY(gsize);
 
-				SCALAR mask_elem = mask[CELL_INDEX];
+				SCALAR mask_elem = mask[GLOBAL_INDEX % (gsize / ${p.ensembles})];
 				COMPLEX val;
 				int id;
 
-				%for component in xrange(p.components):
-					id = GLOBAL_INDEX + ${component * g.size * p.ensembles};
+				%for comp in xrange(p.components):
+					id = GLOBAL_INDEX + gsize * ${comp};
 					val = data[id];
 					val = val + randoms[id]; // add noise
 					val = complex_mul_scalar(val, mask_elem);

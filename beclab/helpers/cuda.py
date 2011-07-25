@@ -47,7 +47,7 @@ class _KernelWrapper:
 			block = (block_size, 1, 1)
 			grid = self._getSupportedGrid((size - 1) / block_size + 1, 1)
 
-		self._customCall(grid, block, *args)
+		self._customCall(grid, block, numpy.int32(size), *args)
 
 	def _customCall(self, grid, block, *args):
 		self._kernel(*args, grid=grid, block=block, stream=self._stream)
