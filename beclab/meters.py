@@ -188,9 +188,11 @@ class ParticleStatistics(PairedCalculation):
 		# for both x- and mode-space.
 		ensembles = psi.ensembles
 		components = psi.components
+		size = self._grid.msize if psi.in_mspace else self._grid.size
+
 		density = self.getDensity(psi, coeff=ensembles)
 		average_density = self._reduce.sparse(density,
-			final_length=components * self._grid.size,
+			final_length=components * size,
 			final_shape=(components,) + psi.shape[2:])
 
 		return average_density
