@@ -56,7 +56,8 @@ class TFGroundState(PairedCalculation):
 				%endfor
 			}
 
-			EXPORTED_FUNC void multiplyConstantCS(int gsize, GLOBAL_MEM COMPLEX *data, SCALAR coeff)
+			EXPORTED_FUNC void multiplyConstantsCS(int gsize, GLOBAL_MEM COMPLEX *data,
+				SCALAR coeff0, SCALAR coeff1)
 			{
 				LIMITED_BY(gsize);
 				COMPLEX val;
@@ -64,14 +65,14 @@ class TFGroundState(PairedCalculation):
 				%for comp in xrange(p.components):
 				val = data[GLOBAL_INDEX + gsize * ${comp}];
 				data[GLOBAL_INDEX + gsize * ${comp}] =
-					complex_mul_scalar(val, coeff);
+					complex_mul_scalar(val, coeff${comp});
 				%endfor
 			}
 		"""
 
 		self._program = self.compileProgram(kernel_template)
 		self._kernel_fillWithTFGroundState = self._program.fillWithTFGroundState
-		self._kernel_multiplyConstantCS = self._program.multiplyConstantCS
+		self._kernel_multiplyConstantsCS = self._program.multiplyConstantsCS
 
 	def _cpu__kernel_fillWithTFGroundState(self, gsize, data, potentials,
 			mu0_by_hbar, mu1_by_hbar):
@@ -82,8 +83,10 @@ class TFGroundState(PairedCalculation):
 		for c in xrange(self._p.components):
 			data[c, 0] = numpy.sqrt(mask_map(mu[c] - self._potentials) / self._p.g[c])
 
-	def _cpu__kernel_multiplyConstantCS(self, gsize, data, coeff):
-		data *= coeff
+	def _cpu__kernel_multiplyConstantsCS(self, gsize, data, coeff0, coeff1):
+		coeffs = (coeff0, coeff1)
+		for comp in xrange(self._p.components):
+			data[comp] *= coeffs[comp]
 
 	def fillWithTF(self, psi, N):
 		mu_by_hbar = numpy.array([
@@ -111,10 +114,14 @@ class TFGroundState(PairedCalculation):
 		# Doing it in x-space because all losses, interaction and noise are
 		# calculated in x-space, and kinetic + potential operator is less significant.
 		#psi.toMSpace()
-		N_target = numpy.array(N).sum()
-		N_real = self._stats.getN(psi).sum()
-		coeff = numpy.sqrt(N_target / N_real)
-		self._kernel_multiplyConstantCS(psi.size, psi.data, self._constants.scalar.cast(coeff))
+		N_target = numpy.array(N)
+		N_real = self._stats.getN(psi)
+		coeffs = numpy.sqrt(N_target / N_real)
+		cast = self._constants.scalar.cast
+
+		# TODO: generalize for components > 2 if necessary
+		self._kernel_multiplyConstantsCS(psi.size, psi.data,
+			cast(coeffs[0]), cast(coeffs[1] if len(coeffs) > 1 else 0))
 		#psi.toXSpace()
 
 	def create(self, N):
@@ -510,11 +517,10 @@ class RK5Propagation(PairedCalculation):
 				(1 + 1j) * self._p.tiny).flat
 
 	def _cpu__kernel_calculateError(self, gsize, k, scale):
-		shape = k.shape[2:]
+		shape = (self._p.components,) + k.shape[2:]
 		scale = scale.reshape(shape)
-		for c in xrange(self._p.components):
-			k[0, c].real /= scale.real * self._p.eps
-			k[0, c].imag /= scale.imag * self._p.eps
+		k[0].real /= scale.real * self._p.eps
+		k[0].imag /= scale.imag * self._p.eps
 
 	def _cpu__kernel_createData(self, gsize, res, data, k, stage):
 		b = self._p.b[stage, :]
@@ -697,7 +703,7 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 		tile = (self._p.components,) + (1,) * self._grid.dim
 		p_tiled = numpy.tile(potentials, tile)
 
-		k[stage] = p_tiled.copy()
+		k[stage].flat[:] = p_tiled.flat
 		for c in xrange(self._p.components):
 			for other_c in xrange(self._p.components):
 				k[stage, c] += n[other_c, 0] * g[c, other_c]
@@ -817,14 +823,15 @@ class RK5HarmonicGroundState(ImaginaryTimeGroundState):
 			data[comp] *= res
 
 	def _cpu__kernel_propagationFunc(self, gsize, k, data, nldata, energy, dt0, stage):
-		for comp in xrange(self._p.components):
-			k[stage, comp] = (-data[comp] * energy + nldata) * dt0
+		tile = (self._p.components,) + (1,) * self._grid.dim
+		e = numpy.tile(energy, tile)
+		k[stage].flat[:] = ((-data * e + nldata) * dt0).flat
 
 	def _propFunc(self, results, values, dt, dt_full, stage):
 		cast = self._constants.scalar.cast
-		self._plan3.execute(values, self._x3data, inverse=True)
+		self._plan3.execute(values, self._x3data, inverse=True, batch=self._p.components)
 		self._kernel_calculateNonlinear(self._x3data.size, self._x3data)
-		self._plan3.execute(self._x3data, self._mdata)
+		self._plan3.execute(self._x3data, self._mdata, batch=self._p.components)
 		self._kernel_propagationFunc(values.size, results, values,
 			self._mdata, self._energy, cast(dt_full), numpy.int32(stage))
 
