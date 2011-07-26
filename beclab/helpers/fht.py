@@ -76,7 +76,7 @@ def my_h_roots(n):
 
 	return x, w
 
-def getHarmonicGrid(N, l):
+def getHarmonicGrid(N, l, dp):
 	if (N - 1) * (l + 1) + 1 % 2 == 0:
 		points = ((N - 1) * (l + 1) + 1) / 2
 	else:
@@ -91,7 +91,7 @@ def getHarmonicGrid(N, l):
 	# In addition: with dp != 0 X-M-X transform of TF state
 	# gives non-smooth curve. Certainly TF state has some higher harmonics
 	# (infinite number of them, to be precise), but why it is smooth when dp = 0?
-	#points += 5
+	points += dp
 
 	roots, weights = my_h_roots(points)
 
@@ -108,8 +108,8 @@ def getEigenfunction3D(nx, ny, nz):
 	return lambda x, y, z: getEigenfunction(nx)(x) * \
 		getEigenfunction(ny)(y) * getEigenfunction(nz)(z)
 
-def getPMatrix(N, l):
-	x, _ = getHarmonicGrid(N, l)
+def getPMatrix(N, l, dp):
+	x, _ = getHarmonicGrid(N, l, dp)
 
 	res = numpy.zeros((N, len(x)))
 
@@ -121,7 +121,7 @@ def getPMatrix(N, l):
 
 class FHT1D(PairedCalculation):
 
-	def __init__(self, env, constants, grid, N, order, scale=1):
+	def __init__(self, env, constants, grid, N, order, scale=1, dp=0):
 		"""
 		N: the maximum number of harmonics
 		(i.e. transform returns decomposition on eigenfunctions with numbers 0 .. N)
@@ -134,7 +134,7 @@ class FHT1D(PairedCalculation):
 
 		self.N = N
 		self.order = order
-		_, w = getHarmonicGrid(N, order)
+		_, w = getHarmonicGrid(N, order, dp)
 
 		self._scalar_dtype = constants.scalar.dtype
 		self._complex_dtype = constants.complex.dtype
@@ -142,7 +142,7 @@ class FHT1D(PairedCalculation):
 		self._weights_x = self._env.toDevice(w.astype(self._scalar_dtype))
 		self._xshape = (len(w),)
 
-		P = getPMatrix(self.N, self.order).astype(self._scalar_dtype)
+		P = getPMatrix(self.N, self.order, dp).astype(self._scalar_dtype)
 		self._P = self._env.toDevice(P)
 
 		# flatten and reshape make memory linear again
@@ -231,7 +231,7 @@ class FHT1D(PairedCalculation):
 
 class FHT3D(PairedCalculation):
 
-	def __init__(self, env, constants, grid, N, order, scale=(1, 1, 1)):
+	def __init__(self, env, constants, grid, N, order, scale=(1, 1, 1), dp=(0, 0, 0)):
 		"""
 		N: the maximum number of harmonics (tuple (Nz, Ny, Nx))
 		(i.e. transform returns decomposition on eigenfunctions with numbers 0 .. N - 1)
@@ -253,18 +253,18 @@ class FHT3D(PairedCalculation):
 		self._fwd_scale = constants.scalar.cast(scale)
 		self._inv_scale = constants.scalar.cast(1.0 / scale)
 
-		_, wx = getHarmonicGrid(N[2], order)
-		_, wy = getHarmonicGrid(N[1], order)
-		_, wz = getHarmonicGrid(N[0], order)
+		_, wx = getHarmonicGrid(N[2], order, dp[2])
+		_, wy = getHarmonicGrid(N[1], order, dp[1])
+		_, wz = getHarmonicGrid(N[0], order, dp[0])
 
 		self._xshape = (len(wz), len(wy), len(wx))
 		wx, wy, wz = tile3D(wx, wy, wz)
 
 		self._weights = self._env.toDevice(scalar_cast(wx * wy * wz))
 
-		Px = scalar_cast(getPMatrix(self.N[2], self.order))
-		Py = scalar_cast(getPMatrix(self.N[1], self.order))
-		Pz = scalar_cast(getPMatrix(self.N[0], self.order))
+		Px = scalar_cast(getPMatrix(self.N[2], self.order, dp[2]))
+		Py = scalar_cast(getPMatrix(self.N[1], self.order, dp[1]))
+		Pz = scalar_cast(getPMatrix(self.N[0], self.order, dp[0]))
 
 		Px_tr = Px.transpose()
 		Py_tr = Py.transpose()
