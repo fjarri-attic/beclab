@@ -76,7 +76,7 @@ def my_h_roots(n):
 
 	return x, w
 
-def getHarmonicGrid(N, l, dp):
+def getHarmonicGrid(N, l, dp=0):
 	if (N - 1) * (l + 1) + 1 % 2 == 0:
 		points = ((N - 1) * (l + 1) + 1) / 2
 	else:
