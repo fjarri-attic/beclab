@@ -725,7 +725,7 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 			return
 
 		self._plan.execute(data, batch=self._p.components)
-		self._kernel_transformIP(data.size, data, self._energy, self._constants.scalar.cast(dt))
+		self._kernel_transformIP(self._grid.size, data, self._energy, self._constants.scalar.cast(dt))
 		self._plan.execute(data, batch=self._p.components, inverse=True)
 
 	def _fromIP(self, data, dt):
