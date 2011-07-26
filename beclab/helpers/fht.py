@@ -179,8 +179,8 @@ class FHT1D(PairedCalculation):
 			}
 
 			EXPORTED_FUNC void matrixMulCS(int gsize, GLOBAL_MEM COMPLEX *res,
-				GLOBAL_MEM COMPLEX *m1, GLOBAL_MEM SCALAR *m2,
-				int w1, int h1, int w2, SCALAR scale)
+				GLOBAL_MEM COMPLEX *m1, GLOBAL_MEM SCALAR *m2, SCALAR scale,
+				int w1, int h1, int w2)
 			{
 				LIMITED_BY(gsize);
 
@@ -201,7 +201,7 @@ class FHT1D(PairedCalculation):
 		self._kernel_multiplyTiledCS = self._program.multiplyTiledCS
 		self._kernel_matrixMulCS = self._program.matrixMulCS
 
-	def _cpu__kernel_matrixMulCS(self, gsize, res, m1, m2, w1, h1, w2, scale):
+	def _cpu__kernel_matrixMulCS(self, gsize, res, m1, m2, scale, w1, h1, w2):
 		self._env.copyBuffer(numpy.dot(m1, m2), dest=res)
 		res *= scale
 
@@ -215,9 +215,8 @@ class FHT1D(PairedCalculation):
 
 			self._kernel_matrixMulCS(batch * self._xshape[0],
 				result, data, self._P,
-				cast(self.N), cast(batch), cast(self._xshape[0]),
-				self._inv_scale
-			)
+				self._inv_scale,
+				cast(self.N), cast(batch), cast(self._xshape[0]))
 		else:
 			assert data.shape[-1:] == self._xshape
 			self._allocateXi(batch)
@@ -226,8 +225,8 @@ class FHT1D(PairedCalculation):
 
 			self._kernel_matrixMulCS(batch * self.N,
 				result, self._Xi, self._P_tr,
-				cast(self._xshape[0]), cast(batch), cast(self.N),
-				self._fwd_scale)
+				self._fwd_scale,
+				cast(self._xshape[0]), cast(batch), cast(self.N))
 
 
 class FHT3D(PairedCalculation):
