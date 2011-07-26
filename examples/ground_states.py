@@ -46,10 +46,11 @@ def runTest(env, grid_type, dim, gs_type):
 		gs = SplitStepGroundState(*args, **params)
 	elif gs_type == "rk5":
 		if isinstance(grid, UniformGrid):
-			# reduced eps to make it converge in single precision
-			gs = RK5IPGroundState(*args, eps=1e-6, Nscale=N)
+			gs = RK5IPGroundState(*args, eps=1e-9 if dim == '1d' else 1e-6,
+				Nscale=N, atol_coeff=1e-3)
 		else:
-			gs = RK5HarmonicGroundState(*args)
+			gs = RK5HarmonicGroundState(*args, eps=1e-7 if dim == '1d' else 1e-6,
+				Nscale=N, atol_coeff=1e-3)
 
 	prj = DensityProfile(*args)
 	stats = ParticleStatistics(*args, components=2)
@@ -110,18 +111,18 @@ if __name__ == '__main__':
 
 	prefix = 'ground_states_'
 	tests = (
-		(False, True), # gpu usage
-		('uniform', 'harmonic'), # grid type
-		('TF', 'rk5') # ground state type
+		('uniform', 'harmonic',), # grid type
+		('TF', 'split-step', 'rk5',), # ground state type
+		(False, True,), # gpu usage
 	)
 
 	# Thomas-Fermi ground states
-	for dim in ('1d', '3d'):
+	for dim in ('1d', '3d',):
 		print
 		print "***", dim, "***"
 		print
 		plots = []
-		for gpu, grid_type, gs_type in itertools.product(*tests):
+		for grid_type, gs_type, gpu in itertools.product(*tests):
 			if grid_type == 'harmonic' and gs_type == 'split-step':
 				continue
 			print "* Testing", grid_type, "grid and", gs_type, "on", ("GPU" if gpu else "CPU")
