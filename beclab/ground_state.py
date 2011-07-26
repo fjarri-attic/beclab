@@ -623,7 +623,7 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 
 		self._propagator = RK5Propagation(self._env, self._constants, self._grid, mspace=False)
 
-		self._addParameters(relative_precision=1e-0, atol_coeff=1e-6,
+		self._addParameters(relative_precision=1e-0, atol_coeff=1e-3,
 			eps=1e-6, dt_guess=1e-4, Nscale=10000)
 		self.prepare(**kwds)
 
@@ -743,7 +743,7 @@ class RK5HarmonicGroundState(ImaginaryTimeGroundState):
 		self._propagator = RK5Propagation(self._env, self._constants, self._grid, mspace=True)
 
 		self._addParameters(kwds, relative_precision=1e-0,
-			atol_coeff=1e-6, eps=1e-6, dt_guess=1e-4, Nscale=10000)
+			atol_coeff=1e-3, eps=1e-6, dt_guess=1e-4, Nscale=10000)
 
 	def _prepare(self):
 
