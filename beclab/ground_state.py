@@ -667,13 +667,8 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 				SCALAR p = potentials[GLOBAL_INDEX];
 
 				%for comp in xrange(p.components):
-				COMPLEX val${comp};
-				SCALAR n${comp};
-				%endfor
-
-				%for comp in xrange(p.components):
-				val${comp} = data[GLOBAL_INDEX + gsize * ${comp}];
-				n${comp} = squared_abs(val${comp});
+				COMPLEX val${comp} = data[GLOBAL_INDEX + gsize * ${comp}];
+				SCALAR n${comp} = squared_abs(val${comp});
 				%endfor
 
 				%for comp in xrange(p.components):
