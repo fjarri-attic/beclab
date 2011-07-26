@@ -331,8 +331,8 @@ class FHT3D(PairedCalculation):
 			}
 
 			EXPORTED_FUNC void matrixMulCS2(int gsize, GLOBAL_MEM COMPLEX *res,
-				GLOBAL_MEM COMPLEX *m1, GLOBAL_MEM SCALAR *m2,
-				int w1, int h1, int w2, SCALAR coeff)
+				GLOBAL_MEM COMPLEX *m1, GLOBAL_MEM SCALAR *m2, SCALAR coeff,
+				int w1, int h1, int w2)
 			{
 				LIMITED_BY(gsize);
 				int output_index = GLOBAL_INDEX;
@@ -361,7 +361,7 @@ class FHT3D(PairedCalculation):
 		m2 = m2.flat[:w1*w2].reshape(w1, w2)
 		res.flat[:gsize] = numpy.dot(m1, m2).flat
 
-	def _cpu__kernel_matrixMulCS2(self, gsize, res, m1, m2, w1, h1, w2, coeff):
+	def _cpu__kernel_matrixMulCS2(self, gsize, res, m1, m2, coeff, w1, h1, w2):
 		m1 = m1.flat[:w1*h1].reshape(h1, w1)
 		m2 = m2.flat[:w1*w2].reshape(w1, w2)
 		res.flat[:gsize] = numpy.dot(m1, m2).flat * coeff
@@ -427,8 +427,8 @@ class FHT3D(PairedCalculation):
 				cast(My), cast(batch * Mx * Nz), cast(Ny))
 			self._permute(self._temp2, self._temp1, (Mx, Nz, Ny), batch=batch)
 			self._kernel_matrixMulCS2(batch * Nz * Ny * Nx,
-				result, self._temp1, self._Px_tr,
-				cast(Mx), cast(batch * Nz * Ny), cast(Nx), self._scalar_cast(self._fwd_scale))
+				result, self._temp1, self._Px_tr, self._scalar_cast(self._fwd_scale),
+				cast(Mx), cast(batch * Nz * Ny), cast(Nx))
 			# FIXME: for some reason this function damages nearby buffers;
 			# multiplication in matrixMul seems to work well.
 			#self._kernel_multiplyConstantCS(Nz * Ny * Nx, result, result,
