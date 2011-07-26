@@ -19,7 +19,7 @@ class NumpyPlan3D:
 			coeff = self._scale
 
 		shape = self._shape
-		data_out.flat[:] = func(data_in.reshape(batch, *shape), axes=(1, 2, 3)).flat
+		data_out.flat[:] = func(data_in.reshape(batch, *shape), axes=(-3, -2, -1)).flat
 		data_out *= coeff
 
 
