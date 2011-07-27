@@ -321,27 +321,30 @@ class HarmonicGrid:
 				self.dzs[l] = getIntegrationCoefficients(self.zs[l])
 				self.dVs[l] = self.dzs[l]
 
-			# Create aliases for 1st order arrays,
-			# making it look like UniformGrid
-			# (high orders are used only inside evolution classes anyway)
-			self.shape = self.shapes[1]
-			self.dV = self.dVs[1]
+		# Create aliases for 1st order arrays,
+		# making it look like UniformGrid
+		# (high orders are used only inside evolution classes anyway)
+		self.shape = self.shapes[1]
+		self.dV = self.dVs[1]
 
-			self.size = 1
+		self.sizes = {}
+		for j in (1, 2, 3, 4):
+			self.sizes[j] = 1
 			for i in xrange(self.dim):
-				self.size *= self.shape[i]
+				self.sizes[j] *= self.shapes[j][i]
+		self.size = self.sizes[1]
 
-			if self.dim == 3:
-				self.x = self.xs[1]
-				self.y = self.ys[1]
-				self.x_full = self.xs_full[1]
-				self.y_full = self.ys_full[1]
-				self.dx = self.dxs[1]
-				self.dy = self.dys[1]
+		if self.dim == 3:
+			self.x = self.xs[1]
+			self.y = self.ys[1]
+			self.x_full = self.xs_full[1]
+			self.y_full = self.ys_full[1]
+			self.dx = self.dxs[1]
+			self.dy = self.dys[1]
 
-			self.z = self.zs[1]
-			self.z_full = self.zs_full[1]
-			self.dz = self.dzs[1]
+		self.z = self.zs[1]
+		self.z_full = self.zs_full[1]
+		self.dz = self.dzs[1]
 
 	def copy(self):
 		return copy.deepcopy(self)
