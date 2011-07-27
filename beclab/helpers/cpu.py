@@ -33,3 +33,6 @@ class CPUEnvironment:
 
 	def compile(self, source, constants, **kwds):
 		raise NotImplementedError("compile() called for CPU environment")
+
+	def supportsDouble(self):
+		return True

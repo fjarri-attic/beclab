@@ -161,3 +161,7 @@ class CUDAEnvironment:
 
 	def compile(self, source, double=False, prelude="", **kwds):
 		return _ProgramWrapper(self, source, double=double, prelude=prelude, **kwds)
+
+	def supportsDouble(self):
+		major, minor = self.context.get_device().compute_capability()
+		return (major == 1 and minor == 3) or major >= 2
