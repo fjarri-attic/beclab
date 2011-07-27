@@ -753,8 +753,8 @@ class RK5HarmonicGroundState(ImaginaryTimeGroundState):
 		shape = self._grid.mshape
 		cdtype = self._constants.complex.dtype
 
-		self._x3data = self._env.allocate((self._p.components,) + self._grid.shapes[3], dtype=cdtype)
-		self._mdata = self._env.allocate((self._p.components,) + self._grid.mshape, dtype=cdtype)
+		self._x3data = self._env.allocate((self._p.components, 1) + self._grid.shapes[3], dtype=cdtype)
+		self._mdata = self._env.allocate((self._p.components, 1) + self._grid.mshape, dtype=cdtype)
 
 		self._propagator.prepare(eps=self._p.eps, dt_guess=self._p.dt_guess,
 			tiny=numpy.sqrt(self._p.Nscale) * self._p.atol_coeff, components=self._p.components)
@@ -819,16 +819,16 @@ class RK5HarmonicGroundState(ImaginaryTimeGroundState):
 			data[comp] *= res
 
 	def _cpu__kernel_propagationFunc(self, gsize, k, data, nldata, energy, dt0, stage):
-		tile = (self._p.components,) + (1,) * self._grid.dim
+		tile = (self._p.components,) + (1,) * (self._grid.dim + 1)
 		e = numpy.tile(energy, tile)
 		k[stage].flat[:] = ((-data * e + nldata) * dt0).flat
 
 	def _propFunc(self, results, values, dt, dt_full, stage):
 		cast = self._constants.scalar.cast
 		self._plan3.execute(values, self._x3data, inverse=True, batch=self._p.components)
-		self._kernel_calculateNonlinear(self._x3data.size, self._x3data)
+		self._kernel_calculateNonlinear(self._grid.sizes[3], self._x3data)
 		self._plan3.execute(self._x3data, self._mdata, batch=self._p.components)
-		self._kernel_propagationFunc(values.size, results, values,
+		self._kernel_propagationFunc(self._grid.msize, results, values,
 			self._mdata, self._energy, cast(dt_full), numpy.int32(stage))
 
 	def _finalizeFunc(self, psi, dt_used):
