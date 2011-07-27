@@ -767,10 +767,11 @@ class RK5HarmonicGroundState(ImaginaryTimeGroundState):
 			{
 				LIMITED_BY(gsize);
 
+				SCALAR res;
+
 				%for comp in xrange(p.components):
 				COMPLEX val${comp} = data[GLOBAL_INDEX + gsize * ${comp}];
 				SCALAR n${comp} = squared_abs(val${comp});
-				SCALAR res;
 				%endfor
 
 				%for comp in xrange(p.components):
