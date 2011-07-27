@@ -116,12 +116,16 @@ class TFGroundState(PairedCalculation):
 		#psi.toMSpace()
 		N_target = numpy.array(N)
 		N_real = self._stats.getN(psi)
-		coeffs = numpy.sqrt(N_target / N_real)
+
+		coeffs = []
+		for target, real in zip(N_target, N_real):
+			coeffs.append(numpy.sqrt(target / real) if real != 0 else 1.0)
+
 		cast = self._constants.scalar.cast
 
 		# TODO: generalize for components > 2 if necessary
-		self._kernel_multiplyConstantsCS(psi.size, psi.data,
-			cast(coeffs[0]), cast(coeffs[1] if len(coeffs) > 1 else 0))
+		self._kernel_multiplyConstantsCS(self._grid.size, psi.data,
+			cast(coeffs[0]), cast(coeffs[1] if len(coeffs) > 1 else 1))
 		#psi.toXSpace()
 
 	def create(self, N):
