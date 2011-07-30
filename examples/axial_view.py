@@ -15,18 +15,43 @@ def testAxialView(gpu, grid_type, dim, prop_type):
 
 def runTest(env, grid_type, dim, prop_type):
 
-	N = 150000
-	constants = Constants(double=env.supportsDouble())
-	grid = UniformGrid.forN(env, constants, N, (64, 8, 8))
+	# additional parameters
+	constants_kwds = {
+		'1d': dict(use_effective_area=True, fx=42e3, fy=42e3, fz=90),
+		'3d': {}
+	}[dim]
 
-	gs = SplitStepGroundState(env, constants, grid)
-	evolution = SplitStepEvolution(env, constants, grid, dt=4e-5)
+	# total number of atoms in ground state
+	total_N = {
+		'1d': 60,
+		'3d': 150000
+	}[dim]
+
+	# number of lattice points
+	shape = {
+		('1d', 'uniform'): (64,),
+		('3d', 'uniform'): (64, 8, 8),
+		('1d', 'harmonic'): (50,),
+		('3d', 'harmonic'): (50, 10, 10)
+	}[(dim, grid_type)]
+
+	# time step for split-step propagation
+	ss_dt = {
+		'1d': 1e-6,
+		'3d': 1e-5
+	}[dim]
+
+	constants = Constants(double=env.supportsDouble(), **constants_kwds)
+	grid = UniformGrid.forN(env, constants, total_N, shape)
+
+	gs = SplitStepGroundState(env, constants, grid, dt=ss_dt)
+	evolution = SplitStepEvolution(env, constants, grid, dt=1e-5)
 	pulse = Pulse(env, constants, grid, f_detuning=41, f_rabi=350)
 	a = AxialProjectionCollector(env, constants, grid, matrix_pulse=True, pulse=pulse)
 	p = ParticleNumberCollector(env, constants, grid, matrix_pulse=True, pulse=pulse)
 
 	# experiment
-	psi = gs.create((N, 0))
+	psi = gs.create((total_N, 0))
 
 	pulse.apply(psi, theta=0.5 * numpy.pi, matrix=True)
 
@@ -64,7 +89,7 @@ if __name__ == '__main__':
 		(False, True), # gpu usage
 	)
 
-	for dim in ('3d',):
+	for dim in ('1d', '3d',):
 		print "\n*** {dim} ***\n".format(dim=dim)
 
 		for grid_type, prop_type, gpu in itertools.product(*tests):
