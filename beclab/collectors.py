@@ -2,48 +2,50 @@ import numpy
 import math
 
 from helpers import *
-from .state import ParticleStatistics, Projection, Slice, Uncertainty
+from .meters import ParticleStatistics, DensityProfile
 from .evolution import TerminateEvolution
 from .pulse import Pulse
 
 
-class ParticleNumberCollector:
+class ParticleNumberCollector(PairedCalculation):
 
-	def __init__(self, env, constants, verbose=False, pulse=None, matrix_pulse=True):
-		self.stats = ParticleStatistics(env, constants)
+	def __init__(self, env, constants, grid, verbose=False, pulse=None, matrix_pulse=True):
+		PairedCalculation.__init__(self, env)
+		self.stats = ParticleStatistics(env, constants, grid)
 		self.verbose = verbose
 		self._pulse = pulse
 		self._matrix_pulse = matrix_pulse
 
 		self.times = []
-		self.Na = []
-		self.Nb = []
+		self.N = []
 
-	def __call__(self, t, cloud):
-		cloud = cloud.copy(prepare=False)
+		self._addParameters(components=2, ensembles=1)
+
+	def _prepare(self):
+		self.stats.prepare(components=self._p.components, ensembles=self._p.ensembles)
+
+	def __call__(self, t, psi):
+		psi_copy = psi.copy()
 
 		if self._pulse is not None:
-			self._pulse.apply(cloud, theta=0.5 * math.pi, matrix=self._matrix_pulse)
+			self._pulse.apply(psi_copy, theta=0.5 * numpy.pi, matrix=self._matrix_pulse)
 
-		Na = self.stats.countParticles(cloud.a)
-		Nb = self.stats.countParticles(cloud.b)
+		N = self.stats.getN(psi_copy)
 		if self.verbose:
-			print "Particle counter: " + str((t, int(Na), int(Nb), int(Na + Nb)))
+			print "Particle counter: ", t, N
 
 		self.times.append(t)
-		self.Na.append(Na)
-		self.Nb.append(Nb)
+		self.N.append(N)
 
 	def getData(self):
-		Na = numpy.array(self.Na)
-		Nb = numpy.array(self.Nb)
-		return numpy.array(self.times), Na, Nb, Na + Nb
+		N = numpy.array(self.N)
+		return numpy.array(self.times), N.transpose(), N.sum(0)
 
 
 class ParticleNumberCondition:
 
-	def __init__(self, env, constants, verbose=False, pulse=None, matrix_pulse=True, ratio=0.5):
-		self._stats = ParticleStatistics(env, constants)
+	def __init__(self, env, constants, grid, verbose=False, pulse=None, matrix_pulse=True, ratio=0.5):
+		self._stats = ParticleStatistics(env, constants, grid)
 		self._verbose = verbose
 		self._pulse = pulse
 		self._matrix_pulse = matrix_pulse
@@ -212,33 +214,42 @@ class SliceCollector:
 		return self.times, self.a_xy, self.a_yz, self.b_xy, self.b_yz
 
 
-class AxialProjectionCollector:
+class AxialProjectionCollector(PairedCalculation):
 
-	def __init__(self, env, constants, pulse=None, matrix_pulse=True):
-		self._projection = Projection(env, constants)
+	def __init__(self, env, constants, grid, pulse=None, matrix_pulse=True):
+		PairedCalculation.__init__(self, env)
+		self._projection = DensityProfile(env, constants, grid)
 		self._pulse = pulse
 		self._matrix_pulse = matrix_pulse
 		self._constants = constants
+		self._grid = grid
 
 		self.times = []
 		self.snapshots = []
 
-	def __call__(self, t, cloud):
+		self._addParameters(components=2, ensembles=1)
 
-		cloud = cloud.copy()
+	def _prepare(self):
+		self._projection.prepare(components=self._p.components, ensembles=self._p.ensembles)
+
+	def __call__(self, t, psi):
+
+		# TODO: use some 'fast' copy?
+		psi_copy = psi.copy()
 
 		if self._pulse is not None:
-			self._pulse.apply(cloud, theta=0.5 * math.pi, matrix=self._matrix_pulse)
+			self._pulse.apply(psi_copy, theta=0.5 * numpy.pi, matrix=self._matrix_pulse)
 
 		self.times.append(t)
 
-		a_proj = self._projection.getZ(cloud.a)
-		b_proj = self._projection.getZ(cloud.b)
+		proj = self._projection.getZ(psi_copy)
 
-		self.snapshots.append((a_proj - b_proj) / (a_proj + b_proj))
+		self.snapshots.append((proj[0] - proj[1]) / (proj[0] + proj[1]))
 
 	def getData(self):
-		return numpy.array(self.times), numpy.concatenate(self.snapshots).reshape(len(self.times), self.snapshots[0].size).transpose()
+		return numpy.array(self.times), \
+			numpy.concatenate(self.snapshots).reshape(
+				len(self.times), self.snapshots[0].size).transpose()
 
 
 class UncertaintyCollector:
