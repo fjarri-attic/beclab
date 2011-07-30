@@ -384,10 +384,50 @@ class Constants:
 			[g(self.a12), g(self.a22)]
 		])
 
+		# TODO: need to implement some mechanism of passing this information
+		# from Constants constructor (parsing names of keyword arguments?)
+		l = {
+			(1, 1): self.gamma12 / 2,
+			(0, 2): self.gamma22 / 4,
+			(3, 0): self.gamma111 / 6
+		}
+
+		self.losses_drift = [] # 'Gammas'
+		self.losses_diffusion = [] # 'betas'
+
+		for comp in xrange(2):
+			drift = []
+			diffusion = []
+
+			for orders, kappa in l.iteritems():
+				# appending empty diffusion term in order to account for
+				# different noise sources for different losses
+				if orders[comp] == 0:
+					diffusion.append([0, ()])
+				else:
+					drift_orders = list(orders)
+					drift_coeff = orders[comp] * kappa
+					drift_orders[comp] -= 1
+
+					diffusion_orders = list(orders)
+					diffusion_orders[comp] -= 1
+					diffusion_coeff = orders[comp] * numpy.sqrt(kappa)
+
+					drift.append([drift_coeff, drift_orders])
+					diffusion.append([diffusion_coeff, diffusion_orders])
+
+			self.losses_drift.append(drift)
+			self.losses_diffusion.append(diffusion)
+
+		self.noise_sources = len(l)
+
 		if use_effective_area:
 			S = self.getEffectiveArea()
 			self.g /= S
-			# FIXME: add same technique for loss terms
+
+			# FIXME: uncomment when structure of losses is finished
+			#for components in self.l:
+			#	self.l[components] /= S ** (order - 1)
 
 	def getEffectiveArea(self):
 		l_rho = numpy.sqrt(self.hbar / (2.0 * self.m * self.wx))
