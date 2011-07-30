@@ -42,31 +42,17 @@ class ParticleNumberCollector(PairedCalculation):
 		return numpy.array(self.times), N.transpose(), N.sum(1)
 
 
-class ParticleNumberCondition:
+class ParticleNumberCondition(ParticleNumberCollector):
 
-	def __init__(self, env, constants, grid, verbose=False, pulse=None, matrix_pulse=True, ratio=0.5):
-		self._stats = ParticleStatistics(env, constants, grid)
-		self._verbose = verbose
-		self._pulse = pulse
-		self._matrix_pulse = matrix_pulse
+	def __init__(self, env, constants, grid, ratio=0.5, **kwds):
+		ParticleNumberCollector.__init__(self, env, constants, grid, **kwds)
+		self._previous_ratio = None
 		self._ratio = ratio
 
-		self._previous_Na = None
-		self._previous_ratio = None
+	def __call__(self, t, psi):
+		ParticleNumberCollector.__call__(self, t, psi)
 
-	def __call__(self, t, cloud):
-		cloud = cloud.copy(prepare=False)
-
-		if self._pulse is not None:
-			self._pulse.apply(cloud, theta=0.5 * math.pi, matrix=self._matrix_pulse)
-
-		Na = self._stats.countParticles(cloud.a)
-		Nb = self._stats.countParticles(cloud.b)
-
-		ratio = Na / (Na + Nb)
-
-		if self._verbose:
-			print "Particle ratio: " + str((t, Na, Nb, ratio))
+		ratio = self.N[-1][0] / (self.N[-1][0] + self.N[-1][1])
 
 		if self._previous_ratio is None:
 			self._previous_ratio = ratio
@@ -120,20 +106,26 @@ class PzNoiseCollector:
 		return numpy.array(self._times), numpy.array(self._var)
 
 
-class VisibilityCollector:
+class VisibilityCollector(PairedCalculation):
 
-	def __init__(self, env, constants, verbose=False):
-		self.stats = ParticleStatistics(env, constants)
+	def __init__(self, env, constants, grid, verbose=False):
+		PairedCalculation.__init__(self, env)
+		self.stats = ParticleStatistics(env, constants, grid)
 		self.verbose = verbose
 
 		self.times = []
 		self.visibility = []
 
-	def __call__(self, t, cloud):
-		v = self.stats.getVisibility(cloud.a, cloud.b)
+		self._addParameters(components=2, ensembles=1)
+
+	def _prepare(self):
+		self.stats.prepare(components=self._p.components, ensembles=self._p.ensembles)
+
+	def __call__(self, t, psi):
+		v = self.stats.getVisibility(psi)
 
 		if self.verbose:
-			print "Visibility: " + str((t, v))
+			print "Visibility: ", (t, v)
 
 		self.times.append(t)
 		self.visibility.append(v)
