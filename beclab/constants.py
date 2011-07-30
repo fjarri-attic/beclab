@@ -33,6 +33,8 @@ _DEFAULTS = {
 	'gamma111': 5.4e-42,
 	'gamma12': 1.52e-20,
 	'gamma22': 7.7e-20,
+
+	'e_cut': 1,
 }
 
 def getPotentials(env, constants, grid):
