@@ -120,9 +120,11 @@ class GPUReduce:
 			name = "smallSparseReduce" + str(reduce_power)
 			self._small_kernels[reduce_power] = getattr(program, name)
 
-	def __call__(self, array, final_length=1):
+	def __call__(self, array, length=None, final_length=1):
 
-		length = array.size
+		if length is None:
+			length = array.size
+
 		assert length >= final_length, "Array size cannot be less than final size"
 		assert length % final_length == 0
 
@@ -366,24 +368,30 @@ class GPUMaxFinder:
 
 class CPUReduce:
 
-	def __call__(self, array, final_length=1):
+	def __call__(self, array, length=None, final_length=1):
 
 		if final_length == 1:
-			return numpy.sum(array).reshape((1,))
+			return numpy.sum(array.ravel()[:length]).reshape((1,))
 
-		return array.reshape(final_length, array.size / final_length).sum(1)
+		if length is None:
+			length = array.size
 
-	def sparse(self, array, final_length=1, final_shape=None):
+		return array.ravel()[:length].reshape(final_length, length / final_length).sum(1)
+
+	def sparse(self, array, length=None, final_length=1, final_shape=None):
 
 		if final_length == 1:
 			return self(array)
+
+		if length is None:
+			length = array.size
 
 		# TODO: check that final_shape contains necessary amount of elements
 		if final_shape is None:
 			final_shape = (final_length,)
 
-		reduce_power = array.size / final_length
-		return self(array.reshape(reduce_power, final_length).T,
+		reduce_power = length / final_length
+		return self(array.ravel()[:length].reshape(reduce_power, final_length).T,
 			final_length=final_length).reshape(final_shape)
 
 
