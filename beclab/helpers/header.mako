@@ -44,6 +44,8 @@ INTERNAL_FUNC ${complex} complex_ctr(${scalar} x, ${scalar} y)
 %if cuda:
 	INTERNAL_FUNC ${complex} operator+(${complex} a, ${complex} b) { return complex_ctr(a.x + b.x, a.y + b.y); }
 	INTERNAL_FUNC ${complex} operator-(${complex} a, ${complex} b) { return complex_ctr(a.x - b.x, a.y - b.y); }
+	INTERNAL_FUNC ${complex} operator+(${complex} a) { return a; }
+	INTERNAL_FUNC ${complex} operator-(${complex} a) { return complex_ctr(-a.x, -a.y); }
 %endif
 
 INTERNAL_FUNC ${complex} complex_mul_scalar(${complex} a, ${scalar} b)
