@@ -142,7 +142,8 @@ class ParticleStatistics(PairedCalculation):
 			self._p.density_modifier) / coeff, dest=density)
 
 	def _cpu__kernel_multiplyTiledSS(self, gsize, data, coeffs):
-		data.flat *= numpy.tile(coeffs.flat, self._p.ensembles * self._p.components)
+		data *= numpy.tile(coeffs,
+			(self._p.components,) + (1,) * self._grid.dim)
 
 	def _cpu__kernel_multiplyTiledCS(self, gsize, data, coeffs):
 		data.flat *= numpy.tile(coeffs.flat, self._p.ensembles * self._p.components)
@@ -201,7 +202,6 @@ class ParticleStatistics(PairedCalculation):
 		density = self.getAverageDensity(psi)
 		if not psi.in_mspace:
 			self._kernel_multiplyTiledSS(psi.size, density, self._dV)
-
 		return density
 
 	def _getInvariant(self, psi, coeff, N):
@@ -309,10 +309,10 @@ class DensityProfile(PairedCalculation):
 		self._grid = grid.copy()
 		self._reduce = createReduce(env, constants.scalar.dtype)
 		self._stats = ParticleStatistics(env, constants, grid)
-		self._addParameters(components=2)
+		self._addParameters(components=2, ensembles=1)
 
 	def _prepare(self):
-		self._stats.prepare(self._p.components)
+		self._stats.prepare(components=self._p.components, ensembles=self._p.ensembles)
 
 	def getXY(self, psi):
 		p = self._stats.getAveragePopulation(psi)
