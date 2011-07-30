@@ -45,7 +45,7 @@ def runTest(env, grid_type, dim, prop_type):
 	grid = UniformGrid.forN(env, constants, total_N, shape)
 
 	gs = SplitStepGroundState(env, constants, grid, dt=ss_dt)
-	evolution = SplitStepEvolution(env, constants, grid, dt=4e-6)
+	evolution = SplitStepEvolution(env, constants, grid, dt=1e-5)
 	pulse = Pulse(env, constants, grid, f_detuning=41, f_rabi=350)
 	a = AxialProjectionCollector(env, constants, grid, matrix_pulse=True, pulse=pulse)
 	p = ParticleNumberCollector(env, constants, grid, matrix_pulse=True, pulse=pulse)
@@ -60,7 +60,6 @@ def runTest(env, grid_type, dim, prop_type):
 	evolution.run(psi, time=0.1, callbacks=[a, p, v], callback_dt=0.005)
 	env.synchronize()
 	t2 = time.time()
-	print "Time spent: " + str(t2 - t1) + " s"
 
 	times, heightmap = a.getData()
 
@@ -76,7 +75,8 @@ def runTest(env, grid_type, dim, prop_type):
 	times, Ns, Ntotals = p.getData()
 	times, vis = v.getData()
 
-	print "  Final N: ", Ns[:,-1], "(", Ntotals[-1], ")", ", V: ", vis[-1]
+	print ("  Final N: {N} ({Ntotal}), V: {vis}\n" +
+		"  Time spent: {t}").format(N=Ns[:,-1], Ntotal=Ntotals[-1], vis=vis[-1], t=t2-t1)
 
 	return res
 
