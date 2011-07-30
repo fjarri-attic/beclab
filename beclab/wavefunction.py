@@ -17,6 +17,7 @@ class WavefunctionSet(PairedCalculation):
 
 		self.type = CLASSICAL
 		self.in_mspace = False
+		self.time = 0
 
 		if isinstance(grid, UniformGrid):
 			self._plan = createFFTPlan(env, constants, grid)
@@ -171,6 +172,7 @@ class WavefunctionSet(PairedCalculation):
 			res.toMSpace()
 		self._env.copyBuffer(self.data, dest=res.data)
 		res.type = self.type
+		res.time = self.time
 		return res
 
 	def fillComponent(self, target_comp, psi, source_comp):
