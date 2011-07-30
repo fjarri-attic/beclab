@@ -42,9 +42,9 @@ envs = _Envs()
 from .model import Model
 from .constants import Constants, UniformGrid, HarmonicGrid
 from .ground_state import RK5HarmonicGroundState, RK5IPGroundState, SplitStepGroundState, TFGroundState
-#from .evolution import SplitStepEvolution
-#from .pulse import Pulse
-#from .collectors import AxialProjectionCollector, ParticleNumberCollector, \
+from .evolution import SplitStepEvolution
+from .pulse import Pulse
+from .collectors import AxialProjectionCollector, ParticleNumberCollector #, \
 #	SurfaceProjectionCollector, VisibilityCollector, SliceCollector, \
 #	PhaseNoiseCollector, PzNoiseCollector, UncertaintyCollector, SpinCloudCollector, \
 #	AnalyticNoiseCollector
