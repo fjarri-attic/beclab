@@ -45,10 +45,11 @@ def runTest(env, grid_type, dim, prop_type):
 	grid = UniformGrid.forN(env, constants, total_N, shape)
 
 	gs = SplitStepGroundState(env, constants, grid, dt=ss_dt)
-	evolution = SplitStepEvolution(env, constants, grid, dt=1e-5)
+	evolution = SplitStepEvolution(env, constants, grid, dt=4e-6)
 	pulse = Pulse(env, constants, grid, f_detuning=41, f_rabi=350)
 	a = AxialProjectionCollector(env, constants, grid, matrix_pulse=True, pulse=pulse)
 	p = ParticleNumberCollector(env, constants, grid, matrix_pulse=True, pulse=pulse)
+	v = VisibilityCollector(env, constants, grid)
 
 	# experiment
 	psi = gs.create((total_N, 0))
@@ -56,7 +57,7 @@ def runTest(env, grid_type, dim, prop_type):
 	pulse.apply(psi, theta=0.5 * numpy.pi, matrix=True)
 
 	t1 = time.time()
-	evolution.run(psi, time=0.1, callbacks=[a, p], callback_dt=0.005)
+	evolution.run(psi, time=0.1, callbacks=[a, p, v], callback_dt=0.005)
 	env.synchronize()
 	t2 = time.time()
 	print "Time spent: " + str(t2 - t1) + " s"
@@ -73,8 +74,9 @@ def runTest(env, grid_type, dim, prop_type):
 	)
 
 	times, Ns, Ntotals = p.getData()
+	times, vis = v.getData()
 
-	print "  Final N: ", Ns[:,-1], "(", Ntotals[-1], ")"
+	print "  Final N: ", Ns[:,-1], "(", Ntotals[-1], ")", ", V: ", vis[-1]
 
 	return res
 
@@ -86,7 +88,7 @@ if __name__ == '__main__':
 	tests = (
 		('uniform',), # grid type
 		('split-step',), # propagation type
-		(False, True), # gpu usage
+		(False, True,), # gpu usage
 	)
 
 	for dim in ('1d', '3d',):
