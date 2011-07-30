@@ -32,14 +32,14 @@ class ParticleNumberCollector(PairedCalculation):
 
 		N = self.stats.getN(psi_copy)
 		if self.verbose:
-			print "Particle counter: ", t, N
+			print "Particle counter: ", t, N, N.sum()
 
 		self.times.append(t)
 		self.N.append(N)
 
 	def getData(self):
 		N = numpy.array(self.N)
-		return numpy.array(self.times), N.transpose(), N.sum(0)
+		return numpy.array(self.times), N.transpose(), N.sum(1)
 
 
 class ParticleNumberCondition:
