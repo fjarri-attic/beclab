@@ -394,6 +394,15 @@ class Constants:
 			(3, 0): self.gamma111 / 6
 		}
 
+		if use_effective_area:
+			S = self.getEffectiveArea()
+			self.g /= S
+
+			for components in l:
+				l[components] /= S ** (numpy.array(components).sum() - 1)
+
+		# Fill special arrays for drift and diffusion terms in GPE
+
 		self.losses_drift = [] # 'Gammas'
 		self.losses_diffusion = [] # 'betas'
 
@@ -422,14 +431,6 @@ class Constants:
 			self.losses_diffusion.append(diffusion)
 
 		self.noise_sources = len(l)
-
-		if use_effective_area:
-			S = self.getEffectiveArea()
-			self.g /= S
-
-			# FIXME: uncomment when structure of losses is finished
-			#for components in self.l:
-			#	self.l[components] /= S ** (order - 1)
 
 	def getEffectiveArea(self):
 		l_rho = numpy.sqrt(self.hbar / (2.0 * self.m * self.wx))
