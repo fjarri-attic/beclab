@@ -1,47 +1,56 @@
 import numpy
 import time
-import math
-
 from beclab import *
+from beclab.meters import ParticleStatistics
 
-def testAxial(gpu, matrix_pulses):
 
-	# preparation
+def testAxial(gpu):
 	env = envs.cuda() if gpu else envs.cpu()
-	constants = Constants(Model(N=150000, detuning=41),
-		double=False if gpu else True)
+	try:
+		return runTest(env)
+	finally:
+		env.release()
 
-	gs = GPEGroundState(env, constants)
-	evolution = SplitStepEvolution(env, constants)
-	pulse = Pulse(env, constants)
-	a = AxialProjectionCollector(env, constants, matrix_pulse=matrix_pulses, pulse=pulse)
+def runTest(env):
+
+	N = 150000
+	constants = Constants(double=env.supportsDouble(), gamma12=0, gamma22=0, gamma111=0)
+	grid = UniformGrid.forN(env, constants, N, (64, 8, 8))
+
+	gs = SplitStepGroundState(env, constants, grid)
+	evolution = SplitStepEvolution(env, constants, grid, dt=4e-5)
+	pulse = Pulse(env, constants, grid, f_detuning=41, f_rabi=350)
+	a = AxialProjectionCollector(env, constants, grid, matrix_pulse=True, pulse=pulse)
+	p = ParticleNumberCollector(env, constants, grid, matrix_pulse=True, pulse=pulse, verbose=True)
+
+	s = ParticleStatistics(env, constants, grid, components=2)
 
 	# experiment
-	cloud = gs.createCloud()
+	psi = gs.create((N, 0))
 
-	pulse.apply(cloud, theta=0.5 * math.pi, matrix=matrix_pulses)
+	pulse.apply(psi, theta=0.5 * numpy.pi, matrix=True)
+
+#	print s.getN(psi)
 
 	t1 = time.time()
-	evolution.run(cloud, time=0.1, callbacks=[a], callback_dt=0.005)
+	evolution.run(psi, time=0.1, callbacks=[a, p], callback_dt=0.005)
 	env.synchronize()
 	t2 = time.time()
 	print "Time spent: " + str(t2 - t1) + " s"
+#	print s.getN(psi)
 
-	times, picture = a.getData()
+	times, heightmap = a.getData()
 
 	res = HeightmapPlot(
-		HeightmapData("test", picture,
+		HeightmapData("test", heightmap,
 			xmin=0, xmax=100,
-			ymin=-constants.zmax * 1e6,
-			ymax=constants.zmax * 1e6,
+			ymin=grid.z[0] * 1e6,
+			ymax=grid.z[-1] * 1e6,
 			zmin=-1, zmax=1,
-			xname="Time, ms", yname="z, $\\mu$m", zname="Spin projection")
+			xname="T (ms)", yname="z ($\\mu$m)", zname="Spin projection")
 	)
-
-	env.release()
 
 	return res
 
-for gpu, matrix_pulses in ((False, True), (False, False), (True, True),	(True, False)):
-	suffix = ("gpu" if gpu else "cpu") + "_" + ("ideal" if matrix_pulses else "nonideal") + "_pulses"
-	testAxial(gpu=gpu, matrix_pulses=matrix_pulses).save("axial_" + suffix + ".pdf")
+for gpu in (False, True,):
+	testAxial(gpu).save("axial_view_" + ('GPU' if gpu else 'CPU') + ".pdf")
