@@ -44,8 +44,9 @@ from .constants import Constants, UniformGrid, HarmonicGrid
 from .ground_state import RK5HarmonicGroundState, RK5IPGroundState, SplitStepGroundState, TFGroundState
 from .evolution import SplitStepEvolution
 from .pulse import Pulse
-from .collectors import AxialProjectionCollector, ParticleNumberCollector #, \
-#	SurfaceProjectionCollector, VisibilityCollector, SliceCollector, \
+from .collectors import AxialProjectionCollector, ParticleNumberCollector, \
+	VisibilityCollector
+#	SurfaceProjectionCollector, SliceCollector, \
 #	PhaseNoiseCollector, PzNoiseCollector, UncertaintyCollector, SpinCloudCollector, \
 #	AnalyticNoiseCollector
 

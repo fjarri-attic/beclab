@@ -49,11 +49,13 @@ class ParticleStatistics(PairedCalculation):
 	def _gpu__prepare_specific(self):
 		kernel_template = """
 			EXPORTED_FUNC void interaction(int gsize, GLOBAL_MEM COMPLEX *res,
-				GLOBAL_MEM COMPLEX *a_state, GLOBAL_MEM COMPLEX *b_state)
+				GLOBAL_MEM COMPLEX *data)
 			{
 				LIMITED_BY(gsize);
-				res[GLOBAL_INDEX] = complex_mul(
-					a_state[GLOBAL_INDEX], conj(b_state[GLOBAL_INDEX]));
+				COMPLEX val0 = data[GLOBAL_INDEX + gsize * ${0}];
+				COMPLEX val1 = data[GLOBAL_INDEX + gsize * ${1}];
+
+				res[GLOBAL_INDEX] = complex_mul(val0, conj(val1));
 			}
 
 			EXPORTED_FUNC void density(int gsize, GLOBAL_MEM SCALAR *res,
@@ -111,18 +113,19 @@ class ParticleStatistics(PairedCalculation):
 			}
 
 			EXPORTED_FUNC void multiplyTiledCS(int gsize,
-				GLOBAL_MEM COMPLEX *data, GLOBAL_MEM SCALAR *coeffs)
+				GLOBAL_MEM COMPLEX *data, GLOBAL_MEM SCALAR *coeffs, int components)
 			{
 				LIMITED_BY(gsize);
 
 				SCALAR coeff_val = coeffs[GLOBAL_INDEX % (gsize / ${p.ensembles})];
 				COMPLEX data_val;
 
-				%for comp in xrange(p.components):
-				data_val = data[GLOBAL_INDEX + gsize * ${comp}];
-				data[GLOBAL_INDEX + gsize * ${comp}] =
-					complex_mul_scalar(data_val, coeff_val);
-				%endfor
+				for(int comp = 0; comp < components; comp++)
+				{
+					data_val = data[GLOBAL_INDEX + gsize * comp];
+					data[GLOBAL_INDEX + gsize * comp] =
+						complex_mul_scalar(data_val, coeff_val);
+				}
 			}
 		"""
 
@@ -134,8 +137,8 @@ class ParticleStatistics(PairedCalculation):
 		self._kernel_multiplyTiledSS = self._program.multiplyTiledSS
 		self._kernel_multiplyTiledCS = self._program.multiplyTiledCS
 
-	def _cpu__kernel_calculateInteraction(self, gsize, res, data0, data1):
-		self._env.copyBuffer(data0 * data1.conj(), dest=res)
+	def _cpu__kernel_interaction(self, gsize, res, data):
+		self._env.copyBuffer(data[0] * data[1].conj(), dest=res)
 
 	def _cpu__kernel_density(self, gsize, density, data, coeff):
 		self._env.copyBuffer((numpy.abs(data) ** 2 -
@@ -143,10 +146,11 @@ class ParticleStatistics(PairedCalculation):
 
 	def _cpu__kernel_multiplyTiledSS(self, gsize, data, coeffs):
 		data *= numpy.tile(coeffs,
-			(self._p.components,) + (1,) * self._grid.dim)
+			(self._p.components, self._p.ensembles,) + (1,) * self._grid.dim)
 
-	def _cpu__kernel_multiplyTiledCS(self, gsize, data, coeffs):
-		data.flat *= numpy.tile(coeffs.flat, self._p.ensembles * self._p.components)
+	def _cpu__kernel_multiplyTiledCS(self, gsize, data, coeffs, components):
+		data *= numpy.tile(coeffs,
+			(components, self._p.ensembles,) + (1,) * self._grid.dim)
 
 	def _cpu__kernel_invariant(self, gsize, res, xdata, mdata, potentials, coeff):
 
@@ -165,16 +169,17 @@ class ParticleStatistics(PairedCalculation):
 				res[comp] += n[comp] * (g[comp, comp_other] * n[comp_other] / coeff)
 			res[comp] += (xdata[comp].conj() * mdata[comp]).real
 
-	def getVisibility(self, psi0, psi1):
-		N0 = self.getN(psi0)
-		N1 = self.getN(psi1)
-		interaction = self._getInteraction(psi0, psi1)
-		self._kernel_multiplyTiledCS(interaction.size, interaction, self._dV)
+	def getVisibility(self, psi):
+		assert self._p.components == 2
+		N = self.getN(psi)
+		self._kernel_interaction(psi.size, self._c_xspace_buffer, psi.data)
+		self._kernel_multiplyTiledCS(psi.size, self._c_xspace_buffer,
+			self._dV, numpy.int32(1))
+		interaction = self._env.fromDevice(self._creduce(
+			self._c_xspace_buffer, length=psi.size))
+		interaction = numpy.abs(interaction[0]) / self._p.ensembles
 
-		ensembles = psi0.shape[0]
-		interaction = numpy.abs(self._creduce(interaction)) / ensembles
-
-		return 2.0 * interaction / (N0 + N1)
+		return 2.0 * interaction / N.sum()
 
 	def getDensity(self, psi, coeff=1):
 		if psi.type == WIGNER:
@@ -194,7 +199,7 @@ class ParticleStatistics(PairedCalculation):
 		density = self.getDensity(psi, coeff=ensembles)
 		average_density = self._reduce.sparse(density,
 			final_length=components * size,
-			final_shape=(components,) + psi.shape[2:])
+			final_shape=(components, 1) + psi.shape[2:])
 
 		return average_density
 
@@ -220,7 +225,7 @@ class ParticleStatistics(PairedCalculation):
 
 		# FIXME: not a good way to provide transformation
 		psi._plan.execute(psi.data, self._c_mspace_buffer, batch=batch)
-		self._kernel_multiplyTiledCS(msize, self._c_mspace_buffer, self._energy)
+		self._kernel_multiplyTiledCS(msize, self._c_mspace_buffer, self._energy, numpy.int32(1))
 		psi._plan.execute(self._c_mspace_buffer, self._c_xspace_buffer,
 			batch=batch, inverse=True)
 		cast = self._constants.scalar.cast
@@ -231,11 +236,6 @@ class ParticleStatistics(PairedCalculation):
 		self._kernel_multiplyTiledSS(xsize, self._s_xspace_buffer, self._dV)
 		return self._reduce(self._s_xspace_buffer, final_length=self._p.components) / \
 			self._p.ensembles / N * self._constants.hbar
-
-	def _getInteraction(self, psi0, psi1):
-		interaction = self._env.allocate(psi0.shape, self._constants.complex.dtype)
-		self._kernel_interaction(psi0.size, interaction, psi0.data, psi1.data)
-		return interaction
 
 	def getPhaseNoise(self, psi0, psi1):
 		"""
