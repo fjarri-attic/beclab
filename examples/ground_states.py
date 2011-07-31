@@ -133,7 +133,6 @@ def runTest(env, comp, grid_type, dim, gs_type):
 	assert norm(N_xspace1 - N_xspace2) / target_norm < 1e-6
 
 	# TODO: find out what causes difference even for uniform grid
-	print norm(N_mspace - N_xspace2) / target_norm
 	assert norm(N_mspace - N_xspace2) / target_norm < 0.02
 
 	assert E.shape == (2,)
@@ -143,7 +142,6 @@ def runTest(env, comp, grid_type, dim, gs_type):
 
 	# There should be some difference between analytical mu and numerical one,
 	# so it is more of a sanity check
-	print abs(mu.sum() - mu_tf) / mu_tf
 	assert abs(mu.sum() - mu_tf) / mu_tf < 0.35
 
 	E = E.sum()
