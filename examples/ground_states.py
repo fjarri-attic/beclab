@@ -70,7 +70,7 @@ def runTest(env, comp, grid_type, dim, gs_type):
 
 	target_N = {
 		'1comp': (total_N, 0),
-		'2comp': (total_N / 2, total_N / 2)
+		'2comp': (int(total_N / 2 + 0.05 * total_N), int(total_N / 2 - 0.05 * total_N))
 	}[comp]
 
 	# Prepare constants and grid
