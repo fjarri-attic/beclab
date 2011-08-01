@@ -225,7 +225,8 @@ class ParticleStatistics(PairedCalculation):
 
 		# FIXME: not a good way to provide transformation
 		psi._plan.execute(psi.data, self._c_mspace_buffer, batch=batch)
-		self._kernel_multiplyTiledCS(msize, self._c_mspace_buffer, self._energy, numpy.int32(1))
+		self._kernel_multiplyTiledCS(msize, self._c_mspace_buffer, self._energy,
+			numpy.int32(self._p.components))
 		psi._plan.execute(self._c_mspace_buffer, self._c_xspace_buffer,
 			batch=batch, inverse=True)
 		cast = self._constants.scalar.cast
