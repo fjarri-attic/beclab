@@ -200,5 +200,5 @@ if __name__ == '__main__':
 			to_add = plots_gpu if gpu else plots_cpu
 			to_add += p
 
-		XYPlot(plots_gpu).save(prefix + dim + '_' + comp + '_GPU.pdf')
-		XYPlot(plots_cpu).save(prefix + dim + '_' + comp + '_CPU.pdf')
+		if len(plots_gpu) > 0: XYPlot(plots_gpu).save(prefix + dim + '_' + comp + '_GPU.pdf')
+		if len(plots_cpu) > 0: XYPlot(plots_cpu).save(prefix + dim + '_' + comp + '_CPU.pdf')
