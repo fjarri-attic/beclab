@@ -415,6 +415,9 @@ class RK5Propagation(PairedCalculation):
 		cdtype = self._constants.complex.dtype
 		sdtype = self._constants.scalar.dtype
 
+		self._maxFinder.prepare(length=self._grid.size * self._p.components)
+		self._c_maxbuffer = self._env.allocate((1,), dtype=cdtype)
+
 		self._xdata = self._env.allocate((self._p.components, 1) + shape, dtype=cdtype)
 		self._k = self._env.allocate((6, self._p.components, 1) + shape, dtype=cdtype)
 		self._scale = self._env.allocate((self._p.components, 1) + shape, dtype=cdtype)
@@ -585,7 +588,9 @@ class RK5Propagation(PairedCalculation):
 			#print "Trying with step " + str(dt)
 			self._propagate_rk5(prop, psi, dt)
 			self._kernel_calculateError(psi.size, self._k, self._scale)
-			errmax = self._maxFinder(self._k, length=psi.size * self._p.components)
+			self._maxFinder(self._k, self._c_maxbuffer)
+			cmax = self._env.fromDevice(self._c_maxbuffer)
+			errmax = max(abs(cmax.real[0]), abs(cmax.imag[0]))
 
 			#print "Error: " + str(errmax)
 			if errmax < 1.0:

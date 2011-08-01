@@ -15,9 +15,6 @@ class ParticleStatistics(PairedCalculation):
 		self._constants = constants.copy()
 		self._grid = grid.copy()
 
-		self._reduce = createReduce(env, constants.scalar.dtype)
-		self._creduce = createReduce(env, constants.complex.dtype)
-
 		self._potentials = getPotentials(env, constants, grid)
 
 		if isinstance(grid, HarmonicGrid):
@@ -26,6 +23,10 @@ class ParticleStatistics(PairedCalculation):
 			self._energy = getPlaneWaveEnergy(env, constants, grid)
 
 		self._dV = grid.get_dV(env)
+
+		self._sreduce_ensembles = createReduce(env, constants.scalar.dtype)
+		self._sreduce_all = createReduce(env, constants.scalar.dtype)
+		self._sreduce_single_to_comps = createReduce(env, constants.scalar.dtype)
 
 		self._addParameters(components=2, ensembles=1)
 		self.prepare(**kwds)
@@ -36,6 +37,18 @@ class ParticleStatistics(PairedCalculation):
 		self._p.density_modifier = 0.0
 		#modifier = self._grid.modes / (2.0 * self._constants.V)
 
+		self._sreduce_ensembles.prepare(
+			sparse=True, final_length=self._p.components * self._grid.size,
+			length=self._p.components * self._p.ensembles * self._grid.size)
+
+		self._sreduce_all.prepare(
+			sparse=False, final_length=self._p.components,
+			length=self._p.components * self._p.ensembles * self._grid.size)
+
+		self._sreduce_single_to_comps.prepare(
+			sparse=False, final_length=self._p.components,
+			length=self._p.components * self._grid.size)
+
 		self._c_mspace_buffer = self._env.allocate(
 			(self._p.components, self._p.ensembles) + self._grid.mshape,
 			self._constants.complex.dtype)
@@ -44,6 +57,12 @@ class ParticleStatistics(PairedCalculation):
 			self._constants.complex.dtype)
 		self._s_xspace_buffer = self._env.allocate(
 			(self._p.components, self._p.ensembles) + self._grid.shape,
+			self._constants.scalar.dtype)
+		self._s_xspace_buffer_single = self._env.allocate(
+			(self._p.components, 1) + self._grid.shape,
+			self._constants.scalar.dtype)
+		self._s_comp_buffer = self._env.allocate(
+			(self._p.components,),
 			self._constants.scalar.dtype)
 
 	def _gpu__prepare_specific(self):
@@ -185,9 +204,8 @@ class ParticleStatistics(PairedCalculation):
 		if psi.type == WIGNER:
 			raise NotImplementedError()
 
-		density = self._env.allocate(psi.shape, self._constants.scalar.dtype)
-		self._kernel_density(psi.size, density, psi.data, numpy.int32(coeff))
-		return density
+		self._kernel_density(psi.size, self._s_xspace_buffer, psi.data, numpy.int32(coeff))
+		return self._s_xspace_buffer
 
 	def getAverageDensity(self, psi):
 		# Using psi.size and .shape instead of grid here, to make it work
@@ -197,16 +215,14 @@ class ParticleStatistics(PairedCalculation):
 		size = self._grid.msize if psi.in_mspace else self._grid.size
 
 		density = self.getDensity(psi, coeff=ensembles)
-		average_density = self._reduce.sparse(density,
-			final_length=components * size,
-			final_shape=(components, 1) + psi.shape[2:])
+		self._sreduce_ensembles(density, self._s_xspace_buffer_single)
 
-		return average_density
+		return self._s_xspace_buffer_single
 
 	def getAveragePopulation(self, psi):
 		density = self.getAverageDensity(psi)
 		if not psi.in_mspace:
-			self._kernel_multiplyTiledSS(psi.size, density, self._dV)
+			self._kernel_multiplyTiledSS(self._grid.size, density, self._dV)
 		return density
 
 	def _getInvariant(self, psi, coeff, N):
@@ -235,8 +251,11 @@ class ParticleStatistics(PairedCalculation):
 			psi.data, self._c_xspace_buffer,
 			self._potentials, numpy.int32(coeff))
 		self._kernel_multiplyTiledSS(xsize, self._s_xspace_buffer, self._dV)
-		return self._reduce(self._s_xspace_buffer, final_length=self._p.components) / \
-			self._p.ensembles / N * self._constants.hbar
+
+		self._sreduce_all(self._s_xspace_buffer, self._s_comp_buffer)
+		comps = self._env.fromDevice(self._s_comp_buffer)
+
+		return comps / self._p.ensembles / N * self._constants.hbar
 
 	def getPhaseNoise(self, psi0, psi1):
 		"""
@@ -291,15 +310,17 @@ class ParticleStatistics(PairedCalculation):
 	def getN(self, psi):
 		"""Returns particle count for wavefunction"""
 		p = self.getAveragePopulation(psi)
-		return self._env.fromDevice(self._reduce(p, final_length=self._p.components))
+		self._sreduce_single_to_comps(p, self._s_comp_buffer)
+		comps = self._env.fromDevice(self._s_comp_buffer)
+		return comps
 
 	def getEnergy(self, psi, N=None):
 		"""Returns average energy per particle"""
-		return self._env.fromDevice(self._getInvariant(psi, 2, N))
+		return self._getInvariant(psi, 2, N)
 
 	def getMu(self, psi, N=None):
 		"""Returns average chemical potential per particle"""
-		return self._env.fromDevice(self._getInvariant(psi, 1, N))
+		return self._getInvariant(psi, 1, N)
 
 
 class DensityProfile(PairedCalculation):
@@ -308,12 +329,17 @@ class DensityProfile(PairedCalculation):
 		PairedCalculation.__init__(self, env)
 		self._constants = constants.copy()
 		self._grid = grid.copy()
-		self._reduce = createReduce(env, constants.scalar.dtype)
 		self._stats = ParticleStatistics(env, constants, grid)
 		self._addParameters(components=2, ensembles=1)
+		self._reduce = createReduce(env, constants.scalar.dtype)
+		self.prepare()
 
 	def _prepare(self):
 		self._stats.prepare(components=self._p.components, ensembles=self._p.ensembles)
+		self._reduce.prepare(length=self._p.components * self._grid.size,
+			final_length=self._grid.shape[0] * self._p.components)
+		self._z_buffer = self._env.allocate(
+			(self._p.components, self._grid.shape[0]), self._constants.scalar.dtype)
 
 	def getXY(self, psi):
 		p = self._stats.getAveragePopulation(psi)
@@ -334,9 +360,9 @@ class DensityProfile(PairedCalculation):
 	def getZ(self, psi):
 		p = self._stats.getAveragePopulation(psi)
 		z = self._grid.shape[0]
-		res = self._env.fromDevice(self._reduce(p, final_length=z * self._p.components))
-		return res.reshape(self._p.components, z) / \
-			numpy.tile(self._grid.dz, (self._p.components, 1))
+		self._reduce(p, self._z_buffer)
+		res = self._env.fromDevice(self._z_buffer)
+		return res / numpy.tile(self._grid.dz, (self._p.components, 1))
 
 
 class Slice:
