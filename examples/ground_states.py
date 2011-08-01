@@ -185,7 +185,7 @@ if __name__ == '__main__':
 
 	for dim, two_comp in itertools.product(*types):
 
-		print "\n*** {dim} *** ({comp})\n\n".format(
+		print "\n*** {dim} *** ({comp})\n".format(
 			dim=dim, comp=('2 components' if two_comp else '1 component'))
 
 		comp = '2comp' if two_comp else '1comp'
