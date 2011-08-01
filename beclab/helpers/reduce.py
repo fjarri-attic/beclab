@@ -63,8 +63,17 @@ class GPUReduce(PairedCalculation):
 				// will be only one path of execution anyway)
 				%for reduction_pow in xrange(log2_block_size - 1, log2_warp_size, -1):
 					if(tid < ${2 ** reduction_pow})
+					{
+					%if p.typename.endswith('2'):
+						shared_mem[tid].x = OP(shared_mem[tid].x,
+							shared_mem[tid + ${2 ** reduction_pow}].x);
+						shared_mem[tid].y = OP(shared_mem[tid].y,
+							shared_mem[tid + ${2 ** reduction_pow}].y);
+					%else:
 						shared_mem[tid] = OP(shared_mem[tid],
 							shared_mem[tid + ${2 ** reduction_pow}]);
+					%endif
+					}
 					SYNC;
 				%endfor
 
@@ -81,11 +90,13 @@ class GPUReduce(PairedCalculation):
 
 				${p.typename} ttt;
 				%for reduction_pow in xrange(min(log2_warp_size, log2_block_size - 1), -1, -1):
-				ttt = OP(smem[tid], smem[tid + ${2 ** reduction_pow}]);
 				%if p.typename.endswith('2'):
+					ttt.x = OP(smem[tid].x, smem[tid + ${2 ** reduction_pow}].x);
+					ttt.y = OP(smem[tid].y, smem[tid + ${2 ** reduction_pow}].y);
 					smem[tid].x = ttt.x;
 					smem[tid].y = ttt.y;
 				%else:
+					ttt = OP(smem[tid], smem[tid + ${2 ** reduction_pow}]);
 					smem[tid] = ttt;
 				%endif
 				%endfor
@@ -219,11 +230,6 @@ def createReduce(env, dtype, **kwds):
 
 def createMaxFinder(env, dtype, **kwds):
 	if env.gpu:
-		if dtype in (numpy.complex64, numpy.complex128):
-			operation = "complex_ctr(MAX(a.x, b.x), MAX(a.y, b.y))"
-		else:
-			operation = "MAX((a), (b))"
-
-		return GPUReduce(env, dtype, operation=operation, **kwds)
+		return GPUReduce(env, dtype, operation="MAX((a), (b))", **kwds)
 	else:
 		return CPUReduce(env, operation=max_func, **kwds)
