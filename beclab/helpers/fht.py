@@ -161,6 +161,7 @@ class FHT1D(PairedCalculation):
 	def _allocateXi(self, batch):
 		if self._cached_batch != batch:
 			self._Xi = self._env.allocate((batch,) + self._xshape, self._complex_dtype)
+			self._cached_batch = batch
 
 	def _cpu__prepare(self):
 		pass
@@ -287,6 +288,7 @@ class FHT3D(PairedCalculation):
 		if self._cached_batch != batch:
 			self._temp1 = self._env.allocate((batch,) + self._xshape, self._complex_dtype)
 			self._temp2 = self._env.allocate((batch,) + self._xshape, self._complex_dtype)
+			self._cached_batch = batch
 
 	def _cpu__prepare(self):
 		pass
