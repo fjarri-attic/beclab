@@ -26,6 +26,7 @@ class ParticleStatistics(PairedCalculation):
 
 		self._sreduce_ensembles = createReduce(env, constants.scalar.dtype)
 		self._sreduce_all = createReduce(env, constants.scalar.dtype)
+		self._creduce_all = createReduce(env, constants.complex.dtype)
 		self._sreduce_single_to_comps = createReduce(env, constants.scalar.dtype)
 
 		self._addParameters(components=2, ensembles=1)
@@ -49,6 +50,10 @@ class ParticleStatistics(PairedCalculation):
 			sparse=False, final_length=self._p.components,
 			length=self._p.components * self._grid.size)
 
+		self._creduce_all.prepare(
+			sparse=False, final_length=1,
+			length=self._p.ensembles * self._grid.size)
+
 		self._c_mspace_buffer = self._env.allocate(
 			(self._p.components, self._p.ensembles) + self._grid.mshape,
 			self._constants.complex.dtype)
@@ -64,6 +69,9 @@ class ParticleStatistics(PairedCalculation):
 		self._s_comp_buffer = self._env.allocate(
 			(self._p.components,),
 			self._constants.scalar.dtype)
+		self._c_1_buffer = self._env.allocate(
+			(1,),
+			self._constants.complex.dtype)
 
 	def _gpu__prepare_specific(self):
 		kernel_template = """
@@ -194,8 +202,8 @@ class ParticleStatistics(PairedCalculation):
 		self._kernel_interaction(psi.size, self._c_xspace_buffer, psi.data)
 		self._kernel_multiplyTiledCS(psi.size, self._c_xspace_buffer,
 			self._dV, numpy.int32(1))
-		interaction = self._env.fromDevice(self._creduce(
-			self._c_xspace_buffer, length=psi.size))
+		self._creduce_all(self._c_xspace_buffer, self._c_1_buffer)
+		interaction = self._env.fromDevice(self._c_1_buffer)
 		interaction = numpy.abs(interaction[0]) / self._p.ensembles
 
 		return 2.0 * interaction / N.sum()
