@@ -417,10 +417,10 @@ class SplitStepEvolution(Evolution):
 				f = self._p.w_detuning * t + phi
 
 				# calculating exp([[N1, -ik exp(-if)/2], [-ik exp(if)/2, N2]])
-				rt = numpy.sqrt(-k ** 2 + (N1 - N2) ** 2 + 0j)
+				rt = numpy.sqrt(-k ** 2 + (N[0] - N[1]) ** 2 + 0j)
 
-				l1 = 0.5 * (-rt + N1 + N2) # eigenvalues 1
-				l2 = 0.5 * (rt + N1 + N2) # eigenvalues 2
+				l0 = 0.5 * (-rt + N[0] + N[1]) # eigenvalues 1
+				l1 = 0.5 * (rt + N[0] + N[1]) # eigenvalues 2
 
 				#ev = numpy.array([
 				#	[1, -(1j * numpy.exp(1j * f) * (rt + N1 - N2)) / k],
@@ -428,20 +428,20 @@ class SplitStepEvolution(Evolution):
 				#])
 
 				# elements of eigenvector matrix ([1, 1], [ev10, ev11])
-				ev10 = -(1j * numpy.exp(1j * f) * (rt + N1 - N2)) / k
-				ev11 = (1j * numpy.exp(1j * f) * (rt - N1 + N2)) / k
+				ev10 = -(1j * numpy.exp(1j * f) * (rt + N[0] - N[1])) / k
+				ev11 = (1j * numpy.exp(1j * f) * (rt - N[0] + N[1])) / k
 
 				# elements of inverse eigenvector matrix
 				# ([-ev11, 1], [ev10, -1]) / ev_inf_coeff
 				ev_inv_coeff = ev10 - ev11
 
+				l0_exp = numpy.exp(l0 * self._p.dt / 2)
 				l1_exp = numpy.exp(l1 * self._p.dt / 2)
-				l2_exp = numpy.exp(l2 * self._p.dt / 2)
 
-				m[0,0].flat[:] = ((l2_exp * ev10 - l1_exp * ev11) / ev_inv_coeff).flat
-				m[0,1].flat[:] = ((l1_exp - l2_exp) / ev_inv_coeff).flat
-				m[1,0].flat[:] = ((ev10 * ev11 * (l2_exp - l1_exp)) / ev_inv_coeff).flat
-				m[1,1].flat[:] = ((l1_exp * ev10 - l2_exp * ev11) / ev_inv_coeff).flat
+				m[0,0].flat[:] = ((l1_exp * ev10 - l0_exp * ev11) / ev_inv_coeff).flat
+				m[0,1].flat[:] = ((l0_exp - l1_exp) / ev_inv_coeff).flat
+				m[1,0].flat[:] = ((ev10 * ev11 * (l1_exp - l0_exp)) / ev_inv_coeff).flat
+				m[1,1].flat[:] = ((l0_exp * ev10 - l1_exp * ev11) / ev_inv_coeff).flat
 
 				data[0] = m[0,0] * data0[0] + m[0,1] * data0[1]
 				data[1] = m[1,0] * data0[0] + m[1,1] * data0[1]
@@ -538,7 +538,6 @@ class SplitStepEvolution(Evolution):
 
 	def run(self, psi, *args, **kwds):
 
-		self.prepare(components=psi.components, ensembles=psi.ensembles)
 		if 'callbacks' in kwds:
 			for cb in kwds['callbacks']:
 				cb.prepare(components=psi.components, ensembles=psi.ensembles)
