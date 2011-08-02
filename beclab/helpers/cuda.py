@@ -116,7 +116,22 @@ class CUDAEnvironment:
 		self.gpu = True
 		self.cuda = True
 
+		self.allocated = 0
+
 	def allocate(self, shape, dtype):
+
+		size = 0
+		try:
+			size += dtype().itemsize
+		except:
+			size += dtype.itemsize
+
+		for n in shape:
+			size *= n
+
+		self.allocated += size
+#		print "Allocating", size
+
 		return gpuarray.GPUArray(shape, dtype=dtype)
 
 	def synchronize(self):
@@ -156,6 +171,7 @@ class CUDAEnvironment:
 		return "CUDA"
 
 	def release(self):
+#		print "Total allocated:", self.allocated
 		self.context.pop()
 		gc.collect() # forcefully frees all buffers on GPU
 
