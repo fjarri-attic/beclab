@@ -35,12 +35,17 @@ class ParticleStatistics(PairedCalculation):
 	def _prepare(self):
 		self._p.g = self._constants.g / self._constants.hbar
 		self._p.need_potentials = isinstance(self._grid, UniformGrid)
-		self._p.density_modifier = 0.0
-		#modifier = self._grid.modes / (2.0 * self._constants.V)
+
+		# TODO: add modifier for harmonic grid
+		if isinstance(self._grid, UniformGrid):
+			projection_mask = getProjectorMask(None, self._constants, self._grid)
+			self._p.density_modifier = projection_mask.sum() / (2.0 * self._grid.V)
 
 		self._sreduce_ensembles.prepare(
-			sparse=True, final_length=self._p.components * self._grid.size,
-			length=self._p.components * self._p.ensembles * self._grid.size)
+			sparse=True,
+			batch=self._p.components,
+			final_length=self._grid.size,
+			length=self._p.ensembles * self._grid.size)
 
 		self._sreduce_all.prepare(
 			sparse=False, final_length=self._p.components,
@@ -86,13 +91,13 @@ class ParticleStatistics(PairedCalculation):
 			}
 
 			EXPORTED_FUNC void density(int gsize, GLOBAL_MEM SCALAR *res,
-				GLOBAL_MEM COMPLEX *state, int coeff)
+				GLOBAL_MEM COMPLEX *state, SCALAR modifier, int coeff)
 			{
 				LIMITED_BY(gsize);
 				int id;
 				%for comp in xrange(p.components):
 				id = GLOBAL_INDEX + gsize * ${comp};
-				res[id] = (squared_abs(state[id]) - (SCALAR)${p.density_modifier}) / coeff;
+				res[id] = (squared_abs(state[id]) - modifier) / coeff;
 				%endfor
 			}
 
@@ -126,11 +131,11 @@ class ParticleStatistics(PairedCalculation):
 			}
 
 			EXPORTED_FUNC void multiplyTiledSS(int gsize,
-				GLOBAL_MEM SCALAR *data, GLOBAL_MEM SCALAR *coeffs)
+				GLOBAL_MEM SCALAR *data, GLOBAL_MEM SCALAR *coeffs, int ensembles)
 			{
 				LIMITED_BY(gsize);
 
-				SCALAR coeff_val = coeffs[GLOBAL_INDEX % (gsize / ${p.ensembles})];
+				SCALAR coeff_val = coeffs[GLOBAL_INDEX % (gsize / ensembles)];
 				SCALAR data_val;
 
 				%for comp in xrange(p.components):
@@ -167,13 +172,13 @@ class ParticleStatistics(PairedCalculation):
 	def _cpu__kernel_interaction(self, gsize, res, data):
 		self._env.copyBuffer(data[0] * data[1].conj(), dest=res)
 
-	def _cpu__kernel_density(self, gsize, density, data, coeff):
+	def _cpu__kernel_density(self, gsize, density, data, modifier, coeff):
 		self._env.copyBuffer((numpy.abs(data) ** 2 -
-			self._p.density_modifier) / coeff, dest=density)
+			modifier) / coeff, dest=density)
 
-	def _cpu__kernel_multiplyTiledSS(self, gsize, data, coeffs):
+	def _cpu__kernel_multiplyTiledSS(self, gsize, data, coeffs, ensembles):
 		data *= numpy.tile(coeffs,
-			(self._p.components, self._p.ensembles,) + (1,) * self._grid.dim)
+			(self._p.components, ensembles,) + (1,) * self._grid.dim)
 
 	def _cpu__kernel_multiplyTiledCS(self, gsize, data, coeffs, components):
 		data *= numpy.tile(coeffs,
@@ -210,9 +215,12 @@ class ParticleStatistics(PairedCalculation):
 
 	def getDensity(self, psi, coeff=1):
 		if psi.type == WIGNER:
-			raise NotImplementedError()
+			modifier = self._p.density_modifier
+		else:
+			modifier = 0.0
 
-		self._kernel_density(psi.size, self._s_xspace_buffer, psi.data, numpy.int32(coeff))
+		self._kernel_density(psi.size, self._s_xspace_buffer, psi.data,
+			self._constants.scalar.cast(modifier), numpy.int32(coeff))
 		return self._s_xspace_buffer
 
 	def getAverageDensity(self, psi):
@@ -230,7 +238,7 @@ class ParticleStatistics(PairedCalculation):
 	def getAveragePopulation(self, psi):
 		density = self.getAverageDensity(psi)
 		if not psi.in_mspace:
-			self._kernel_multiplyTiledSS(self._grid.size, density, self._dV)
+			self._kernel_multiplyTiledSS(self._grid.size, density, self._dV, numpy.int32(1))
 		return density
 
 	def _getInvariant(self, psi, coeff, N):
@@ -258,7 +266,8 @@ class ParticleStatistics(PairedCalculation):
 		self._kernel_invariant(xsize, self._s_xspace_buffer,
 			psi.data, self._c_xspace_buffer,
 			self._potentials, numpy.int32(coeff))
-		self._kernel_multiplyTiledSS(xsize, self._s_xspace_buffer, self._dV)
+		self._kernel_multiplyTiledSS(xsize, self._s_xspace_buffer, self._dV,
+			numpy.int32(self._p.ensembles))
 
 		self._sreduce_all(self._s_xspace_buffer, self._s_comp_buffer)
 		comps = self._env.fromDevice(self._s_comp_buffer)
