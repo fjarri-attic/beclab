@@ -82,7 +82,12 @@ class _ProgramWrapper:
 		"""
 		kernel_src = Template(source).render(**kwds)
 		src = _header.render(cuda=True, double=double, kernels=kernel_src, prelude=prelude)
-		self._program = SourceModule(src, no_extern_c=True, options=['-use_fast_math'])
+		try:
+			self._program = SourceModule(src, no_extern_c=True, options=['-use_fast_math'])
+		except:
+			for i, l in enumerate(src.split('\n')):
+				print i + 1, ": ", l
+			raise
 
 	def __getattr__(self, name):
 		return _KernelWrapper(self._env, self._program.get_function(name))
