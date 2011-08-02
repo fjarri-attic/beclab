@@ -41,7 +41,6 @@ def runTest(env, grid_type, dim, prop_type):
 		'3d': 1e-5
 	}[dim]
 
-
 	# time steps for split-step propagation
 	ss_dts = {
 		'1d': [4e-5, 1e-5, 4e-6, 2e-6, 1e-6],
