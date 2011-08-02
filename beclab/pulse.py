@@ -142,7 +142,7 @@ class Pulse(PairedCalculation):
 	def _gpu__calculateNoiseMatrix(self, a_data, b_data, thetas, phis):
 		return self._calculateNoiseMatrixFunc(a_data.size, a_data, b_data, thetas, phis)
 
-	def apply(self, psi, theta, matrix=True, theta_noise=0.0, phi_noise=0.0):
+	def apply(self, psi, theta, theta_noise=0.0, phi_noise=0.0):
 		self.prepare(components=psi.components, ensembles=psi.ensembles)
 
 		phi = psi.time * self._p.w_detuning + self._p.starting_phase
@@ -151,10 +151,30 @@ class Pulse(PairedCalculation):
 
 		if phi_noise > 0 or theta_noise > 0:
 			self._applyMatrixNoise(psi, theta, phi, theta_noise, phi_noise)
-		elif matrix:
-			self._applyMatrix(psi, theta, phi)
 		else:
-			raise NotImplementedError()
-			#self._evolution.run(cloud, t_pulse, starting_phase=phi)
+			self._applyMatrix(psi, theta, phi)
 
 		psi.time += t_pulse
+
+
+class EvolutionPulse:
+
+	def __init__(self, env, constants, grid, evolution_cls, **kwds):
+
+		if 'starting_phase' in kwds:
+			self._starting_phase = kwds.pop('starting_phase')
+		else:
+			self._starting_phase = 0.0
+
+		self._f_detuning = kwds['f_detuning']
+		self._f_rabi = kwds['f_rabi']
+
+		self._evolution = evolution_cls(env, constants, grid, **kwds)
+
+	def prepare(self, **kwds):
+		self._evolution.prepare(**kwds)
+
+	def apply(self, psi, theta):
+		phi = psi.time * self._f_detuning * 2.0 * numpy.pi + self._starting_phase
+		t_pulse = (theta / numpy.pi / 2.0) / self._f_rabi
+		self._evolution.run(psi, t_pulse, starting_phase=phi)

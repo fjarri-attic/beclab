@@ -9,12 +9,11 @@ from .pulse import Pulse
 
 class ParticleNumberCollector(PairedCalculation):
 
-	def __init__(self, env, constants, grid, verbose=False, pulse=None, matrix_pulse=True):
+	def __init__(self, env, constants, grid, verbose=False, pulse=None):
 		PairedCalculation.__init__(self, env)
 		self.stats = ParticleStatistics(env, constants, grid)
 		self.verbose = verbose
 		self._pulse = pulse
-		self._matrix_pulse = matrix_pulse
 
 		self.times = []
 		self.N = []
@@ -28,7 +27,7 @@ class ParticleNumberCollector(PairedCalculation):
 		psi_copy = psi.copy()
 
 		if self._pulse is not None:
-			self._pulse.apply(psi_copy, theta=0.5 * numpy.pi, matrix=self._matrix_pulse)
+			self._pulse.apply(psi_copy, theta=0.5 * numpy.pi)
 
 		N = self.stats.getN(psi_copy)
 		if self.verbose:
@@ -208,11 +207,10 @@ class SliceCollector:
 
 class AxialProjectionCollector(PairedCalculation):
 
-	def __init__(self, env, constants, grid, pulse=None, matrix_pulse=True):
+	def __init__(self, env, constants, grid, pulse=None):
 		PairedCalculation.__init__(self, env)
 		self._projection = DensityProfile(env, constants, grid)
 		self._pulse = pulse
-		self._matrix_pulse = matrix_pulse
 		self._constants = constants
 		self._grid = grid
 
@@ -230,7 +228,7 @@ class AxialProjectionCollector(PairedCalculation):
 		psi_copy = psi.copy()
 
 		if self._pulse is not None:
-			self._pulse.apply(psi_copy, theta=0.5 * numpy.pi, matrix=self._matrix_pulse)
+			self._pulse.apply(psi_copy, theta=0.5 * numpy.pi)
 
 		self.times.append(t)
 

@@ -43,7 +43,7 @@ from .model import Model
 from .constants import Constants, UniformGrid, HarmonicGrid
 from .ground_state import RK5HarmonicGroundState, RK5IPGroundState, SplitStepGroundState, TFGroundState
 from .evolution import SplitStepEvolution
-from .pulse import Pulse
+from .pulse import Pulse, EvolutionPulse
 from .collectors import AxialProjectionCollector, ParticleNumberCollector, \
 	VisibilityCollector
 #	SurfaceProjectionCollector, SliceCollector, \
