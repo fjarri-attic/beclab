@@ -68,13 +68,14 @@ class WavefunctionSet(PairedCalculation):
 			}
 
 			// Initialize ensembles with the copy of the current state
-			EXPORTED_FUNC void fillEnsembles(int gsize, GLOBAL_MEM COMPLEX *res,
-				GLOBAL_MEM COMPLEX *src)
+			EXPORTED_FUNC void fillEnsembles(int gsize, GLOBAL_MEM COMPLEX *result,
+				GLOBAL_MEM COMPLEX *data)
 			{
 				LIMITED_BY(gsize);
+				int grid_size = gsize / ${p.ensembles};
 				%for comp in xrange(p.components):
-					res[GLOBAL_INDEX + gsize * ${comp}] =
-						src[GLOBAL_INDEX % (gsize / ${p.ensembles}) + gsize * ${comp}];
+					result[GLOBAL_INDEX + gsize * ${comp}] =
+						data[GLOBAL_INDEX % grid_size  + grid_size * ${comp}];
 				%endfor
 			}
 
@@ -110,9 +111,10 @@ class WavefunctionSet(PairedCalculation):
 	def _cpu__kernel_fillWithZeros(self, gsize, data):
 		data.flat[:] = numpy.zeros_like(data).flat
 
-	def _cpu__kernel_fillEnsembles(self, gsize, data, new_data):
-		tile = (self.components, self.ensembles,) + (1,) * self._grid.dim
-		new_data.flat[:] = numpy.tile(data, tile).flat
+	def _cpu__kernel_fillEnsembles(self, gsize, result, data):
+		tile = (self._p.ensembles,) + (1,) * self._grid.dim
+		for comp in xrange(self._p.components):
+			result[comp].flat[:] = numpy.tile(data[comp], tile).flat
 
 	def toMSpace(self):
 		assert not self.in_mspace
