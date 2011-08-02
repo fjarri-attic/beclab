@@ -7,7 +7,7 @@ import copy
 
 from .helpers import *
 from .constants import getPotentials, getPlaneWaveEnergy, getHarmonicEnergy, \
-	getProjectorMask, UniformGrid, HarmonicGrid
+	getProjectorMask, UniformGrid, HarmonicGrid, WIGNER, CLASSICAL
 
 
 class TerminateEvolution(Exception):
@@ -91,7 +91,7 @@ class SplitStepEvolution(Evolution):
 
 		self._projector_mask = getProjectorMask(self._env, self._constants, self._grid)
 
-		self._addParameters(f_rabi=0, f_detuning=0, dt=1e-5, noise=True,
+		self._addParameters(f_rabi=0, f_detuning=0, dt=1e-5, noise=False,
 			ensembles=1, itmax=3, components=2)
 		self.prepare(**kwds)
 
@@ -112,20 +112,12 @@ class SplitStepEvolution(Evolution):
 
 		self._p.g = self._constants.g / self._constants.hbar
 
-		# prepare loss sources for faster access from CPU part
 		self._p.losses_drift = copy.deepcopy(self._constants.losses_drift)
 		self._p.losses_diffusion = copy.deepcopy(self._constants.losses_diffusion)
 
-		for lcomp in self._p.losses_drift:
-			for pair in lcomp:
-				pair[0] /= self._constants.hbar
-		for lcomp in self._p.losses_diffusion:
-			for pair in lcomp:
-				pair[0] /= self._constants.hbar
-
 		if self._p.noise:
 			self._randoms = self._env.allocate(
-				(self._constants.noise_sources, self._p.ensembles) + self._grid.shape,
+				(2, self._constants.noise_sources, self._p.ensembles) + self._grid.shape,
 				dtype=self._constants.complex.dtype
 			)
 
@@ -186,12 +178,16 @@ class SplitStepEvolution(Evolution):
 
 					%for comp in xrange(p.components):
 					N${comp} = complex_ctr(
-						%for coeff, orders in c.losses_drift[comp]:
+						%if len(p.losses_drift[comp]) > 0:
+						%for coeff, orders in p.losses_drift[comp]:
 						-(SCALAR)${coeff}
 							%for loss_comp, order in enumerate(orders):
 							${(' * ' + ' * '.join(['n' + str(loss_comp)] * order)) if order != 0 else ''}
 							%endfor
 						%endfor
+						%else:
+						0
+						%endif
 						,
 						-V
 						%for comp_other in xrange(p.components):
@@ -284,13 +280,13 @@ class SplitStepEvolution(Evolution):
 				%>
 
 				%for comp in xrange(p.components):
-				%for i, e in enumerate(c.losses_diffusion[comp]):
+				%for i, e in enumerate(p.losses_diffusion[comp]):
 				<%
 					coeff, orders = e
 					sequence = []
-					for i, order in enumerate(orders):
+					for j, order in enumerate(orders):
 						if order > 0:
-							sequence += ['vals[' + str(i) + ']'] * order
+							sequence += ['vals[' + str(j) + ']'] * order
 					if len(sequence) > 0:
 						product = complex_mul_sequence(sequence)
 					else:
@@ -308,7 +304,7 @@ class SplitStepEvolution(Evolution):
 				%endfor
 			}
 
-			EXPORTED_FUNC void add_noise(GLOBAL_MEM COMPLEX *data,
+			EXPORTED_FUNC void add_noise(int gsize, GLOBAL_MEM COMPLEX *data,
 				GLOBAL_MEM COMPLEX *randoms)
 			{
 				LIMITED_BY(${p.comp_size});
@@ -356,11 +352,11 @@ class SplitStepEvolution(Evolution):
 				%endfor
 			}
 
-			EXPORTED_FUNC void projector(GLOBAL_MEM COMPLEX *data,
+			EXPORTED_FUNC void projector(int gsize, GLOBAL_MEM COMPLEX *data,
 				GLOBAL_MEM SCALAR *projector_mask)
 			{
 				LIMITED_BY(${p.comp_size});
-				SCALAR mask_val = projector_mask[GLOBAL_INDEX % ${p.comp_size}];
+				SCALAR mask_val = projector_mask[GLOBAL_INDEX % ${g.size}];
 				COMPLEX val;
 
 				%for comp in xrange(p.components):
@@ -380,7 +376,7 @@ class SplitStepEvolution(Evolution):
 		mask = numpy.tile(projector_mask,
 			(self._p.components, self._p.ensembles) + (1,) * self._grid.dim)
 
-		psi.data *= mask
+		data *= mask
 
 	def _cpu__kernel_kpropagate(self, gsize, data, mode_prop):
 		data *= numpy.tile(mode_prop,
@@ -390,7 +386,7 @@ class SplitStepEvolution(Evolution):
 		data0 = data.copy()
 		g = self._p.g
 
-		l = self._constants.losses_drift
+		l = self._p.losses_drift
 		V = numpy.tile(self._potentials * 1j,
 			(self._p.ensembles,) + (1,) * self._grid.dim)
 
@@ -465,17 +461,16 @@ class SplitStepEvolution(Evolution):
 			dtype=data.dtype)
 
 		for comp in xrange(self._p.components):
-			for i, e in enumerate(self._constants.losses_diffusion):
+			for i, e in enumerate(self._p.losses_diffusion[comp]):
 				coeff, orders = e
-
 				if coeff != 0:
-					res = coeff
-					for i, order in enumerate(orders):
+					res = coeff * normalization
+					for j, order in enumerate(orders):
 						if order > 0:
-							res = res * data[i]
+							res = res * data[j]
 					G[comp][i] = res
 				else:
-					G[comp][i] = numpy.zeros(data.shape[1:], data.dtype);
+					G[comp][i] = numpy.zeros(data.shape[1:], data.dtype)
 
 		return G
 
@@ -485,10 +480,10 @@ class SplitStepEvolution(Evolution):
 
 		G0 = self._noiseFunc(data)
 		G1 = self._noiseFunc(data + numpy.sqrt(self._p.dt / 2) * (
-			G0 * numpy.tile(randoms, tile)
+			(G0 * numpy.tile(randoms, tile)).sum(1)
 		))
 
-		data += (G1 * numpy.tile(randoms, tile)) * numpy.sqrt(self._p.dt)
+		data += (G1 * numpy.tile(randoms, tile)).sum(1) * numpy.sqrt(self._p.dt)
 
 	def _projector(self, psi):
 		self._kernel_projector(psi.size, psi.data, self._projector_mask)
@@ -526,14 +521,14 @@ class SplitStepEvolution(Evolution):
 		else:
 			self._kpropagate(psi, True)
 
-#		if psi.type == WIGNER and noise:
-#			self._projector(psi)
+		if self._p.noise:
+			self._projector(psi)
 
 		psi.toXSpace()
 		self._xpropagate(psi, t, self._phi)
 
-#		if psi.type == WIGNER and noise:
-#			self._propagateNoise(psi)
+		if self._p.noise:
+			self._propagateNoise(psi)
 
 		self._midstep = True
 		psi.toMSpace()
@@ -552,6 +547,8 @@ class SplitStepEvolution(Evolution):
 		else:
 			self._phi = 0.0
 
+		self.prepare(ensembles=psi.ensembles, components=psi.components,
+			noise=(psi.type == WIGNER))
 		Evolution.run(self, psi, *args, **kwds)
 
 
