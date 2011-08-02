@@ -34,7 +34,7 @@ _DEFAULTS = {
 	'gamma12': 1.52e-20,
 	'gamma22': 7.7e-20,
 
-	'e_cut': 1,
+	'e_cut': 1e6,
 }
 
 def getPotentials(env, constants, grid):
@@ -106,13 +106,16 @@ def getProjectorMask(env, constants, grid):
 	else:
 		E = getHarmonicEnergy(None, constants, grid)
 
-	mask_func = lambda x: 0.0 if x > constants.e_cut else 1.0
+	mask_func = lambda x: 0.0 if x > constants.e_cut * constants.hbar else 1.0
 	mask_map = numpy.vectorize(mask_func)
 
 	mask = mask_map(E * constants.hbar).astype(constants.scalar.dtype)
 	modes = numpy.sum(mask)
 
-	return env.toDevice(mask)
+	if env is None:
+		return mask
+	else:
+		return env.toDevice(mask)
 
 def getIntegrationCoefficients(pts):
 	"""
