@@ -59,8 +59,7 @@ class Evolution(PairedCalculation):
 					self._runCallbacks(psi, callbacks)
 					callback_t = 0
 
-			if callback_dt > time:
-				self._runCallbacks(psi, callbacks)
+			self._runCallbacks(psi, callbacks)
 
 			self._toMeasurementSpace(psi)
 
