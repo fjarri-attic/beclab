@@ -407,7 +407,7 @@ class XYData(Data):
 		self.yarray = yarray
 
 		fields = ['ymin', 'ymax', 'xname', 'yname', 'description',
-			'source', 'experimental', 'linestyle']
+			'source', 'experimental', 'linestyle', 'color']
 		Data.__init__(self, 'xy', fields, **kwds)
 
 	@classmethod
@@ -540,7 +540,9 @@ class XYPlot:
 
 		for i, data in enumerate(self.data_list):
 			kwds = {'label': data.name}
-			if colors[i] is not None:
+			if data.color is not None:
+				kwds['color'] = data.color
+			elif colors[i] is not None:
 				kwds['color'] = colors[i]
 			if data.linestyle is not None:
 				kwds['linestyle'] = data.linestyle
