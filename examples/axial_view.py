@@ -6,14 +6,14 @@ from beclab import *
 from beclab.meters import ParticleStatistics
 
 
-def testAxialView(gpu, grid_type, dim, prop_type):
+def testAxialView(gpu, matrix_pulses, grid_type, dim, prop_type):
 	env = envs.cuda() if gpu else envs.cpu()
 	try:
-		return runTest(env, grid_type, dim, prop_type)
+		return runTest(env, matrix_pulses, grid_type, dim, prop_type)
 	finally:
 		env.release()
 
-def runTest(env, grid_type, dim, prop_type):
+def runTest(env, matrix_pulses, grid_type, dim, prop_type):
 
 	# additional parameters
 	constants_kwds = {
@@ -46,15 +46,21 @@ def runTest(env, grid_type, dim, prop_type):
 
 	gs = SplitStepGroundState(env, constants, grid, dt=ss_dt)
 	evolution = SplitStepEvolution(env, constants, grid, dt=1e-5)
-	pulse = Pulse(env, constants, grid, f_detuning=41, f_rabi=350)
-	a = AxialProjectionCollector(env, constants, grid, matrix_pulse=True, pulse=pulse)
-	p = ParticleNumberCollector(env, constants, grid, matrix_pulse=True, pulse=pulse)
+
+	if matrix_pulses:
+		pulse = Pulse(env, constants, grid, f_detuning=41, f_rabi=350)
+	else:
+		pulse = EvolutionPulse(env, constants, grid, SplitStepEvolution,
+			f_detuning=41, f_rabi=350, dt=1e-6)
+
+	a = AxialProjectionCollector(env, constants, grid, pulse=pulse)
+	p = ParticleNumberCollector(env, constants, grid, pulse=pulse)
 	v = VisibilityCollector(env, constants, grid)
 
 	# experiment
 	psi = gs.create((total_N, 0))
 
-	pulse.apply(psi, theta=0.5 * numpy.pi, matrix=True)
+	pulse.apply(psi, theta=0.5 * numpy.pi)
 
 	t1 = time.time()
 	evolution.run(psi, time=0.1, callbacks=[a, p, v], callback_dt=0.005)
@@ -88,18 +94,21 @@ if __name__ == '__main__':
 	tests = (
 		('uniform',), # grid type
 		('split-step',), # propagation type
+		(False, True,), # matrix pulses
 		(False, True,), # gpu usage
 	)
 
 	for dim in ('1d', '3d',):
 		print "\n*** {dim} ***\n".format(dim=dim)
 
-		for grid_type, prop_type, gpu in itertools.product(*tests):
+		for grid_type, prop_type, matrix_pulses, gpu in itertools.product(*tests):
 
 			if grid_type == 'harmonic' and prop_type == 'split-step':
 				continue
 
-			print "* Testing", grid_type, "grid and", prop_type, "on", ("GPU" if gpu else "CPU")
-			testAxialView(gpu, grid_type, dim, prop_type).save(
+			print "* Testing", grid_type, "grid and", prop_type, "on", ("GPU" if gpu else "CPU"), \
+				"with", ("matrix" if matrix_pulses else "real"), "pulses"
+			testAxialView(gpu, matrix_pulses, grid_type, dim, prop_type).save(
 				prefix + dim + '_' + grid_type + '_' + prop_type +
+				('_matrix' if matrix_pulses else '_real') +
 				('_GPU' if gpu else '_CPU') + '.pdf')
