@@ -12,7 +12,8 @@ class GPUReduce(PairedCalculation):
 		self._tr = createTranspose(env, dtype)
 
 		type = MAP[dtype]
-		self._addParameters(operation="(a) + (b)", length=1, final_length=1, sparse=False,
+		self._addParameters(operation="(a) + (b)",
+			batch=1, length=1, final_length=1, sparse=False,
 			typename=type.name, dtype=type.dtype, double=type.precision.double)
 		self.prepare(**kwds)
 
@@ -135,8 +136,8 @@ class GPUReduce(PairedCalculation):
 		max_reduce_power = self._max_block_size
 
 		data_in = None
-		length = self._p.length
-		final_length = self._p.final_length
+		length = self._p.length * self._p.batch
+		final_length = self._p.final_length * self._p.batch
 
 		while length > final_length:
 
@@ -182,7 +183,7 @@ class GPUReduce(PairedCalculation):
 
 		if self._p.sparse:
 			self._tr(data_in, self._for_tr, self._p.final_length,
-				self._p.length / self._p.final_length)
+				self._p.length / self._p.final_length, batch=self._p.batch)
 			data_in = self._for_tr
 
 		for func, grid, block, dout, din, bpp, lbs in self._prepared_calls:
@@ -202,24 +203,34 @@ class CPUReduce(PairedCalculation):
 	def __init__(self, env, **kwds):
 		PairedCalculation.__init__(self, env)
 
-		self._addParameters(operation=numpy.sum, length=1, final_length=1, sparse=False,
+		self._addParameters(operation=numpy.sum,
+			batch=1, length=1, final_length=1, sparse=False,
 			typename=None, dtype=None, double=True)
 		self.prepare(**kwds)
 
 	def __call__(self, data_in, data_out):
 
-		data_in = data_in.ravel()[:self._p.length]
+		data_in = data_in.ravel()[:self._p.length * self._p.batch]
 
 		if self._p.final_length == 1:
 			data_out[0] = self._p.operation(data_in)
 			return
 
 		if self._p.sparse:
-			data_in = data_in.reshape(self._p.length / self._p.final_length, self._p.final_length).T
+			print data_in.shape
+			data_in = data_in.reshape(
+				self._p.batch,
+				self._p.length / self._p.final_length,
+				self._p.final_length)
+			data_in = numpy.transpose(data_in, axes=(0, 2, 1))
+		else:
+			data_in = data_in.reshape(
+				self._p.batch,
+				self._p.final_length,
+				self._p.length / self._p.final_length)
 
 		data_out.flat[:] = self._p.operation(
-			data_in.reshape(self._p.final_length, self._p.length / self._p.final_length),
-			axis=1).flat
+			data_in, axis=2).flat
 
 
 def createReduce(env, dtype, **kwds):
