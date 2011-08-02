@@ -45,7 +45,7 @@ def runTest(env, matrix_pulses, grid_type, dim, prop_type):
 	grid = UniformGrid.forN(env, constants, total_N, shape)
 
 	gs = SplitStepGroundState(env, constants, grid, dt=ss_dt)
-	evolution = SplitStepEvolution(env, constants, grid, dt=1e-5)
+	evolution = SplitStepEvolution(env, constants, grid, dt=ss_dt)
 
 	if matrix_pulses:
 		pulse = Pulse(env, constants, grid, f_detuning=41, f_rabi=350)
