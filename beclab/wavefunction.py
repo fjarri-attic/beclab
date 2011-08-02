@@ -159,7 +159,8 @@ class WavefunctionSet(PairedCalculation):
 
 		# FIXME: in fact, we only need randoms in cells where projector mask == 1
 		# Scaling assumes that in modespace wavefunction normalized on atom number
-		randoms = self._random.random_normal(self.shape, scale=numpy.sqrt(0.5))
+		randoms = self._env.allocate(self.shape, self._constants.complex.dtype)
+		self._random.random_normal(randoms, scale=numpy.sqrt(0.5))
 		projector_mask = getProjectorMask(self._env, self._constants, self._grid)
 		self._addVacuumParticles(randoms, projector_mask)
 

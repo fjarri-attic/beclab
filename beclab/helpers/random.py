@@ -22,11 +22,13 @@ class CUDARandom:
 			from math import pi
 		%>
 
-		EXPORTED_FUNC void randomNormal(
+		EXPORTED_FUNC void randomNormal(int gsize,
 			GLOBAL_MEM COMPLEX* normal, const GLOBAL_MEM COMPLEX* uniform,
 			SCALAR loc, SCALAR scale)
 		{
 			int id = GLOBAL_ID_FLAT;
+			if(id >= gsize)
+				return;
 
 			COMPLEX u = uniform[id];
 			SCALAR u1 = u.x, u2 = u.y;
@@ -46,11 +48,10 @@ class CUDARandom:
 	def rand(self, shape):
 		return self._rand_func(shape, dtype=self._scalar_dtype, stream=self._env.stream)
 
-	def random_normal(self, size, scale=1.0, loc=0.0):
-		uniform = self.rand((size * 2,))
-		normal = self._env.allocate((size,), self._complex_dtype)
-		self._randomNormalKernel(size, normal, uniform, self._scalar_cast(loc), self._scalar_cast(scale / numpy.sqrt(2.0)))
-		return normal
+	def random_normal(self, result, scale=1.0, loc=0.0):
+		uniform = self.rand((2,) + result.shape)
+		self._randomNormalKernel(result.size, result, uniform,
+			self._scalar_cast(loc), self._scalar_cast(scale / numpy.sqrt(2.0)))
 
 
 class FakeRandom:
@@ -73,13 +74,18 @@ class CPURandom:
 		p = double_precision if double else single_precision
 		self._scalar_dtype = p.scalar.dtype
 		self._complex_dtype = p.complex.dtype
+		self._env = env
 
 	def rand(self, shape):
 		return numpy.random.rand(*shape).astype(self._scalar_dtype)
 
-	def random_normal(self, size, scale=1.0, loc=0.0):
-		return (numpy.random.normal(loc=loc, scale=scale / numpy.sqrt(2.0), size=size) +
-			1j * numpy.random.normal(loc=loc, scale=scale / numpy.sqrt(2.0), size=size)).astype(self._complex_dtype)
+	def random_normal(self, result, scale=1.0, loc=0.0):
+		complex_scale = scale / numpy.sqrt(2.0)
+		randoms = (
+			numpy.random.normal(loc=loc, scale=complex_scale, size=result.shape) +
+			1j * numpy.random.normal(loc=loc, scale=complex_scale, size=result.shape)
+		).astype(self._complex_dtype)
+		self._env.copyBuffer(randoms, dest=result)
 
 
 def createRandom(env, double):

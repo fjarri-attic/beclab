@@ -123,6 +123,12 @@ class SplitStepEvolution(Evolution):
 			for pair in lcomp:
 				pair[0] /= self._constants.hbar
 
+		if self._p.noise:
+			self._randoms = self._env.allocate(
+				(self._constants.noise_sources, self._p.ensembles) + self._grid.shape,
+				dtype=self._constants.complex.dtype
+			)
+
 	def _gpu__prepare_specific(self):
 
 		kernels = """
@@ -495,10 +501,9 @@ class SplitStepEvolution(Evolution):
 		cast = self._constants.scalar.cast
 		self._kernel_xpropagate(psi.size, psi.data, self._potentials, cast(t), cast(phi))
 
-	def _propagateNoise(self, psi, dt):
-		randoms = self._random.random_normal(
-			size=(self._constants.noise_sources, psi.shape[1:]))
-		self._kernel_add_noise(psi.size, psi.data, randoms)
+	def _propagateNoise(self, psi):
+		self._random.random_normal(self._randoms)
+		self._kernel_add_noise(psi.size, psi.data, self._randoms)
 
 	def _finishStep(self, psi):
 		if self._midstep:
