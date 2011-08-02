@@ -27,7 +27,7 @@ class TFGroundState(PairedCalculation):
 		if isinstance(grid, HarmonicGrid):
 			self._plan = createFHTPlan(env, constants, grid, 1)
 
-		self._addParameters(components=1)
+		self._addParameters(components=2)
 		self.prepare()
 
 	def _prepare(self):
