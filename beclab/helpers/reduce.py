@@ -217,7 +217,6 @@ class CPUReduce(PairedCalculation):
 			return
 
 		if self._p.sparse:
-			print data_in.shape
 			data_in = data_in.reshape(
 				self._p.batch,
 				self._p.length / self._p.final_length,
