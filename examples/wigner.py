@@ -79,7 +79,7 @@ def runTest(env, grid_type, dim, prop_type, repr_type):
 	times, vis = v.getData()
 	times, Ns, Ntotals = p.getData()
 
-	print "  N = {N:.4f}, V = {V:.4f}\n  Time spent: {t}".format(
+	print "  N = {N:.4f}, V = {V:.4f}\n  Time spent: {t:.3f}".format(
 		ss_dt=ss_dt, N=Ntotals[-1], V=vis[-1], t=t2-t1)
 
 	name = ", ".join((repr_type, grid_type, prop_type))
