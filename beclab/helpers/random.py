@@ -54,6 +54,52 @@ class CUDARandom:
 			self._scalar_cast(loc), self._scalar_cast(scale / numpy.sqrt(2.0)))
 
 
+class NewCUDARandom:
+
+	def __init__(self, env, double):
+		self._env = env
+
+		p = double_precision if double else single_precision
+		self._scalar_dtype = p.scalar.dtype
+		self._complex_dtype = p.complex.dtype
+
+		self._scalar_cast = p.scalar.cast
+		self._complex_cast = p.complex.cast
+
+		from pycuda.curandom import XORWOWRandomNumberGenerator as RNG
+		self._rng = RNG()
+
+		kernel_template = """
+		<%!
+			from math import pi
+		%>
+
+		EXPORTED_FUNC void scaleRandoms(int gsize,
+			GLOBAL_MEM COMPLEX* data,
+			COMPLEX loc, SCALAR scale)
+		{
+			int id = GLOBAL_ID_FLAT;
+			if(id >= gsize)
+				return;
+
+			COMPLEX r = data[id];
+			r.x += loc.x;
+			r.y += loc.y;
+			r.x *= scale;
+			r.y *= scale;
+			data[id] = r;
+		}
+		"""
+
+		self._program = self._env.compile(kernel_template, double=double)
+		self._scaleRandoms = self._program.scaleRandoms
+
+	def random_normal(self, result, scale=1.0, loc=0.0):
+		self._rng.fill_normal(result, stream=self._env.stream)
+		self._scaleRandoms(result.size, result,
+			self._complex_cast(loc), self._scalar_cast(scale / numpy.sqrt(2.0)))
+
+
 class FakeRandom:
 	# FIXME: temporary stub. Have to write proper GPU-based generator
 
@@ -90,7 +136,7 @@ class CPURandom:
 
 def createRandom(env, double):
 	if env.gpu and env.cuda:
-		return CUDARandom(env, double)
+		return NewCUDARandom(env, double)
 	elif env.gpu:
 		return FakeRandom(env, double)
 	else:
