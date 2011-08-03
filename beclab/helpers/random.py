@@ -3,6 +3,41 @@ import numpy
 from .typenames import single_precision, double_precision
 
 
+class PyCUDARNG:
+
+	def __init__(self, dtype):
+		from pycuda.curandom import md5_code
+		from pycuda.elementwise import get_elwise_kernel
+
+		if dtype == numpy.complex64:
+			self._func = get_elwise_kernel(
+				"float2 *dest, unsigned int seed",
+				md5_code + """
+				#define POW_2_M32 (1/4294967296.0f)
+
+				dest[i] = make_float2(a*POW_2_M32, b*POW_2_M32);
+				if ((i += total_threads) < n)
+					dest[i] = make_float2(c*POW_2_M32, d*POW_2_M32);
+				""",
+				"md5_rng_float")
+		elif dtype == numpy.complex128:
+			self._func = get_elwise_kernel(
+				"double2 *dest, unsigned int seed",
+				md5_code + """
+				#define POW_2_M32 (1/4294967296.0)
+				#define POW_2_M64 (1/18446744073709551616.)
+
+				dest[i] = make_double2(
+					a*POW_2_M32 + b*POW_2_M64,
+					c*POW_2_M32 + d*POW_2_M64);
+				""",
+				"md5_rng_float")
+
+	def __call__(self, result, stream=None):
+	    self._func.prepared_async_call(result._grid, result._block, stream,
+	            result.gpudata, numpy.random.randint(2**31-1), result.size)
+
+
 class CUDARandom:
 
 	def __init__(self, env, double):
@@ -15,7 +50,8 @@ class CUDARandom:
 		self._scalar_cast = p.scalar.cast
 
 		import pycuda.curandom as curandom
-		self._rand_func = curandom.rand
+		#self._rand_func = curandom.rand
+		self._rand_func = PyCUDARNG(self._complex_dtype)
 
 		kernel_template = """
 		<%!
@@ -23,14 +59,14 @@ class CUDARandom:
 		%>
 
 		EXPORTED_FUNC void randomNormal(int gsize,
-			GLOBAL_MEM COMPLEX* normal, const GLOBAL_MEM COMPLEX* uniform,
+			GLOBAL_MEM COMPLEX* data,
 			SCALAR loc, SCALAR scale)
 		{
 			int id = GLOBAL_ID_FLAT;
 			if(id >= gsize)
 				return;
 
-			COMPLEX u = uniform[id];
+			COMPLEX u = data[id];
 			SCALAR u1 = u.x, u2 = u.y;
 
 			SCALAR ang = (SCALAR)${2.0 * pi} * u2;
@@ -38,19 +74,20 @@ class CUDARandom:
 			SCALAR s_ang = sin(ang);
 			SCALAR coeff = sqrt(-(SCALAR)2.0 * log(u1)) * scale;
 
-			normal[id] = complex_ctr(coeff * c_ang + loc, coeff * s_ang + loc);
+			data[id] = complex_ctr(coeff * c_ang + loc, coeff * s_ang + loc);
 		}
 		"""
 
 		self._program = self._env.compile(kernel_template, double=double)
 		self._randomNormalKernel = self._program.randomNormal
 
-	def rand(self, shape):
-		return self._rand_func(shape, dtype=self._scalar_dtype, stream=self._env.stream)
+#	def rand(self, shape):
+#		return self._rand_func(shape, dtype=self._scalar_dtype, stream=self._env.stream)
 
 	def random_normal(self, result, scale=1.0, loc=0.0):
-		uniform = self.rand((2,) + result.shape)
-		self._randomNormalKernel(result.size, result, uniform,
+#		uniform = self.rand((2,) + result.shape)
+		self._rand_func(result)
+		self._randomNormalKernel(result.size, result,
 			self._scalar_cast(loc), self._scalar_cast(scale / numpy.sqrt(2.0)))
 
 
@@ -136,7 +173,7 @@ class CPURandom:
 
 def createRandom(env, double):
 	if env.gpu and env.cuda:
-		return NewCUDARandom(env, double)
+		return CUDARandom(env, double)
 	elif env.gpu:
 		return FakeRandom(env, double)
 	else:
