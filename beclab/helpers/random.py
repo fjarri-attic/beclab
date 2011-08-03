@@ -22,12 +22,12 @@ class PyCUDARNG:
 				"md5_rng_float")
 		elif dtype == numpy.complex128:
 			self._func = get_elwise_kernel(
-				"double2 *dest, unsigned int seed",
+				"pycuda::complex<double> *dest, unsigned int seed",
 				md5_code + """
 				#define POW_2_M32 (1/4294967296.0)
 				#define POW_2_M64 (1/18446744073709551616.)
 
-				dest[i] = make_double2(
+				dest[i] = pycuda::complex<double>(
 					a*POW_2_M32 + b*POW_2_M64,
 					c*POW_2_M32 + d*POW_2_M64);
 				""",
