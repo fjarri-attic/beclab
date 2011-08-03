@@ -6,14 +6,14 @@ from beclab import *
 from beclab.meters import ParticleStatistics
 
 
-def testConvergence(grid_type, dim, prop_type):
+def testConvergence(grid_type, dim, prop_type, repr_type):
 	env = envs.cuda()
 	try:
-		return runTest(env, grid_type, dim, prop_type)
+		return runTest(env, grid_type, dim, prop_type, repr_type)
 	finally:
 		env.release()
 
-def runTest(env, grid_type, dim, prop_type):
+def runTest(env, grid_type, dim, prop_type, repr_type):
 
 	# additional parameters
 	constants_kwds = {
@@ -43,9 +43,11 @@ def runTest(env, grid_type, dim, prop_type):
 
 	# time steps for split-step propagation
 	ss_dts = {
-		'1d': [4e-5, 1e-5, 4e-6, 2e-6, 1e-6],
-		'3d': [1e-4, 4e-5, 2e-5, 1e-5, 4e-6, 2e-6]
+		'1d': [4e-5], # 1e-5, 4e-6, 2e-6, 1e-6],
+		'3d': [1e-4], # 4e-5, 2e-5, 1e-5, 4e-6, 2e-6]
 	}[dim]
+
+	wigner = (repr_type == 'wigner')
 
 	constants = Constants(double=env.supportsDouble(), **constants_kwds)
 	grid = UniformGrid.forN(env, constants, total_N, shape)
@@ -61,6 +63,10 @@ def runTest(env, grid_type, dim, prop_type):
 
 	for ss_dt in ss_dts:
 		psi = gs.create((total_N, 0))
+
+		if wigner:
+			psi.toWigner(16)
+
 		p = ParticleNumberCollector(env, constants, grid, pulse=pulse)
 		v = VisibilityCollector(env, constants, grid)
 
@@ -94,16 +100,18 @@ if __name__ == '__main__':
 	tests = (
 		('uniform',), # grid type
 		('split-step',), # propagation type
+		('wigner',), # representation type
 	)
 
 	for dim in ('1d', '3d',):
 		print "\n*** {dim} ***\n".format(dim=dim)
 
-		for grid_type, prop_type in itertools.product(*tests):
+		for grid_type, prop_type, repr_type in itertools.product(*tests):
 
 			if grid_type == 'harmonic' and prop_type == 'split-step':
 				continue
 
 			print "* Testing", grid_type, "grid and", prop_type
-			plots = testConvergence(grid_type, dim, prop_type)
-			XYPlot(plots).save(prefix + dim + '_' + grid_type + '_' + prop_type + '.pdf')
+			plots = testConvergence(grid_type, dim, prop_type, repr_type)
+			XYPlot(plots).save(prefix + dim + '_' + grid_type + '_' +
+				prop_type + '_' + repr_type + '.pdf')
