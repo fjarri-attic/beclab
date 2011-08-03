@@ -47,6 +47,8 @@ def runTest(env, grid_type, dim, prop_type, repr_type):
 		'3d': [1e-4], # 4e-5, 2e-5, 1e-5, 4e-6, 2e-6]
 	}[dim]
 
+	ensembles = 64
+
 	wigner = (repr_type == 'wigner')
 
 	constants = Constants(double=env.supportsDouble(), **constants_kwds)
@@ -65,7 +67,7 @@ def runTest(env, grid_type, dim, prop_type, repr_type):
 		psi = gs.create((total_N, 0))
 
 		if wigner:
-			psi.toWigner(16)
+			psi.toWigner(ensembles)
 
 		p = ParticleNumberCollector(env, constants, grid, pulse=pulse)
 		v = VisibilityCollector(env, constants, grid)
@@ -111,7 +113,7 @@ if __name__ == '__main__':
 			if grid_type == 'harmonic' and prop_type == 'split-step':
 				continue
 
-			print "* Testing", grid_type, "grid and", prop_type
+			print "* Testing", ", ".join((grid_type, prop_type, repr_type))
 			plots = testConvergence(grid_type, dim, prop_type, repr_type)
 			XYPlot(plots).save(prefix + dim + '_' + grid_type + '_' +
 				prop_type + '_' + repr_type + '.pdf')
