@@ -634,7 +634,6 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 		self._plan = createFFTPlan(self._env, self._constants, self._grid)
 		self._potentials = getPotentials(self._env, self._constants, self._grid)
 		self._energy = getPlaneWaveEnergy(self._env, self._constants, self._grid)
-		self._maxFinder = createMaxFinder(self._env, self._constants.complex.dtype)
 
 		self._propagator = RK5Propagation(self._env, self._constants, self._grid, mspace=False)
 
@@ -747,7 +746,6 @@ class RK5HarmonicGroundState(ImaginaryTimeGroundState):
 		ImaginaryTimeGroundState.__init__(self, env, constants, grid)
 
 		self._energy = getHarmonicEnergy(self._env, self._constants, self._grid)
-		self._maxFinder = createMaxFinder(self._env, self._constants.scalar.dtype)
 		self._plan3 = createFHTPlan(env, constants, grid, 3)
 
 		self._propagator = RK5Propagation(self._env, self._constants, self._grid, mspace=True)
