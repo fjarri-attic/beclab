@@ -5,7 +5,7 @@ except ImportError:
 
 import os.path
 
-VERSION = '0.1.2'
+VERSION = '0.2.0'
 
 documentation = open(os.path.join(os.path.dirname(__file__), 'README.rst')).read()
 
