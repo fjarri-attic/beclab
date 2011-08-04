@@ -4,6 +4,7 @@ import itertools
 
 from beclab import *
 from beclab.meters import ParticleStatistics
+import gc
 
 
 def testConvergence(grid_type, dim, prop_type, repr_type):
@@ -43,11 +44,11 @@ def runTest(env, grid_type, dim, prop_type, repr_type):
 
 	# time steps for split-step propagation
 	ss_dts = {
-		'1d': [4e-5], # 1e-5, 4e-6, 2e-6, 1e-6],
-		'3d': [1e-4], # 4e-5, 2e-5, 1e-5, 4e-6, 2e-6]
+		'1d': [4e-5, 2e-5, 1e-5, 4e-6, 2e-6],
+		'3d': [1e-4, 4e-5, 2e-5, 1e-5, 4e-6]
 	}[dim]
 
-	ensembles = 64
+	ensembles = 128
 
 	wigner = (repr_type == 'wigner')
 
@@ -55,7 +56,6 @@ def runTest(env, grid_type, dim, prop_type, repr_type):
 	grid = UniformGrid.forN(env, constants, total_N, shape)
 
 	gs = SplitStepGroundState(env, constants, grid, dt=ss_gs_dt)
-	evolution = SplitStepEvolution(env, constants, grid)
 	pulse = Pulse(env, constants, grid, f_detuning=41, f_rabi=350)
 
 	# experiment
@@ -71,10 +71,10 @@ def runTest(env, grid_type, dim, prop_type, repr_type):
 
 		p = ParticleNumberCollector(env, constants, grid, pulse=pulse)
 		v = VisibilityCollector(env, constants, grid)
+		evolution = SplitStepEvolution(env, constants, grid, dt=ss_dt)
 
 		pulse.apply(psi, theta=0.5 * numpy.pi)
 
-		evolution.prepare(dt=ss_dt)
 		evolution.run(psi, time=0.2, callbacks=[p, v], callback_dt=0.005)
 		env.synchronize()
 
@@ -92,6 +92,9 @@ def runTest(env, grid_type, dim, prop_type, repr_type):
 			xname="T (ms)", yname="$\\mathcal{V}$", ymin=0, ymax=1
 		))
 
+		del p, v, evolution
+		gc.collect()
+
 	return vis_plots
 
 
@@ -102,7 +105,7 @@ if __name__ == '__main__':
 	tests = (
 		('uniform',), # grid type
 		('split-step',), # propagation type
-		('wigner',), # representation type
+		('classical', 'wigner',), # representation type
 	)
 
 	for dim in ('1d', '3d',):

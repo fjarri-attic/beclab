@@ -19,7 +19,7 @@ def testVisibility(gpu, matrix_pulses):
 	pulse.apply(cloud, math.pi * 0.5, matrix=matrix_pulses)
 
 	t1 = time.time()
-	evolution.run(cloud, 0.4, callbacks=[v, p], callback_dt=0.002)
+	evolution.run(cloud, 0.1, callbacks=[v, p], callback_dt=0.002)
 	env.synchronize()
 	t2 = time.time()
 	print "Time spent: " + str(t2 - t1) + " s"
