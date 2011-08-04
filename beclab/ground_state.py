@@ -388,7 +388,8 @@ class RK5Propagation(PairedCalculation):
 
 		self._maxFinder = createMaxFinder(self._env, self._constants.complex.dtype)
 
-		self._addParameters(dt_guess=1e-4, eps=1e-6, tiny=0, mspace=mspace, components=1)
+		self._addParameters(dt_guess=1e-4, eps=1e-6, tiny=0, mspace=mspace,
+			components=1, ensembles=1)
 
 	def _prepare(self):
 
@@ -409,30 +410,35 @@ class RK5Propagation(PairedCalculation):
 
 		if self._p.mspace:
 			shape = self._grid.mshape
+			self._p.grid_size = self._grid.msize
 		else:
 			shape = self._grid.shape
+			self._p.grid_size = self._grid.size
+
+		self._p.comp_size = self._p.grid_size * self._p.ensembles
+		shape = (self._p.components, self._p.ensembles) + shape
 
 		cdtype = self._constants.complex.dtype
 		sdtype = self._constants.scalar.dtype
 
-		self._maxFinder.prepare(length=self._grid.size * self._p.components)
+		self._maxFinder.prepare(length=self._grid.size * self._p.components * self._p.ensembles)
 		self._c_maxbuffer = self._env.allocate((1,), dtype=cdtype)
 
-		self._xdata = self._env.allocate((self._p.components, 1) + shape, dtype=cdtype)
-		self._k = self._env.allocate((6, self._p.components, 1) + shape, dtype=cdtype)
-		self._scale = self._env.allocate((self._p.components, 1) + shape, dtype=cdtype)
+		self._xdata = self._env.allocate(shape, dtype=cdtype)
+		self._k = self._env.allocate((6,) + shape, dtype=cdtype)
+		self._scale = self._env.allocate(shape, dtype=cdtype)
 
 	def _gpu__prepare_specific(self):
 		kernel_template = """
 			EXPORTED_FUNC void calculateScale(int gsize, GLOBAL_MEM COMPLEX *res,
 				GLOBAL_MEM COMPLEX *k, GLOBAL_MEM COMPLEX *data)
 			{
-				LIMITED_BY(gsize);
+				LIMITED_BY(${p.comp_size});
 				COMPLEX deriv, val;
 				int id;
 
 				%for comp in xrange(p.components):
-				id = GLOBAL_INDEX + gsize * ${comp};
+				id = GLOBAL_INDEX + ${comp * p.comp_size};
 				deriv = k[id];
 				val = data[id];
 				res[id] = complex_ctr(
@@ -445,12 +451,12 @@ class RK5Propagation(PairedCalculation):
 			EXPORTED_FUNC void calculateError(int gsize, GLOBAL_MEM COMPLEX *k,
 				GLOBAL_MEM COMPLEX *scale)
 			{
-				LIMITED_BY(gsize);
+				LIMITED_BY(${p.comp_size});
 				COMPLEX val, s;
 				int id;
 
 				%for comp in xrange(p.components):
-				id = GLOBAL_INDEX + gsize * ${comp};
+				id = GLOBAL_INDEX + ${comp * p.comp_size};
 				val = k[id];
 				s = scale[id];
 				k[id] = complex_ctr(
@@ -464,7 +470,7 @@ class RK5Propagation(PairedCalculation):
 				GLOBAL_MEM COMPLEX *res, GLOBAL_MEM COMPLEX *data,
 				GLOBAL_MEM COMPLEX *k, int stage)
 			{
-				LIMITED_BY(gsize);
+				LIMITED_BY(${p.comp_size});
 				COMPLEX val, kval;
 
 				const SCALAR b[6][5] = {
@@ -478,33 +484,35 @@ class RK5Propagation(PairedCalculation):
 				};
 
 				%for comp in xrange(p.components):
-				val = data[GLOBAL_INDEX + gsize * ${comp}];
+				val = data[GLOBAL_INDEX + ${comp * p.comp_size}];
 				for(int s = 0; s < stage; s++)
 				{
-					kval = k[GLOBAL_INDEX + s * gsize * ${p.components} + gsize * ${comp}];
+					kval = k[GLOBAL_INDEX + s * ${p.comp_size * p.components} +
+						${p.comp_size * comp}];
 					val = val + complex_mul_scalar(kval, b[stage][s]);
 				}
 
-				res[GLOBAL_INDEX + gsize * ${comp}] = val;
+				res[GLOBAL_INDEX + ${comp * p.comp_size}] = val;
 				%endfor
 			}
 
 			EXPORTED_FUNC void sumResults(int gsize, GLOBAL_MEM COMPLEX *res,
 				GLOBAL_MEM COMPLEX *k, GLOBAL_MEM COMPLEX *data)
 			{
-				LIMITED_BY(gsize);
+				LIMITED_BY(${p.comp_size});
 				COMPLEX res_val, err_val, kval;
 
 				%for comp in xrange(p.components):
-				res_val = data[GLOBAL_INDEX + gsize * ${comp}];
+				res_val = data[GLOBAL_INDEX + ${comp * p.comp_size}];
 				err_val = complex_ctr(0, 0);
 				%for s in xrange(6):
-					kval = k[GLOBAL_INDEX + gsize * ${p.components * s} + gsize * ${comp}];
+					kval = k[GLOBAL_INDEX + ${p.comp_size * p.components * s} +
+						${p.comp_size * comp}];
 					res_val = res_val + complex_mul_scalar(kval, (SCALAR)${p.cval[s]});
 					err_val = err_val + complex_mul_scalar(kval, (SCALAR)${p.cval[s] - p.cerr[s]});
 				%endfor
-				res[GLOBAL_INDEX + gsize * ${comp}] = res_val;
-				k[GLOBAL_INDEX + gsize * ${comp}] = complex_ctr(abs(err_val.x), abs(err_val.y));
+				res[GLOBAL_INDEX + ${p.comp_size * comp}] = res_val;
+				k[GLOBAL_INDEX + ${p.comp_size * comp}] = complex_ctr(abs(err_val.x), abs(err_val.y));
 				%endfor
 			}
 		"""
@@ -524,7 +532,7 @@ class RK5Propagation(PairedCalculation):
 				(1 + 1j) * self._p.tiny).flat
 
 	def _cpu__kernel_calculateError(self, gsize, k, scale):
-		shape = (self._p.components,) + k.shape[2:]
+		shape = (self._p.components, self._p.ensembles) + k.shape[3:]
 		scale = scale.reshape(shape)
 		k[0].real /= scale.real * self._p.eps
 		k[0].imag /= scale.imag * self._p.eps
@@ -564,7 +572,7 @@ class RK5Propagation(PairedCalculation):
 		self._kernel_sumResults(psi.size, self._xdata,
 			self._k, psi.data)
 
-	def propagate(self, prop, finalize, psi):
+	def propagate(self, prop, finalize, psi, max_dt=None):
 
 		safety = 0.9
 		eps = self._p.eps
@@ -594,15 +602,15 @@ class RK5Propagation(PairedCalculation):
 
 			#print "Error: " + str(errmax)
 			if errmax < 1.0:
-			#	if dt > remaining_time:
-			#		# Step is fine in terms of error, but bigger then necessary
-			#		dt = remaining_time
-			#		continue
-			#	else:
-			#		#print "Seems ok"
-			#		break
+				if max_dt is not None and dt > max_dt:
+					# Step is fine in terms of error, but bigger then necessary
+					dt = max_dt
+					continue
+				else:
+			#		print "Seems ok"
+					break
 			#	print "Seems ok"
-				break
+			#	break
 
 			# reducing step size and retrying step
 			dt = max(safety * errmax ** (-alpha), minscale) * dt
