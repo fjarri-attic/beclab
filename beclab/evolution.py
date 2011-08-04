@@ -67,6 +67,163 @@ class Evolution(PairedCalculation):
 			return psi.time
 
 
+class NoisePropagator(PairedCalculation):
+
+	def __init__(self, env, constants, grid, **kwds):
+		PairedCalculation.__init__(self, env)
+		self._constants = constants.copy()
+		self._grid = grid.copy()
+
+		self._random = createRandom(env, constants.double)
+
+		self._addParameters(ensembles=1, components=2)
+		self.prepare(**kwds)
+
+	def _prepare(self):
+		self._p.grid_size = self._grid.size
+		self._p.comp_size = self._grid.size * self._p.ensembles
+
+		self._p.losses_diffusion = copy.deepcopy(self._constants.losses_diffusion)
+
+		self._randoms = self._env.allocate(
+			(2, self._constants.noise_sources, self._p.ensembles) + self._grid.shape,
+			dtype=self._constants.complex.dtype
+		)
+
+	def _gpu__prepare_specific(self):
+
+		kernels = """
+			<%!
+				from math import sqrt, pi
+			%>
+
+			INTERNAL_FUNC void noise_func(
+				COMPLEX G[${p.components}][${c.noise_sources}],
+				COMPLEX vals[${p.components}])
+			{
+				<%
+					normalization = sqrt(g.size / g.V)
+
+					def complex_mul_sequence(s):
+						if len(s) == 1:
+							return s[0]
+						else:
+							return 'complex_mul(' + s[0] + ', ' + complex_mul_sequence(s[1:]) + ')'
+				%>
+
+				%for comp in xrange(p.components):
+				%for i, e in enumerate(p.losses_diffusion[comp]):
+				<%
+					coeff, orders = e
+					sequence = []
+					for j, order in enumerate(orders):
+						if order > 0:
+							sequence += ['vals[' + str(j) + ']'] * order
+					if len(sequence) > 0:
+						product = complex_mul_sequence(sequence)
+					else:
+						product = 'complex_ctr(1, 0)'
+				%>
+				%if coeff != 0:
+				G[${comp}][${i}] = complex_mul_scalar(
+					${product},
+					(SCALAR)${coeff * normalization}
+				);
+				%else:
+				G[${comp}][${i}] = complex_ctr(0, 0);
+				%endif
+				%endfor
+				%endfor
+			}
+
+			EXPORTED_FUNC void add_noise(int gsize, GLOBAL_MEM COMPLEX *data,
+				GLOBAL_MEM COMPLEX *randoms, SCALAR dt)
+			{
+				LIMITED_BY(${p.comp_size});
+
+				COMPLEX G[${p.components}][${c.noise_sources}];
+				COMPLEX Z[2][${c.noise_sources}];
+				COMPLEX vals0[${p.components}];
+				COMPLEX vals[${p.components}];
+
+				// load data
+				%for comp in xrange(p.components):
+				vals0[${comp}] = data[GLOBAL_INDEX + ${comp * p.comp_size}];
+				vals[${comp}] = vals0[${comp}];
+				%endfor
+
+				// load randoms
+				%for stage in xrange(2):
+				%for ns in xrange(c.noise_sources):
+				Z[${stage}][${ns}] = randoms[GLOBAL_INDEX +
+					${stage * p.comp_size * c.noise_sources + ns * p.comp_size}];
+				%endfor
+				%endfor
+
+				// first stage
+				noise_func(G, vals);
+
+				// second stage
+				%for comp in xrange(p.components):
+				vals[${comp}] = vals[${comp}] + complex_mul_scalar(
+					%for ns in xrange(c.noise_sources):
+					+ complex_mul(G[${comp}][${ns}], Z[0][${ns}])
+					%endfor
+					, sqrt(dt / 2));
+				%endfor
+				noise_func(G, vals);
+
+				// write data to memory
+				%for comp in xrange(p.components):
+				vals0[${comp}] = vals0[${comp}] + complex_mul_scalar(
+					%for ns in xrange(c.noise_sources):
+					+ complex_mul(G[${comp}][${ns}], Z[1][${ns}])
+					%endfor
+					, sqrt(dt));
+				data[GLOBAL_INDEX + ${comp * p.comp_size}] = vals0[${comp}];
+				%endfor
+			}
+		"""
+
+		self.__program = self.compileProgram(kernels)
+		self._kernel_add_noise = self.__program.add_noise
+
+	def _noiseFunc(self, data):
+		normalization = numpy.sqrt(self._grid.size / self._grid.V)
+
+		G = numpy.empty((self._p.components, self._constants.noise_sources,) + data.shape[1:],
+			dtype=data.dtype)
+
+		for comp in xrange(self._p.components):
+			for i, e in enumerate(self._p.losses_diffusion[comp]):
+				coeff, orders = e
+				if coeff != 0:
+					res = coeff * normalization
+					for j, order in enumerate(orders):
+						if order > 0:
+							res = res * data[j]
+					G[comp][i] = res
+				else:
+					G[comp][i] = numpy.zeros(data.shape[1:], data.dtype)
+
+		return G
+
+	def _cpu__kernel_add_noise(self, gsize, data, randoms, dt):
+
+		tile = (self._p.components,) + (1,) * (self._grid.dim + 2)
+
+		G0 = self._noiseFunc(data)
+		G1 = self._noiseFunc(data + numpy.sqrt(dt / 2) * (
+			(G0 * numpy.tile(randoms, tile)).sum(1)
+		))
+
+		data += (G1 * numpy.tile(randoms, tile)).sum(1) * numpy.sqrt(dt)
+
+	def propagateNoise(self, psi, dt):
+		self._random.random_normal(self._randoms)
+		self._kernel_add_noise(psi.size, psi.data, self._randoms, self._constants.scalar.cast(dt))
+
+
 class SplitStepEvolution(Evolution):
 	"""
 	Calculates evolution of two-component BEC, using split-step propagation
@@ -77,11 +234,10 @@ class SplitStepEvolution(Evolution):
 		assert isinstance(grid, UniformGrid)
 
 		Evolution.__init__(self, env)
-		self._env = env
 		self._constants = constants.copy()
 		self._grid = grid.copy()
 
-		self._random = createRandom(env, constants.double)
+		self._noise_prop = NoisePropagator(env, constants, grid)
 
 		# indicates whether current state is in midstep (i.e, right after propagation
 		# in x-space and FFT to k-space)
@@ -113,13 +269,9 @@ class SplitStepEvolution(Evolution):
 		self._p.g = self._constants.g / self._constants.hbar
 
 		self._p.losses_drift = copy.deepcopy(self._constants.losses_drift)
-		self._p.losses_diffusion = copy.deepcopy(self._constants.losses_diffusion)
 
 		if self._p.noise:
-			self._randoms = self._env.allocate(
-				(2, self._constants.noise_sources, self._p.ensembles) + self._grid.shape,
-				dtype=self._constants.complex.dtype
-			)
+			self._noise_prop.prepare(components=self._p.components, ensembles=self._p.ensembles)
 
 	def _gpu__prepare_specific(self):
 
@@ -265,93 +417,6 @@ class SplitStepEvolution(Evolution):
 				%endif
 			}
 
-			INTERNAL_FUNC void noise_func(
-				COMPLEX G[${p.components}][${c.noise_sources}],
-				COMPLEX vals[${p.components}])
-			{
-				<%
-					normalization = sqrt(g.size / g.V)
-
-					def complex_mul_sequence(s):
-						if len(s) == 1:
-							return s[0]
-						else:
-							return 'complex_mul(' + s[0] + ', ' + complex_mul_sequence(s[1:]) + ')'
-				%>
-
-				%for comp in xrange(p.components):
-				%for i, e in enumerate(p.losses_diffusion[comp]):
-				<%
-					coeff, orders = e
-					sequence = []
-					for j, order in enumerate(orders):
-						if order > 0:
-							sequence += ['vals[' + str(j) + ']'] * order
-					if len(sequence) > 0:
-						product = complex_mul_sequence(sequence)
-					else:
-						product = 'complex_ctr(1, 0)'
-				%>
-				%if coeff != 0:
-				G[${comp}][${i}] = complex_mul_scalar(
-					${product},
-					(SCALAR)${coeff * normalization}
-				);
-				%else:
-				G[${comp}][${i}] = complex_ctr(0, 0);
-				%endif
-				%endfor
-				%endfor
-			}
-
-			EXPORTED_FUNC void add_noise(int gsize, GLOBAL_MEM COMPLEX *data,
-				GLOBAL_MEM COMPLEX *randoms)
-			{
-				LIMITED_BY(${p.comp_size});
-
-				COMPLEX G[${p.components}][${c.noise_sources}];
-				COMPLEX Z[2][${c.noise_sources}];
-				COMPLEX vals0[${p.components}];
-				COMPLEX vals[${p.components}];
-
-				// load data
-				%for comp in xrange(p.components):
-				vals0[${comp}] = data[GLOBAL_INDEX + ${comp * p.comp_size}];
-				vals[${comp}] = vals0[${comp}];
-				%endfor
-
-				// load randoms
-				%for stage in xrange(2):
-				%for ns in xrange(c.noise_sources):
-				Z[${stage}][${ns}] = randoms[GLOBAL_INDEX +
-					${stage * p.comp_size * c.noise_sources + ns * p.comp_size}];
-				%endfor
-				%endfor
-
-				// first stage
-				noise_func(G, vals);
-
-				// second stage
-				%for comp in xrange(p.components):
-				vals[${comp}] = vals[${comp}] + complex_mul_scalar(
-					%for ns in xrange(c.noise_sources):
-					+ complex_mul(G[${comp}][${ns}], Z[0][${ns}])
-					%endfor
-					, ${sqrt(p.dt / 2.0)});
-				%endfor
-				noise_func(G, vals);
-
-				// write data to memory
-				%for comp in xrange(p.components):
-				vals0[${comp}] = vals0[${comp}] + complex_mul_scalar(
-					%for ns in xrange(c.noise_sources):
-					+ complex_mul(G[${comp}][${ns}], Z[1][${ns}])
-					%endfor
-					, ${sqrt(p.dt)});
-				data[GLOBAL_INDEX + ${comp * p.comp_size}] = vals0[${comp}];
-				%endfor
-			}
-
 			EXPORTED_FUNC void projector(int gsize, GLOBAL_MEM COMPLEX *data,
 				GLOBAL_MEM SCALAR *projector_mask)
 			{
@@ -369,7 +434,6 @@ class SplitStepEvolution(Evolution):
 		self.__program = self.compileProgram(kernels)
 		self._kernel_kpropagate = self.__program.kpropagate
 		self._kernel_xpropagate = self.__program.xpropagate
-		self._kernel_add_noise = self.__program.add_noise
 		self._kernel_projector = self.__program.projector
 
 	def _cpu__kernel_projector(self, gsize, data, projector_mask):
@@ -454,37 +518,6 @@ class SplitStepEvolution(Evolution):
 			data[0] = m[0,0] * data_copy[0] + m[0,1] * data_copy[1]
 			data[1] = m[1,0] * data_copy[0] + m[1,1] * data_copy[1]
 
-	def _noiseFunc(self, data):
-		normalization = numpy.sqrt(self._grid.size / self._grid.V)
-
-		G = numpy.empty((self._p.components, self._constants.noise_sources,) + data.shape[1:],
-			dtype=data.dtype)
-
-		for comp in xrange(self._p.components):
-			for i, e in enumerate(self._p.losses_diffusion[comp]):
-				coeff, orders = e
-				if coeff != 0:
-					res = coeff * normalization
-					for j, order in enumerate(orders):
-						if order > 0:
-							res = res * data[j]
-					G[comp][i] = res
-				else:
-					G[comp][i] = numpy.zeros(data.shape[1:], data.dtype)
-
-		return G
-
-	def _cpu__kernel_add_noise(self, gsize, data, randoms):
-
-		tile = (self._p.components,) + (1,) * (self._grid.dim + 2)
-
-		G0 = self._noiseFunc(data)
-		G1 = self._noiseFunc(data + numpy.sqrt(self._p.dt / 2) * (
-			(G0 * numpy.tile(randoms, tile)).sum(1)
-		))
-
-		data += (G1 * numpy.tile(randoms, tile)).sum(1) * numpy.sqrt(self._p.dt)
-
 	def _projector(self, psi):
 		self._kernel_projector(psi.size, psi.data, self._projector_mask)
 
@@ -495,10 +528,6 @@ class SplitStepEvolution(Evolution):
 	def _xpropagate(self, psi, t, phi):
 		cast = self._constants.scalar.cast
 		self._kernel_xpropagate(psi.size, psi.data, self._potentials, cast(t), cast(phi))
-
-	def _propagateNoise(self, psi):
-		self._random.random_normal(self._randoms)
-		self._kernel_add_noise(psi.size, psi.data, self._randoms)
 
 	def _finishStep(self, psi):
 		if self._midstep:
@@ -528,7 +557,7 @@ class SplitStepEvolution(Evolution):
 		self._xpropagate(psi, t, self._phi)
 
 		if self._p.noise:
-			self._propagateNoise(psi)
+			self._noise_prop.propagateNoise(psi, self._p.dt)
 
 		self._midstep = True
 		psi.toMSpace()
