@@ -178,6 +178,13 @@ class WavefunctionSet(PairedCalculation):
 		res.time = self.time
 		return res
 
+	def copyTo(self, other):
+		assert other.in_mspace == self.in_mspace
+		other.prepare(components=self._p.components, ensembles=self._p.ensembles)
+		self._env.copyBuffer(self.data, dest=other.data)
+		other.type = self.type
+		other.time = self.time
+
 	def fillComponent(self, target_comp, psi, source_comp):
 		assert self._grid == psi._grid and self.ensembles == psi.ensembles
 		comp_size = self.ensembles * self._grid.size
