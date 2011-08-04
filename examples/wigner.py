@@ -29,6 +29,11 @@ def runTest(env, grid_type, dim, prop_type, repr_type):
 		'3d': 50000
 	}[dim]
 
+	total_time = {
+		'1d': 0.1,
+		'3d': 1.0
+	}[dim]
+
 	# number of lattice points
 	shape = {
 		('1d', 'uniform'): (64,),
@@ -66,20 +71,20 @@ def runTest(env, grid_type, dim, prop_type, repr_type):
 	if wigner:
 		psi.toWigner(ensembles)
 
-	p = ParticleNumberCollector(env, constants, grid, pulse=pulse, verbose=True)
-	v = VisibilityCollector(env, constants, grid, verbose=True)
+	p = ParticleNumberCollector(env, constants, grid, pulse=pulse)
+	v = VisibilityCollector(env, constants, grid)
 
 	pulse.apply(psi, theta=0.5 * numpy.pi)
 
 	t1 = time.time()
-	evolution.run(psi, time=0.2, callbacks=[p, v], callback_dt=0.005)
+	evolution.run(psi, time=total_time, callbacks=[p, v], callback_dt=0.005)
 	env.synchronize()
 	t2 = time.time()
 
 	times, vis = v.getData()
 	times, Ns, Ntotals = p.getData()
 
-	print "  N = {N:.4f}, V = {V:.4f}\n  Time spent: {t:.3f}".format(
+	print "  N = {N:.4f}, V = {V:.4f}\n  Time spent: {t:.3f} s".format(
 		ss_dt=ss_dt, N=Ntotals[-1], V=vis[-1], t=t2-t1)
 
 	name = ", ".join((repr_type, grid_type, prop_type))
@@ -97,17 +102,11 @@ if __name__ == '__main__':
 	tests = (
 		('uniform',), # grid type
 		('split-step',), # propagation type
-		(
-		'classical',
-		'wigner',
-		), # representation type
-		(
-		True,
-		#False,
-		), # GPU usage
+		('classical', 'wigner',), # representation type
+		(False, True,), # GPU usage
 	)
 
-	for dim in ('3d',):
+	for dim in ('1d', '3d',):
 		print "\n*** {dim} ***\n".format(dim=dim)
 
 		plots_cpu = []
