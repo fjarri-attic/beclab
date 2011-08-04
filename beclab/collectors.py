@@ -5,6 +5,7 @@ from helpers import *
 from .meters import ParticleStatistics, DensityProfile
 from .evolution import TerminateEvolution
 from .pulse import Pulse
+from .wavefunction import WavefunctionSet
 
 
 class ParticleNumberCollector(PairedCalculation):
@@ -18,18 +19,20 @@ class ParticleNumberCollector(PairedCalculation):
 		self.times = []
 		self.N = []
 
+		self._psi = WavefunctionSet(env, constants, grid)
 		self._addParameters(components=2, ensembles=1)
 
 	def _prepare(self):
 		self.stats.prepare(components=self._p.components, ensembles=self._p.ensembles)
+		self._psi.prepare(components=self._p.components, ensembles=self._p.ensembles)
 
 	def __call__(self, t, psi):
-		psi_copy = psi.copy()
+		psi.copyTo(self._psi)
 
 		if self._pulse is not None:
-			self._pulse.apply(psi_copy, theta=0.5 * numpy.pi)
+			self._pulse.apply(self._psi, theta=0.5 * numpy.pi)
 
-		N = self.stats.getN(psi_copy)
+		N = self.stats.getN(self._psi)
 		if self.verbose:
 			print "Particle counter: ", t, N, N.sum()
 
@@ -216,23 +219,24 @@ class AxialProjectionCollector(PairedCalculation):
 
 		self.times = []
 		self.snapshots = []
+		self._psi = WavefunctionSet(env, constants, grid)
 
 		self._addParameters(components=2, ensembles=1)
 
 	def _prepare(self):
 		self._projection.prepare(components=self._p.components, ensembles=self._p.ensembles)
+		self._psi.prepare(components=self._p.components, ensembles=self._p.ensembles)
 
 	def __call__(self, t, psi):
 
-		# TODO: use some 'fast' copy?
-		psi_copy = psi.copy()
+		psi.copyTo(self._psi)
 
 		if self._pulse is not None:
-			self._pulse.apply(psi_copy, theta=0.5 * numpy.pi)
+			self._pulse.apply(self._psi, theta=0.5 * numpy.pi)
 
 		self.times.append(t)
 
-		proj = self._projection.getZ(psi_copy)
+		proj = self._projection.getZ(self._psi)
 
 		self.snapshots.append((proj[0] - proj[1]) / (proj[0] + proj[1]))
 
