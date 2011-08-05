@@ -701,7 +701,7 @@ class RK5IPEvolution(Evolution):
 				COMPLEX coupling${comp} = cexp(
 					amplitude,
 					${'-' if comp == 0 else ''}phase - (SCALAR)${pi / 2}
-				)
+				);
 				%endfor
 
 				%for comp in xrange(p.components):
