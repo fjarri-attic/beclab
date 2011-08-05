@@ -60,7 +60,8 @@ def runTest(env, matrix_pulses, grid_type, dim, prop_type):
 				f_detuning=41, f_rabi=350, dt=1e-6)
 		elif prop_type == 'rk5':
 			pulse = EvolutionPulse(env, constants, grid, RK5IPEvolution,
-				Nscale=total_N, f_detuning=41, f_rabi=350, dt=1e-6)
+				Nscale=total_N, f_detuning=41, f_rabi=350,
+				atol_coeff=1e-3, eps=1e-6)
 
 	a = AxialProjectionCollector(env, constants, grid, pulse=pulse)
 	p = ParticleNumberCollector(env, constants, grid, pulse=pulse, verbose=True)
@@ -103,7 +104,7 @@ if __name__ == '__main__':
 	tests = (
 		('uniform',), # grid type
 		('split-step', 'rk5',), # propagation type
-		(True, False), # matrix pulses
+		(False, True,), # matrix pulses
 		(False, True,), # gpu usage
 	)
 
