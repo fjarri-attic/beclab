@@ -8,6 +8,7 @@ import copy
 from .helpers import *
 from .constants import getPotentials, getPlaneWaveEnergy, getHarmonicEnergy, \
 	getProjectorMask, UniformGrid, HarmonicGrid, WIGNER, CLASSICAL
+from .ground_state import RK5Propagation
 
 
 class TerminateEvolution(Exception):
@@ -581,262 +582,222 @@ class SplitStepEvolution(Evolution):
 		Evolution.run(self, psi, *args, **kwds)
 
 
-
-
-
-
-
-
 class RK5IPEvolution(Evolution):
 
-	def __init__(self, env, constants, dt=1e-6, eps=1e-6, tiny=1e-3, detuning=0, rabi_freq=0):
+	def __init__(self, env, constants, grid, **kwds):
+		assert isinstance(grid, UniformGrid)
 		Evolution.__init__(self, env)
-		self._constants = constants
+		self._constants = constants.copy()
+		self._grid = grid.copy()
 
-		# FIXME: implement adaptive time step propagation
-		self._dt = dt
-		self._eps = eps
-		self._tiny = tiny
+		self._plan = createFFTPlan(self._env, self._constants, self._grid)
+		self._potentials = getPotentials(self._env, self._constants, self._grid)
+		self._energy = getPlaneWaveEnergy(self._env, self._constants, self._grid)
 
-		self._detuning = 2 * math.pi * detuning
-		self._rabi_freq = 2 * math.pi * rabi_freq
+		self._propagator = RK5Propagation(self._env, self._constants, self._grid, mspace=False)
+		self._noise_prop = NoisePropagator(self._env, self._constants, self._grid)
 
-		self._plan = createFFTPlan(env, constants.shape, constants.complex.dtype)
+		self._addParameters(atol_coeff=1e-3, eps=1e-6, dt_guess=1e-6, Nscale=10000,
+			components=2, ensembles=1, f_detuning=0, f_rabi=0, noise=False)
+		self.prepare(**kwds)
 
-		self._potentials = getPotentials(self._env, self._constants)
-		self._kvectors = getKVectors(self._env, self._constants)
+	def _prepare(self):
+		# FIXME: coupling terms assume that there are two components
+		assert self._p.f_rabi == 0 or self._p.components == 2
 
-		self._dt_times = []
-		self._dts = []
+		self._p.w_detuning = 2 * numpy.pi * self._p.f_detuning
+		self._p.w_rabi = 2 * numpy.pi * self._p.f_rabi
 
-		self._prepare()
+		self._p.comp_size = self._grid.size * self._p.ensembles
+		self._p.grid_size = self._grid.size
+		self._p.losses_drift = copy.deepcopy(self._constants.losses_drift)
 
-	def _cpu__prepare(self):
-		pass
+		self._buffer = self._env.allocate(
+			(self._p.components, self._p.ensembles) + self._grid.shape,
+			self._constants.complex.dtype
+		)
 
-	def _propagationFunc(self, state1, state2, t, dt):
-		res1 = numpy.empty_like(state1)
-		res2 = numpy.empty_like(state2)
-		self._propagationFuncInplace(state1, state2, res1, res2, t, dt)
-		return res1, res2
+		if self._p.noise:
+			self._noise_prop.prepare(components=self._p.components, ensembles=self._p.ensembles)
 
-	def _propagationFuncInplace(self, state1, state2, res1, res2, t, dt):
+		self._p.g = self._constants.g / self._constants.hbar
 
-		batch = 1 # FIXME: hardcoding
-		nvz = self._constants.nvz
+		mu = self._constants.muTF(self._p.Nscale, dim=self._grid.dim, comp=0)
+		peak_density = numpy.sqrt(mu / self._constants.g[0, 0])
 
-		# FIXME: remove hardcoding (g must depend on cloud.a.comp and cloud.b.comp)
-		g_by_hbar = self._constants.g_by_hbar
-		g11_by_hbar = g_by_hbar[(COMP_1_minus1, COMP_1_minus1)]
-		g12_by_hbar = g_by_hbar[(COMP_1_minus1, COMP_2_1)]
-		g22_by_hbar = g_by_hbar[(COMP_2_1, COMP_2_1)]
+		self._propagator.prepare(eps=self._p.eps, dt_guess=self._p.dt_guess, mspace=False,
+			tiny=peak_density * self._p.atol_coeff, components=self._p.components, ensembles=self._p.ensembles)
 
-		l111 = self._constants.l111
-		l12 = self._constants.l12
-		l22 = self._constants.l22
+	def _gpu__prepare_specific(self):
+		kernel_template = """
+			<%
+				from math import pi
+			%>
 
-		x1 = self._a_kdata
-		x2 = self._b_kdata
+			EXPORTED_FUNC void transformIP(int gsize, GLOBAL_MEM COMPLEX *data,
+				GLOBAL_MEM SCALAR *energy, SCALAR dt)
+			{
+				LIMITED_BY(${p.comp_size});
+				COMPLEX val;
+				int id;
+				SCALAR e = energy[GLOBAL_INDEX % ${p.grid_size}];
 
-		self._fromIP(state1, state2, x1, x2, dt)
+				%for comp in xrange(p.components):
+				id = GLOBAL_INDEX + ${comp * p.comp_size};
+				val = data[id];
+				data[id] = complex_mul(val, cexp(1, e * dt));
+				%endfor
+			}
 
-		n_a = numpy.abs(x1) ** 2
-		n_b = numpy.abs(x2) ** 2
+			EXPORTED_FUNC void propagationFunc(int gsize,
+				GLOBAL_MEM COMPLEX *k, GLOBAL_MEM COMPLEX *data,
+				GLOBAL_MEM SCALAR *potentials, SCALAR dt0, SCALAR t, SCALAR phi, int stage)
+			{
+				LIMITED_BY(${p.comp_size});
+				SCALAR V = potentials[GLOBAL_INDEX % ${p.grid_size}];
 
-		for e in xrange(batch):
-			start = e * nvz
-			stop = (e + 1) * nvz
-			res1[start:stop,:,:] = -1j * (x1[start:stop,:,:] * self._potentials)
-			res2[start:stop,:,:] = -1j * (x2[start:stop,:,:] * self._potentials)
+				%for comp in xrange(p.components):
+				COMPLEX val${comp} = data[GLOBAL_INDEX + ${comp * p.comp_size}];
+				SCALAR n${comp} = squared_abs(val${comp});
+				COMPLEX N${comp};
+				%endfor
 
-		res1 += (n_a * n_a * (-l111 / 2) + n_b * (-l12 / 2) -
-			1j * (n_a * g11_by_hbar + n_b * g12_by_hbar)) * x1 - \
-			0.5j * self._rabi_freq * \
-				numpy.exp(1j * (- t * self._detuning - self._phi)) * x2
+				%for comp in xrange(p.components):
+				N${comp} = complex_mul(val${comp},
+					complex_ctr(
+					%if len(p.losses_drift[comp]) > 0:
+					%for coeff, orders in p.losses_drift[comp]:
+					-(SCALAR)${coeff}
+						%for loss_comp, order in enumerate(orders):
+						${(' * ' + ' * '.join(['n' + str(loss_comp)] * order)) if order != 0 else ''}
+						%endfor
+					%endfor
+					%else:
+					0
+					%endif
+					,
+					-V
+					%for comp_other in xrange(p.components):
+					-(SCALAR)${p.g[comp, comp_other]} * n${comp_other}
+					%endfor
+					)
+				);
+				%endfor
 
-		res2 += (n_b * (-l22 / 2) + n_a * (-l12 / 2) -
-			1j * (n_b * g22_by_hbar + n_a * g12_by_hbar)) * x2 - \
-			0.5j * self._rabi_freq * \
-				numpy.exp(1j * (t * self._detuning + self._phi)) * x1
+				%if p.f_rabi != 0:
+				SCALAR amplitude = ${p.w_rabi / 2};
+				SCALAR phase = ${p.w_detuning} * t + phi;
 
-		self._toIP(res1, res2, res1, res2, dt)
+				%for comp in xrange(p.components):
+				COMPLEX coupling${comp} = cexp(
+					amplitude,
+					${'-' if comp == 0 else ''}phase - (SCALAR)${pi / 2}
+				)
+				%endfor
 
-	def _cpu__propagate_rk5(self, state1, state2, dt, t):
+				%for comp in xrange(p.components):
+				N${comp} = N${comp} + complex_mul(val${1 - comp}, coupling${comp});
+				%endfor
+				%endif
 
-		a = numpy.array([0, 0.2, 0.3, 0.6, 1, 0.875])
-		b = numpy.array([
-			[0, 0, 0, 0, 0],
-			[1.0 / 5, 0, 0, 0, 0],
-			[3.0 / 40, 9.0 / 40, 0, 0, 0],
-			[3.0 / 10, -9.0 / 10, 6.0 / 5, 0, 0],
-			[-11.0 / 54, 5.0 / 2, -70.0 / 27, 35.0 / 27, 0],
-			[1631.0 / 55296, 175.0 / 512, 575.0 / 13824, 44275.0 / 110592, 253.0 / 4096]
-		])
-		c = numpy.array([37.0 / 378, 0, 250.0 / 621, 125.0 / 594, 0, 512.0 / 1771])
-		cs = numpy.array([2825.0 / 27648, 0, 18575.0 / 48384.0, 13525.0 / 55296, 277.0 / 14336, 0.25])
+##				%for comp in xrange(p.components):
+##				k[GLOBAL_INDEX + ${p.comp_size * p.components} * stage + ${p.comp_size * comp}] =
+##					complex_mul_scalar(N${comp}, dt0);
+##				%endfor
+				%for comp in xrange(p.components):
+				k[GLOBAL_INDEX + ${p.comp_size * comp}] =
+					complex_mul_scalar(N${comp}, dt0);
+				%endfor
+			}
+		"""
 
-		k1s1, k1s2 = self._propagationFunc(state1, state2, t, 0)
-		k1s1 *= dt
-		k1s2 *= dt
+		self._program = self.compileProgram(kernel_template)
 
-		k2s1, k2s2 = self._propagationFunc(
-			state1 + b[1,0] * k1s1,
-			state2 + b[1,0] * k1s2, t + a[1] * dt, a[1] * dt)
-		k2s1 *= dt
-		k2s2 *= dt
+		self._kernel_transformIP = self._program.transformIP
+		self._kernel_propagationFunc = self._program.propagationFunc
 
-		k3s1, k3s2 = self._propagationFunc(
-			state1 + b[2,0] * k1s1 + b[2,1] * k2s1,
-			state2 + b[2,0] * k1s2 + b[2,1] * k2s2, t + a[2] * dt, a[2] * dt)
-		k3s1 *= dt
-		k3s2 *= dt
+	def _cpu__kernel_transformIP(self, gsize, data, energy, dt):
+		data *= numpy.tile(numpy.exp(energy * (1j * dt)),
+			(self._p.components, self._p.ensembles,) + (1,) * self._grid.dim)
 
-		k4s1, k4s2 = self._propagationFunc(
-			state1 + b[3,0] * k1s1 + b[3,1] * k2s1 + b[3,2] * k3s1,
-			state2 + b[3,0] * k1s2 + b[3,1] * k2s2 + b[3,2] * k3s2, t + a[3] * dt, a[3] * dt)
-		k4s1 *= dt
-		k4s2 *= dt
+	def _cpu__kernel_propagationFunc(self, gsize, result, data, potentials, dt0, t, phi, stage):
+		g = self._p.g
+		l = self._p.losses_drift
+		n = numpy.abs(data) ** 2
 
-		k5s1, k5s2 = self._propagationFunc(
-			state1 + b[4,0] * k1s1 + b[4,1] * k2s1 + b[4,2] * k3s1 + b[4,3] * k4s1,
-			state2 + b[4,0] * k1s2 + b[4,1] * k2s2 + b[4,2] * k3s2 + b[4,3] * k4s2, t + a[4] * dt, a[4] * dt)
-		k5s1 *= dt
-		k5s2 *= dt
+#		result = k[stage]
 
-		k6s1, k6s2 = self._propagationFunc(
-			state1 + b[5,0] * k1s1 + b[5,1] * k2s1 + b[5,2] * k3s1 + b[5,3] * k4s1 + b[5,4] * k5s1,
-			state2 + b[5,0] * k1s2 + b[5,1] * k2s2 + b[5,2] * k3s2 + b[5,3] * k4s2 + b[5,4] * k5s2, t + a[5] * dt, a[5] * dt)
-		k6s1 *= dt
-		k6s2 *= dt
+		tile = (self._p.components, self._p.ensembles) + (1,) * self._grid.dim
+		p_tiled = numpy.tile(-1j * potentials, tile)
 
-		y_s1 = state1 + c[0] * k1s1 + c[1] * k2s1 + c[2] * k3s1 + c[3] * k4s1 + c[4] * k5s1 + c[5] * k6s1
-		y_s2 = state2 + c[0] * k1s2 + c[1] * k2s2 + c[2] * k3s2 + c[3] * k4s2 + c[4] * k5s2 + c[5] * k6s2
+		result.flat[:] = p_tiled.flat
 
-		ys_s1 = state1 + cs[0] * k1s1 + cs[1] * k2s1 + cs[2] * k3s1 + cs[3] * k4s1 + cs[4] * k5s1 + cs[5] * k6s1
-		ys_s2 = state2 + cs[0] * k1s2 + cs[1] * k2s2 + cs[2] * k3s2 + cs[3] * k4s2 + cs[4] * k5s2 + cs[5] * k6s2
+		for comp in xrange(self._p.components):
+			for comp_other in xrange(self._p.components):
+				result[comp] -= 1j * n[comp_other] * g[comp, comp_other]
 
-		delta_s1 = y_s1 - ys_s1
-		delta_s2 = y_s2 - ys_s2
+			for coeff, orders in l[comp]:
+				to_add = -coeff
+				for i, order in enumerate(orders):
+					to_add = to_add * (n[i] ** order)
+				result[comp] += to_add
 
-		return y_s1, y_s2, numpy.concatenate([delta_s1, delta_s2])
+		for comp in xrange(self._p.components):
+			result[comp] *= data[comp]
 
-	def _cpu__propagate_rk5_dynamic(self, state1, state2, t, remaining_time):
+		if self._p.f_rabi != 0:
+			amplitude = self._p.w_rabi / 2
+			phase = self._p.w_detuning * t + phi
 
-		safety = 0.9
-		eps = self._eps # 1e-9
-		tiny = self._tiny # 1e-3
+			result[0] += data[1] * amplitude * numpy.exp(-1j * (phase + numpy.pi / 2))
+			result[1] += data[0] * amplitude * numpy.exp(1j * (phase - numpy.pi / 2))
 
-		dt = self._dt
+		result *= dt0
 
-		ds1, ds2 = self._propagationFunc(state1.data, state2.data, t, 0)
-		yscal = numpy.concatenate([
-			numpy.abs(state1.data) + dt * numpy.abs(ds1),
-			numpy.abs(state2.data) + dt * numpy.abs(ds2)
-		]) + tiny
+	def _propFunc(self, results, values, dt, dt_full, stage):
+		self._fromIP(values, dt)
+		cast = self._constants.scalar.cast
+#		self._kernel_propagationFunc(self._p.comp_size, results, values,
+#			self._potentials, cast(dt_full), cast(self._t), cast(self._phi), numpy.int32(stage))
+		self._kernel_propagationFunc(self._p.comp_size, self._buffer, values,
+			self._potentials, cast(dt_full), cast(self._t), cast(self._phi), numpy.int32(stage))
+		self._toIP(self._buffer, dt)
+		self._env.copyBuffer(self._buffer, dest=results,
+			dest_offset=stage * self._p.comp_size * self._p.components)
 
-		while True:
-			#print "Trying with step " + str(dt)
-			s1, s2, delta_1 = self._propagate_rk5(state1.data, state2.data, dt, t)
-			errmax = numpy.abs(delta_1 / yscal).max() / eps
-			#print "Error: " + str(errmax)
-			if errmax < 1.0:
-				if dt > remaining_time:
-					# Step is fine in terms of error, but bigger then necessary
-					dt = remaining_time
-					continue
-				else:
-					#print "Seems ok"
-					break
+	def _finalizeFunc(self, psi, dt_used):
+		self._fromIP(psi.data, dt_used)
 
-			# reducing step size and retying step
-			dt_temp = safety * dt * (errmax ** (-0.25))
-			dt = max(dt_temp, 0.1 * dt)
+	def propagate(self, psi, t, remaining_time):
+		self._t = t
+		return self._propagator.propagate(self._propFunc, self._finalizeFunc, psi,
+			max_dt=remaining_time)
 
-		self._dt_used = dt
-
-		if errmax > (5.0 / safety) ** (-1.0 / 0.2):
-			self._dt = safety * dt * (errmax ** (-0.2))
-		else:
-			self._dt = 5.0 * dt
-
-		state1.data.flat[:] = s1.flat
-		state2.data.flat[:] = s2.flat
-
-		self._fromIP(state1.data, state2.data, state1.data, state2.data, self._dt_used)
-
-		#print numpy.sum(numpy.abs(state1.data) ** 2) * self._constants.dV, \
-		#	numpy.sum(numpy.abs(state2.data) ** 2) * self._constants.dV
-
-		#raw_input()
-
-		return self._dt_used
-
-	def _toIP(self, s1, s2, res1, res2, dt):
+	def _toIP(self, data, dt):
 		if dt == 0.0:
-			res1.flat[:] = s1.flat[:]
-			res2.flat[:] = s2.flat[:]
 			return
 
-		self._plan.execute(s1, res1, inverse=True, batch=self._batch)
-		self._plan.execute(s2, res2, inverse=True, batch=self._batch)
+		batch = self._p.components * self._p.ensembles
+		self._plan.execute(data, batch=batch)
+		self._kernel_transformIP(self._p.comp_size,
+			data, self._energy, self._constants.scalar.cast(dt))
+		self._plan.execute(data, batch=batch, inverse=True)
 
-		kcoeff = numpy.exp(self._kvectors * (1j * dt))
-		nvz = self._constants.nvz
+	def _fromIP(self, data, dt):
+		self._toIP(data, -dt)
 
-		for e in xrange(self._batch):
-			start = e * nvz
-			stop = (e + 1) * nvz
-			res1[start:stop,:,:] *= kcoeff
-			res2[start:stop,:,:] *= kcoeff
+	def run(self, psi, *args, **kwds):
 
-		self._plan.execute(res1, batch=self._batch)
-		self._plan.execute(res2, batch=self._batch)
+		if 'callbacks' in kwds:
+			for cb in kwds['callbacks']:
+				cb.prepare(components=psi.components, ensembles=psi.ensembles)
 
-	def _fromIP(self, s1, s2, res1, res2, dt):
-		if dt == 0.0:
-			res1.flat[:] = s1.flat[:]
-			res2.flat[:] = s2.flat[:]
-			return
-
-		self._plan.execute(s1, res1, inverse=True, batch=self._batch)
-		self._plan.execute(s2, res2, inverse=True, batch=self._batch)
-
-		kcoeff = numpy.exp(self._kvectors * (-1j * dt))
-		nvz = self._constants.nvz
-
-		for e in xrange(self._batch):
-			start = e * nvz
-			stop = (e + 1) * nvz
-			res1[start:stop,:,:] *= kcoeff
-			res2[start:stop,:,:] *= kcoeff
-
-		self._plan.execute(res1, batch=self._batch)
-		self._plan.execute(res2, batch=self._batch)
-
-	def propagate(self, cloud, t, remaining_time):
-		return self._propagate_rk5_dynamic(cloud.a, cloud.b, t, remaining_time)
-
-	def _collectMetrics(self, t):
-		self._dts.append(self._dt_used)
-		self._dt_times.append(t)
-
-	def getTimeSteps(self):
-		return numpy.array(self._dt_times), numpy.array(self._dts)
-
-	def run(self, *args, **kwds):
 		if 'starting_phase' in kwds:
 			starting_phase = kwds.pop('starting_phase')
 			self._phi = starting_phase
 		else:
 			self._phi = 0.0
 
-		self._dt_used = 0
-		shape = args[0].a.shape
-		dtype = args[0].a.dtype
-
-		self._batch = args[0].a.size / self._constants.cells
-
-		self._a_kdata = self._env.allocate(shape, dtype=dtype)
-		self._b_kdata = self._env.allocate(shape, dtype=dtype)
-
-		Evolution.run(self, *args, **kwds)
+		self.prepare(ensembles=psi.ensembles, components=psi.components,
+			noise=(psi.type == WIGNER))
+		Evolution.run(self, psi, *args, **kwds)
