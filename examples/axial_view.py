@@ -45,17 +45,26 @@ def runTest(env, matrix_pulses, grid_type, dim, prop_type):
 	grid = UniformGrid.forN(env, constants, total_N, shape)
 
 	gs = SplitStepGroundState(env, constants, grid, dt=ss_dt)
-	evolution = SplitStepEvolution(env, constants, grid, dt=ss_dt)
+
+	if prop_type == 'split-step':
+		evolution = SplitStepEvolution(env, constants, grid, dt=ss_dt)
+	elif prop_type == 'rk5':
+		evolution = RK5IPEvolution(env, constants, grid, Nscale=total_N,
+			atol_coeff=1e-3, eps=1e-6)
 
 	if matrix_pulses:
 		pulse = Pulse(env, constants, grid, f_detuning=41, f_rabi=350)
 	else:
-		pulse = EvolutionPulse(env, constants, grid, SplitStepEvolution,
-			f_detuning=41, f_rabi=350, dt=1e-6)
+		if prop_type == 'split-step':
+			pulse = EvolutionPulse(env, constants, grid, SplitStepEvolution,
+				f_detuning=41, f_rabi=350, dt=1e-6)
+		elif prop_type == 'rk5':
+			pulse = EvolutionPulse(env, constants, grid, RK5IPEvolution,
+				Nscale=total_N, f_detuning=41, f_rabi=350, dt=1e-6)
 
 	a = AxialProjectionCollector(env, constants, grid, pulse=pulse)
-	p = ParticleNumberCollector(env, constants, grid, pulse=pulse)
-	v = VisibilityCollector(env, constants, grid)
+	p = ParticleNumberCollector(env, constants, grid, pulse=pulse, verbose=True)
+	v = VisibilityCollector(env, constants, grid, verbose=True)
 
 	# experiment
 	psi = gs.create((total_N, 0))
@@ -93,8 +102,8 @@ if __name__ == '__main__':
 
 	tests = (
 		('uniform',), # grid type
-		('split-step',), # propagation type
-		(False, True,), # matrix pulses
+		('split-step', 'rk5',), # propagation type
+		(True, False), # matrix pulses
 		(False, True,), # gpu usage
 	)
 
