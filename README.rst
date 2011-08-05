@@ -24,6 +24,7 @@ Release history
 * Added RK5IP and RK5Harmonic ground states
 * Added RK5IP evolution
 * Added some tests (mostly functionality and coverage)
+* Executing callbacks at exact times, not approximate
 
 -----
 0.1.3

@@ -2,7 +2,6 @@
 Features/bugfixes for the future
 --------------------------------
 
-- Execute callbacks at exact times, not approximate
 - Different potentials for each component (static)
 - Parse keywords to Constants constructor and extract values/orders of loss coefficients
 - Separate tests and examples, add missing examples

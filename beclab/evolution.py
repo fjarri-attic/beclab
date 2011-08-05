@@ -38,7 +38,7 @@ class Evolution(PairedCalculation):
 			callback(psi.time, psi)
 		self._toEvolutionSpace(psi)
 
-	def run(self, psi, time=1.0, callbacks=None, callback_dt=0):
+	def run(self, psi, time, callbacks=None, callback_dt=0):
 
 		starting_time = psi.time
 		ending_time = psi.time + time
@@ -49,18 +49,25 @@ class Evolution(PairedCalculation):
 		try:
 			self._runCallbacks(psi, callbacks)
 
-			while psi.time - starting_time < time:
-				dt_used = self.propagate(psi, psi.time - starting_time, callback_dt - callback_t)
+			# 1e-10 modifier allow us to avoid cases when passed time
+			# is very close to time (due to floating point errors)
+			# which result in double calls to callbacks
+			while psi.time - starting_time < time - 1e-10:
+				remaining_time = callback_dt - callback_t
+				dt_used = self.propagate(psi, psi.time - starting_time, remaining_time)
 				self._collectMetrics(psi.time)
 
 				psi.time += dt_used
 				callback_t += dt_used
 
-				if callback_t >= callback_dt:
+				if remaining_time == dt_used:
 					self._runCallbacks(psi, callbacks)
 					callback_t = 0
 
-			self._runCallbacks(psi, callbacks)
+			# if some time passed after the last execution of callbacks,
+			# run them again
+			if callback_t != 0:
+				self._runCallbacks(psi, callbacks)
 
 			self._toMeasurementSpace(psi)
 
@@ -240,9 +247,7 @@ class SplitStepEvolution(Evolution):
 
 		self._noise_prop = NoisePropagator(env, constants, grid)
 
-		# indicates whether current state is in midstep (i.e, right after propagation
-		# in x-space and FFT to k-space)
-		self._midstep = False
+		self._kdt = 0
 
 		self._potentials = getPotentials(self._env, self._constants, self._grid)
 
@@ -260,9 +265,7 @@ class SplitStepEvolution(Evolution):
 		self._p.w_detuning = 2 * numpy.pi * self._p.f_detuning
 		self._p.w_rabi = 2 * numpy.pi * self._p.f_rabi
 
-		kvectors = getPlaneWaveEnergy(None, self._constants, self._grid)
-		self._mode_prop = self._env.toDevice(numpy.exp(kvectors * (-1j * self._p.dt / 2)))
-		self._mode_prop2 = self._env.toDevice(numpy.exp(kvectors * (-1j * self._p.dt)))
+		self._kvectors = getPlaneWaveEnergy(self._env, self._constants, self._grid)
 
 		self._p.grid_size = self._grid.size
 		self._p.comp_size = self._grid.size * self._p.ensembles
@@ -283,11 +286,12 @@ class SplitStepEvolution(Evolution):
 
 			// Propagates state vector in k-space
 			EXPORTED_FUNC void kpropagate(int gsize, GLOBAL_MEM COMPLEX *data,
-				GLOBAL_MEM COMPLEX *mode_prop)
+				GLOBAL_MEM SCALAR *kvectors, SCALAR dt)
 			{
 				LIMITED_BY(${p.comp_size});
 
-				COMPLEX mode_coeff = mode_prop[GLOBAL_INDEX % ${p.grid_size}];
+				SCALAR k = kvectors[GLOBAL_INDEX % ${p.grid_size}];
+				COMPLEX mode_coeff = cexp(1, -k * dt);
 				COMPLEX val;
 
 				%for comp in xrange(p.components):
@@ -300,7 +304,7 @@ class SplitStepEvolution(Evolution):
 
 			// Propagates state vector in x-space
 			EXPORTED_FUNC void xpropagate(int gsize, GLOBAL_MEM COMPLEX *data,
-				GLOBAL_MEM SCALAR *potentials, SCALAR t, SCALAR phi)
+				GLOBAL_MEM SCALAR *potentials, SCALAR t, SCALAR dt, SCALAR phi)
 			{
 				LIMITED_BY(${p.comp_size});
 
@@ -443,11 +447,11 @@ class SplitStepEvolution(Evolution):
 
 		data *= mask
 
-	def _cpu__kernel_kpropagate(self, gsize, data, mode_prop):
-		data *= numpy.tile(mode_prop,
+	def _cpu__kernel_kpropagate(self, gsize, data, kvectors, dt):
+		data *= numpy.tile(numpy.exp(kvectors * (-1j * dt)),
 			(self._p.components, self._p.ensembles) + (1,) * self._grid.dim)
 
-	def _cpu__kernel_xpropagate(self, gsize, data, potentials, t, phi):
+	def _cpu__kernel_xpropagate(self, gsize, data, potentials, t, dt, phi):
 		data0 = data.copy()
 		g = self._p.g
 
@@ -474,7 +478,7 @@ class SplitStepEvolution(Evolution):
 
 			if self._p.w_rabi == 0:
 
-				ddata = numpy.exp(N * (self._p.dt / 2))
+				ddata = numpy.exp(N * (dt / 2))
 				data.flat[:] = (data0 * ddata).flat
 
 			else:
@@ -501,8 +505,8 @@ class SplitStepEvolution(Evolution):
 				# ([-ev11, 1], [ev10, -1]) / ev_inf_coeff
 				ev_inv_coeff = ev10 - ev11
 
-				l0_exp = numpy.exp(l0 * self._p.dt / 2)
-				l1_exp = numpy.exp(l1 * self._p.dt / 2)
+				l0_exp = numpy.exp(l0 * dt / 2)
+				l1_exp = numpy.exp(l1 * dt / 2)
 
 				m[0,0].flat[:] = ((l1_exp * ev10 - l0_exp * ev11) / ev_inv_coeff).flat
 				m[0,1].flat[:] = ((l0_exp - l1_exp) / ev_inv_coeff).flat
@@ -522,21 +526,22 @@ class SplitStepEvolution(Evolution):
 	def _projector(self, psi):
 		self._kernel_projector(psi.size, psi.data, self._projector_mask)
 
-	def _kpropagate(self, psi, half_step):
-		self._kernel_kpropagate(psi.size, psi.data,
-			self._mode_prop if half_step else self._mode_prop2)
+	def _kpropagate(self, psi, dt):
+		self._kdt += dt
 
-	def _xpropagate(self, psi, t, phi):
+	def _xpropagate(self, psi, t, phi, dt):
 		cast = self._constants.scalar.cast
-		self._kernel_xpropagate(psi.size, psi.data, self._potentials, cast(t), cast(phi))
+		self._kernel_xpropagate(psi.size, psi.data, self._potentials,
+		cast(t), cast(dt), cast(phi))
 
-	def _finishStep(self, psi):
-		if self._midstep:
-			self._kpropagate(psi, False)
-			self._midstep = False
+	def _finish_kpropagate(self, psi):
+		if self._kdt != 0:
+			self._kernel_kpropagate(psi.size, psi.data,
+				self._kvectors, self._constants.scalar.cast(self._kdt))
+			self._kdt = 0
 
 	def _toMeasurementSpace(self, psi):
-		self._finishStep(psi)
+		self._finish_kpropagate(psi)
 		psi.toXSpace()
 
 	def _toEvolutionSpace(self, psi):
@@ -544,26 +549,28 @@ class SplitStepEvolution(Evolution):
 
 	def propagate(self, psi, t, remaining_time):
 
-		# replace two dt/2 k-space propagation by one dt propagation,
-		# if there were no rendering between them
-		if self._midstep:
-			self._kpropagate(psi, False)
-		else:
-			self._kpropagate(psi, True)
+		dt = self._p.dt
+		if remaining_time < dt:
+			dt = remaining_time
+
+		self._kpropagate(psi, dt / 2)
+		self._finish_kpropagate(psi)
 
 		if self._p.noise:
 			self._projector(psi)
 
 		psi.toXSpace()
-		self._xpropagate(psi, t, self._phi)
+		self._xpropagate(psi, t, self._phi, dt)
 
 		if self._p.noise:
-			self._noise_prop.propagateNoise(psi, self._p.dt)
+			self._noise_prop.propagateNoise(psi, dt)
 
 		self._midstep = True
 		psi.toMSpace()
 
-		return self._p.dt
+		self._kpropagate(psi, dt / 2)
+
+		return dt
 
 	def run(self, psi, *args, **kwds):
 
