@@ -597,7 +597,7 @@ class RK5IPEvolution(Evolution):
 		self._propagator = RK5Propagation(self._env, self._constants, self._grid, mspace=False)
 		self._noise_prop = NoisePropagator(self._env, self._constants, self._grid)
 
-		self._addParameters(atol_coeff=1e-3, eps=1e-6, dt_guess=1e-6, Nscale=10000,
+		self._addParameters(atol_coeff=1e-3, eps=1e-6, dt_guess=1e-4, Nscale=10000,
 			components=2, ensembles=1, f_detuning=0, f_rabi=0, noise=False)
 		self.prepare(**kwds)
 
@@ -612,6 +612,8 @@ class RK5IPEvolution(Evolution):
 		self._p.grid_size = self._grid.size
 		self._p.losses_drift = copy.deepcopy(self._constants.losses_drift)
 
+		# FIXME: toIP() can be done inplace in self._k,
+		# we just need to support offsets in FFT (because I only want to transform part of it)
 		self._buffer = self._env.allocate(
 			(self._p.components, self._p.ensembles) + self._grid.shape,
 			self._constants.complex.dtype
@@ -650,8 +652,8 @@ class RK5IPEvolution(Evolution):
 			}
 
 			EXPORTED_FUNC void propagationFunc(int gsize,
-				GLOBAL_MEM COMPLEX *k, GLOBAL_MEM COMPLEX *data,
-				GLOBAL_MEM SCALAR *potentials, SCALAR dt0, SCALAR t, SCALAR phi, int stage)
+				GLOBAL_MEM COMPLEX *result, GLOBAL_MEM COMPLEX *data,
+				GLOBAL_MEM SCALAR *potentials, SCALAR dt0, SCALAR t, SCALAR phi)
 			{
 				LIMITED_BY(${p.comp_size});
 				SCALAR V = potentials[GLOBAL_INDEX % ${p.grid_size}];
@@ -700,12 +702,8 @@ class RK5IPEvolution(Evolution):
 				%endfor
 				%endif
 
-##				%for comp in xrange(p.components):
-##				k[GLOBAL_INDEX + ${p.comp_size * p.components} * stage + ${p.comp_size * comp}] =
-##					complex_mul_scalar(N${comp}, dt0);
-##				%endfor
 				%for comp in xrange(p.components):
-				k[GLOBAL_INDEX + ${p.comp_size * comp}] =
+				result[GLOBAL_INDEX + ${p.comp_size * comp}] =
 					complex_mul_scalar(N${comp}, dt0);
 				%endfor
 			}
@@ -720,12 +718,10 @@ class RK5IPEvolution(Evolution):
 		data *= numpy.tile(numpy.exp(energy * (1j * dt)),
 			(self._p.components, self._p.ensembles,) + (1,) * self._grid.dim)
 
-	def _cpu__kernel_propagationFunc(self, gsize, result, data, potentials, dt0, t, phi, stage):
+	def _cpu__kernel_propagationFunc(self, gsize, result, data, potentials, dt0, t, phi):
 		g = self._p.g
 		l = self._p.losses_drift
 		n = numpy.abs(data) ** 2
-
-#		result = k[stage]
 
 		tile = (self._p.components, self._p.ensembles) + (1,) * self._grid.dim
 		p_tiled = numpy.tile(-1j * potentials, tile)
@@ -757,10 +753,8 @@ class RK5IPEvolution(Evolution):
 	def _propFunc(self, results, values, dt, dt_full, stage):
 		self._fromIP(values, dt)
 		cast = self._constants.scalar.cast
-#		self._kernel_propagationFunc(self._p.comp_size, results, values,
-#			self._potentials, cast(dt_full), cast(self._t), cast(self._phi), numpy.int32(stage))
 		self._kernel_propagationFunc(self._p.comp_size, self._buffer, values,
-			self._potentials, cast(dt_full), cast(self._t), cast(self._phi), numpy.int32(stage))
+			self._potentials, cast(dt_full), cast(self._t), cast(self._phi))
 		self._toIP(self._buffer, dt)
 		self._env.copyBuffer(self._buffer, dest=results,
 			dest_offset=stage * self._p.comp_size * self._p.components)
