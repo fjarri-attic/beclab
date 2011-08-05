@@ -656,7 +656,7 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 		peak_density = numpy.sqrt(mu / self._constants.g[0, 0])
 
 		self._propagator.prepare(eps=self._p.eps, dt_guess=self._p.dt_guess, mspace=False,
-			tiny=peak_density, components=self._p.components)
+			tiny=peak_density * self._p.atol_coeff, components=self._p.components)
 
 	def _gpu__prepare_specific(self):
 		kernel_template = """
