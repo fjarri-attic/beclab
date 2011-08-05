@@ -165,8 +165,8 @@ class CUDAEnvironment:
 		src_offset *= elem_size
 		dest_offset *= elem_size
 
-		cuda.memcpy_dtod_async(int(dest.gpudata) + src_offset,
-			int(buf.gpudata) + dest_offset,
+		cuda.memcpy_dtod_async(int(dest.gpudata) + dest_offset,
+			int(buf.gpudata) + src_offset,
 			size, stream=self.stream)
 
 		if dest is None:
