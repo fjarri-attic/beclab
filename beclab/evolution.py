@@ -41,8 +41,8 @@ class Evolution(PairedCalculation):
 	def run(self, psi, time, callbacks=None, callback_dt=0):
 
 		starting_time = psi.time
-		ending_time = psi.time + time
 		callback_t = 0
+		time_till_finish = time
 
 		self._toEvolutionSpace(psi)
 
@@ -52,15 +52,17 @@ class Evolution(PairedCalculation):
 			# 1e-10 modifier allow us to avoid cases when passed time
 			# is very close to time (due to floating point errors)
 			# which result in double calls to callbacks
-			while psi.time - starting_time < time - 1e-10:
-				remaining_time = callback_dt - callback_t
-				dt_used = self.propagate(psi, psi.time - starting_time, remaining_time)
+			while time_till_finish > 1e-10:
+
+				max_dt = (callback_dt - callback_t) if callback_dt != 0 else time_till_finish
+				dt_used = self.propagate(psi, psi.time - starting_time, max_dt)
 				self._collectMetrics(psi.time)
 
 				psi.time += dt_used
 				callback_t += dt_used
+				time_till_finish -= dt_used
 
-				if remaining_time == dt_used:
+				if dt_used == max_dt:
 					self._runCallbacks(psi, callbacks)
 					callback_t = 0
 
@@ -547,11 +549,11 @@ class SplitStepEvolution(Evolution):
 	def _toEvolutionSpace(self, psi):
 		psi.toMSpace()
 
-	def propagate(self, psi, t, remaining_time):
+	def propagate(self, psi, t, max_dt):
 
 		dt = self._p.dt
-		if remaining_time < dt:
-			dt = remaining_time
+		if max_dt < dt:
+			dt = max_dt
 
 		self._kpropagate(psi, dt / 2)
 		self._finish_kpropagate(psi)
@@ -769,10 +771,10 @@ class RK5IPEvolution(Evolution):
 	def _finalizeFunc(self, psi, dt_used):
 		self._fromIP(psi.data, dt_used)
 
-	def propagate(self, psi, t, remaining_time):
+	def propagate(self, psi, t, max_dt):
 		self._t = t
 		return self._propagator.propagate(self._propFunc, self._finalizeFunc, psi,
-			max_dt=remaining_time)
+			max_dt=max_dt)
 
 	def _toIP(self, data, dt):
 		if dt == 0.0:
