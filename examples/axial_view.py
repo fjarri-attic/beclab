@@ -82,7 +82,7 @@ def runTest(env, matrix_pulses, grid_type, dim, prop_type):
 	times, vis = v.getData()
 
 	print ("  Final N: {N} ({Ntotal}), V: {vis}\n" +
-		"  Time spent: {t}").format(N=Ns[:,-1], Ntotal=Ntotals[-1], vis=vis[-1], t=t2-t1)
+		"  Time spent: {t} s").format(N=Ns[:,-1], Ntotal=Ntotals[-1], vis=vis[-1], t=t2-t1)
 
 	return res
 
