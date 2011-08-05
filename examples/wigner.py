@@ -77,7 +77,7 @@ def runTest(env, grid_type, dim, prop_type, repr_type):
 	pulse.apply(psi, theta=0.5 * numpy.pi)
 
 	t1 = time.time()
-	evolution.run(psi, time=total_time, callbacks=[p, v], callback_dt=0.005)
+	evolution.run(psi, total_time, callbacks=[p, v], callback_dt=0.005)
 	env.synchronize()
 	t2 = time.time()
 
