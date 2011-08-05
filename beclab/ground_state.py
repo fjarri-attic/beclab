@@ -650,6 +650,13 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 		mu = self._constants.muTF(self._p.Nscale, dim=self._grid.dim, comp=0)
 		peak_density = numpy.sqrt(mu / self._constants.g[0, 0])
 
+		# FIXME: toIP() can be done inplace in self._k,
+		# we just need to support offsets in FFT (because I only want to transform part of it)
+		self._buffer = self._env.allocate(
+			(self._p.components, 1) + self._grid.shape,
+			self._constants.complex.dtype
+		)
+
 		self._propagator.prepare(eps=self._p.eps, dt_guess=self._p.dt_guess, mspace=False,
 			tiny=peak_density * self._p.atol_coeff, components=self._p.components)
 
@@ -671,8 +678,8 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 			}
 
 			EXPORTED_FUNC void propagationFunc(int gsize,
-				GLOBAL_MEM COMPLEX *k, GLOBAL_MEM COMPLEX *data,
-				GLOBAL_MEM SCALAR *potentials, SCALAR dt0, int stage)
+				GLOBAL_MEM COMPLEX *result, GLOBAL_MEM COMPLEX *data,
+				GLOBAL_MEM SCALAR *potentials, SCALAR dt0)
 			{
 				LIMITED_BY(gsize);
 				SCALAR p = potentials[GLOBAL_INDEX];
@@ -683,7 +690,7 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 				%endfor
 
 				%for comp in xrange(p.components):
-				k[GLOBAL_INDEX + gsize * ${p.components} * stage + gsize * ${comp}] =
+				result[GLOBAL_INDEX + gsize * ${comp}] =
 					complex_mul_scalar(val${comp}, -dt0 * (p
 						%for comp_other in xrange(p.components):
 						+ n${comp_other} * (SCALAR)${p.g[comp, comp_other]}
@@ -702,23 +709,26 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 		for c in xrange(self._p.components):
 			data[c] *= numpy.exp(energy * dt)
 
-	def _cpu__kernel_propagationFunc(self, gsize, k, data, potentials, dt0, stage):
+	def _cpu__kernel_propagationFunc(self, gsize, result, data, potentials, dt0):
 		g = self._p.g
 		n = numpy.abs(data) ** 2
 
 		tile = (self._p.components,) + (1,) * self._grid.dim
 		p_tiled = numpy.tile(potentials, tile)
 
-		k[stage].flat[:] = p_tiled.flat
+		result.flat[:] = p_tiled.flat
 		for c in xrange(self._p.components):
 			for other_c in xrange(self._p.components):
-				k[stage, c] += n[other_c, 0] * g[c, other_c]
-			k[stage, c] *= -dt0 * data[c, 0]
+				result[c] += n[other_c, 0] * g[c, other_c]
+			result[c] *= -dt0 * data[c, 0]
 
 	def _propFunc(self, results, values, dt, dt_full, stage):
 		self._fromIP(values, dt)
-		self._kernel_propagationFunc(self._grid.size, results, values,
-			self._potentials, self._constants.scalar.cast(dt_full), numpy.int32(stage))
+		self._kernel_propagationFunc(self._grid.size, self._buffer, values,
+			self._potentials, self._constants.scalar.cast(dt_full))
+		self._toIP(self._buffer, dt)
+		self._env.copyBuffer(self._buffer, dest=results,
+			dest_offset=stage * self._grid.size * self._p.components)
 
 	def _finalizeFunc(self, psi, dt_used):
 		self._fromIP(psi.data, dt_used)
