@@ -578,6 +578,8 @@ class RK5Propagation(PairedCalculation):
 		eps = self._p.eps
 
 		dt = self._p.dt
+		if max_dt is not None and max_dt < dt:
+			dt = max_dt
 		cast = self._constants.scalar.cast
 
 		# Estimate scale for this step
@@ -602,15 +604,8 @@ class RK5Propagation(PairedCalculation):
 
 			#print "Error: " + str(errmax)
 			if errmax < 1.0:
-				if max_dt is not None and dt > max_dt:
-					# Step is fine in terms of error, but bigger then necessary
-					dt = max_dt
-					continue
-				else:
-			#		print "Seems ok"
-					break
 			#	print "Seems ok"
-			#	break
+				break
 
 			# reducing step size and retrying step
 			dt = max(safety * errmax ** (-alpha), minscale) * dt
