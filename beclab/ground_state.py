@@ -28,7 +28,7 @@ class Projector(PairedCalculation):
 		self._addParameters(components=2, ensembles=1)
 
 	def _prepare(self):
-		self._p.comp_msize = self._p.components * self._p.ensembles * self._grid.msize
+		self._p.comp_msize = self._p.ensembles * self._grid.msize
 
 	def _gpu__prepare_specific(self):
 		kernel_template = """
@@ -57,7 +57,7 @@ class Projector(PairedCalculation):
 
 	def __call__(self, data):
 		if self._projector_mask is not None:
-			self._kernel_projector(data.size, data, self._projector_mask)
+			self._kernel_projector(self._p.comp_msize, data, self._projector_mask)
 
 
 class TFGroundState(PairedCalculation):
