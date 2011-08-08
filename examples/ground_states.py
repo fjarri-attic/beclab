@@ -1,18 +1,19 @@
 import numpy
 from beclab import *
 from beclab.meters import DensityProfile, ParticleStatistics
+from beclab.constants import getProjectorMask
 import itertools
 import time
 
 
-def testGroundState(gpu, comp, grid_type, dim, gs_type):
+def testGroundState(gpu, comp, grid_type, dim, gs_type, use_cutoff):
 	env = envs.cuda() if gpu else envs.cpu()
 	try:
-		return runTest(env, comp, grid_type, dim, gs_type)
+		return runTest(env, comp, grid_type, dim, gs_type, use_cutoff)
 	finally:
 		env.release()
 
-def runTest(env, comp, grid_type, dim, gs_type):
+def runTest(env, comp, grid_type, dim, gs_type, use_cutoff):
 	"""
 	Creates Thomas-Fermi ground state using different types of representations
 	"""
@@ -32,7 +33,7 @@ def runTest(env, comp, grid_type, dim, gs_type):
 	# number of lattice points
 	shape = {
 		('1d', 'uniform'): (64,),
-		('3d', 'uniform'): (64, 8, 8),
+		('3d', 'uniform'): (128, 8, 8),
 		('1d', 'harmonic'): (50,),
 		('3d', 'harmonic'): (50, 10, 10)
 	}[(dim, grid_type)]
@@ -73,8 +74,15 @@ def runTest(env, comp, grid_type, dim, gs_type):
 		'2comp': (int(total_N / 2 + 0.05 * total_N), int(total_N / 2 - 0.05 * total_N))
 	}[comp]
 
+	e_cut = {
+		'1d': 8000,
+		'3d': 7000
+	}[dim]
+
 	# Prepare constants and grid
-	constants = Constants(double=env.supportsDouble(), **constants_kwds)
+	constants = Constants(double=env.supportsDouble(),
+		e_cut=(e_cut if use_cutoff else None),
+		**constants_kwds)
 	if grid_type == 'uniform':
 		grid = UniformGrid.forN(env, constants, total_N, shape)
 	elif grid_type == 'harmonic':
@@ -151,10 +159,12 @@ def runTest(env, comp, grid_type, dim, gs_type):
 
 	# Results
 
-	print ("  N(x-space) = {Nx:.4f}, N(m-space) = {Nm:.4f}, " +
+	mask = getProjectorMask(None, constants, grid)
+	print ("  Modes: {modes_num} out of {total_modes}\n" +
+		"  N(x-space) = {Nx:.4f}, N(m-space) = {Nm:.4f}, " +
 		"E = {E:.4f} hbar wz, mu = {mu:.4f} hbar wz\n" +
 		"  Time spent: {t_gs} s").format(
-		Nx=Nx, Nm=Nm, E=E, mu=mu, t_gs=t_gs)
+		Nx=Nx, Nm=Nm, E=E, mu=mu, t_gs=t_gs, modes_num=int(mask.sum()), total_modes=mask.size)
 
 	z = grid.z * 1e6 # cast to micrometers
 	profile = prj.getZ(psi) / 1e6 # cast to micrometers^-1
@@ -167,38 +177,41 @@ def runTest(env, comp, grid_type, dim, gs_type):
 		for i in xrange(len(profile))
 	]
 
-	return plots
+	return plots[:(1 if comp == '1comp' else 2)]
 
 
 if __name__ == '__main__':
 
 	prefix = 'ground_states_'
 	types = (
-		('1d', '3d'),
-		(False, True) # 1- or 2-component
+		('1d', '3d',),
+		(False, True,), # 1- or 2-component
+		(False, True,), # cutoff usage
 	)
 	tests = (
 		('uniform', 'harmonic',), # grid type
 		('TF', 'split-step', 'rk5',), # ground state type
-		(False, True), # gpu usage
+		(False, True,), # gpu usage
 	)
 
-	for dim, two_comp in itertools.product(*types):
-
-		print "\n*** {dim} *** ({comp})\n".format(
-			dim=dim, comp=('2 components' if two_comp else '1 component'))
+	for dim, two_comp, use_cutoff in itertools.product(*types):
 
 		comp = '2comp' if two_comp else '1comp'
+		cutoff = "cutoff" if use_cutoff else "nocutoff"
+
+		print "\n*** {dim} *** ({comp}, {cutoff})\n".format(
+			dim=dim, comp=comp, cutoff=cutoff)
 
 		plots_gpu = []
 		plots_cpu = []
 		for grid_type, gs_type, gpu in itertools.product(*tests):
 			if grid_type == 'harmonic' and gs_type == 'split-step':
 				continue
-			print "* Testing", grid_type, "grid and", gs_type, "on", ("GPU" if gpu else "CPU")
-			p = testGroundState(gpu, comp, grid_type, dim, gs_type)
+			print "* Testing", ", ".join((grid_type, gs_type, ("GPU" if gpu else "CPU")))
+			p = testGroundState(gpu, comp, grid_type, dim, gs_type, use_cutoff)
 			to_add = plots_gpu if gpu else plots_cpu
 			to_add += p
 
-		if len(plots_gpu) > 0: XYPlot(plots_gpu).save(prefix + dim + '_' + comp + '_GPU.pdf')
-		if len(plots_cpu) > 0: XYPlot(plots_cpu).save(prefix + dim + '_' + comp + '_CPU.pdf')
+		name = prefix + dim + '_' + comp + '_' + cutoff
+		if len(plots_gpu) > 0: XYPlot(plots_gpu).save(name + '_GPU.pdf')
+		if len(plots_cpu) > 0: XYPlot(plots_cpu).save(name + '_CPU.pdf')
