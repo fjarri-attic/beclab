@@ -117,6 +117,7 @@ def runTest(env, comp, grid_type, dim, gs_type, use_cutoff):
 	N_xspace1 = stats.getN(psi)
 	psi.toMSpace()
 	N_mspace = stats.getN(psi)
+	mode_data = numpy.abs(env.fromDevice(psi.data)) # remember mode data
 	psi.toXSpace()
 
 	# population in x-space after double transformation (should not change)
@@ -152,14 +153,18 @@ def runTest(env, comp, grid_type, dim, gs_type, use_cutoff):
 	# so it is more of a sanity check
 	assert abs(mu.sum() - mu_tf) / mu_tf < 0.35
 
+	# Check that GS is really restricted by mask
+	mask = numpy.tile(getProjectorMask(None, constants, grid),
+		(psi.components, 1) + (1,) * grid.dim)
+	masked_mode_data = mode_data * (1.0 - mask)
+	assert masked_mode_data.max() < 1e-5 * mode_data.max()
+
 	E = E.sum()
 	mu = mu.sum()
 	Nx = N_xspace2.sum()
 	Nm = N_mspace.sum()
 
 	# Results
-
-	mask = getProjectorMask(None, constants, grid)
 	print ("  Modes: {modes_num} out of {total_modes}\n" +
 		"  N(x-space) = {Nx:.4f}, N(m-space) = {Nm:.4f}, " +
 		"E = {E:.4f} hbar wz, mu = {mu:.4f} hbar wz\n" +
