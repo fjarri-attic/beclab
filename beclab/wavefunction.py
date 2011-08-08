@@ -48,7 +48,7 @@ class WavefunctionSet(PairedCalculation):
 			self._mshape = (self.components, self.ensembles,) + self._grid.mshape
 
 			self.size = self._size = self._grid.size * self.ensembles
-			self._msize = self._grid.msize
+			self._msize = self._grid.msize * self.ensembles
 
 			self._mdata = self._env.allocate(self._mshape, dtype)
 			self.data = self._data = self._env.allocate(self._shape, dtype)
