@@ -21,8 +21,9 @@ class Projector(PairedCalculation):
 		mask = getProjectorMask(None, constants, grid)
 
 		if int(mask.sum()) == mask.size:
-			self._projector_mask = None
+			self.is_identity = True
 		else:
+			self.is_identity = False
 			self._projector_mask = env.toDevice(mask)
 
 		self._addParameters(components=2, ensembles=1)
@@ -56,7 +57,7 @@ class Projector(PairedCalculation):
 		data *= mask
 
 	def __call__(self, data):
-		if self._projector_mask is not None:
+		if not self.is_identity:
 			self._kernel_projector(self._p.comp_msize, data, self._projector_mask)
 
 
