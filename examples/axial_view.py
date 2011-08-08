@@ -6,14 +6,14 @@ from beclab import *
 from beclab.meters import ParticleStatistics
 
 
-def testAxialView(gpu, matrix_pulses, grid_type, dim, prop_type):
+def testAxialView(gpu, matrix_pulses, grid_type, dim, prop_type, use_cutoff):
 	env = envs.cuda() if gpu else envs.cpu()
 	try:
-		return runTest(env, matrix_pulses, grid_type, dim, prop_type)
+		return runTest(env, matrix_pulses, grid_type, dim, prop_type, use_cutoff)
 	finally:
 		env.release()
 
-def runTest(env, matrix_pulses, grid_type, dim, prop_type):
+def runTest(env, matrix_pulses, grid_type, dim, prop_type, use_cutoff):
 
 	# additional parameters
 	constants_kwds = {
@@ -30,7 +30,7 @@ def runTest(env, matrix_pulses, grid_type, dim, prop_type):
 	# number of lattice points
 	shape = {
 		('1d', 'uniform'): (64,),
-		('3d', 'uniform'): (64, 8, 8),
+		('3d', 'uniform'): (128, 8, 8),
 		('1d', 'harmonic'): (50,),
 		('3d', 'harmonic'): (50, 10, 10)
 	}[(dim, grid_type)]
@@ -41,7 +41,15 @@ def runTest(env, matrix_pulses, grid_type, dim, prop_type):
 		'3d': 1e-5
 	}[dim]
 
-	constants = Constants(double=env.supportsDouble(), **constants_kwds)
+	e_cut = {
+		'1d': 8000,
+		'3d': 7000
+	}[dim]
+
+	# Prepare constants and grid
+	constants = Constants(double=env.supportsDouble(),
+		e_cut=(e_cut if use_cutoff else None),
+		**constants_kwds)
 	grid = UniformGrid.forN(env, constants, total_N, shape)
 
 	gs = SplitStepGroundState(env, constants, grid, dt=ss_dt)
@@ -105,20 +113,26 @@ if __name__ == '__main__':
 		('uniform',), # grid type
 		('split-step', 'rk5',), # propagation type
 		(False, True,), # matrix pulses
+		(False, True,), # cutoff usage
 		(False, True,), # gpu usage
 	)
 
 	for dim in ('1d', '3d',):
 		print "\n*** {dim} ***\n".format(dim=dim)
 
-		for grid_type, prop_type, matrix_pulses, gpu in itertools.product(*tests):
+		for grid_type, prop_type, matrix_pulses, use_cutoff, gpu in itertools.product(*tests):
 
 			if grid_type == 'harmonic' and prop_type == 'split-step':
 				continue
 
-			print "* Testing", grid_type, "grid and", prop_type, "on", ("GPU" if gpu else "CPU"), \
-				"with", ("matrix" if matrix_pulses else "real"), "pulses"
-			testAxialView(gpu, matrix_pulses, grid_type, dim, prop_type).save(
+			print "* Testing", ", ".join((
+				grid_type, prop_type,
+				("matrix pulses" if matrix_pulses else "real pulses"),
+				("cutoff" if use_cutoff else "no cutoff"),
+				("GPU" if gpu else "CPU")))
+
+			testAxialView(gpu, matrix_pulses, grid_type, dim, prop_type, use_cutoff).save(
 				prefix + dim + '_' + grid_type + '_' + prop_type +
 				('_matrix' if matrix_pulses else '_real') +
+				('_cutoff' if use_cutoff else '_nocutoff') +
 				('_GPU' if gpu else '_CPU') + '.pdf')
