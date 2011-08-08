@@ -25,6 +25,8 @@ Release history
 * Added RK5IP evolution
 * Added some tests (mostly functionality and coverage)
 * Executing callbacks at exact times, not approximate
+* Support for "restricted" ground states, i.e. containing only modes below cutoff
+* Support for different potentials for each component (static)
 
 -----
 0.1.3
