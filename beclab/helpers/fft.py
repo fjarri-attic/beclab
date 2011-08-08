@@ -44,6 +44,31 @@ class NumpyPlan1D:
 		data_out.flat[:] = func(data_in.reshape(batch, *shape)).flat
 		data_out *= coeff
 
+class FakeGPUFFT1D:
+
+	def __init__(self, env, shape, scale):
+		self._shape = shape
+		self._scale = scale
+		self._env = env
+
+	def execute(self, data_in, data_out=None, inverse=False, batch=1):
+		if data_out is None:
+			data_out = data_in
+
+		if inverse:
+			func = numpy.fft.ifft
+			coeff = 1.0 / self._scale
+		else:
+			func = numpy.fft.fft
+			coeff = self._scale
+
+		d = self._env.fromDevice(data_in)
+		shape = self._shape
+		dout = func(d.reshape(batch, *shape))
+		dout *= coeff
+		dout_gpu = self._env.toDevice(dout)
+		self._env.copyBuffer(dout_gpu, dest=data_out)
+
 
 def createFFTPlan(env, constants, grid):
 
