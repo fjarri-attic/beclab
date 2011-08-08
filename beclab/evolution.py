@@ -8,7 +8,7 @@ import copy
 from .helpers import *
 from .constants import getPotentials, getPlaneWaveEnergy, getHarmonicEnergy, \
 	getProjectorMask, UniformGrid, HarmonicGrid, WIGNER, CLASSICAL
-from .ground_state import RK5Propagation
+from .ground_state import RK5Propagation, Projector
 
 
 class TerminateEvolution(Exception):
@@ -253,7 +253,7 @@ class SplitStepEvolution(Evolution):
 
 		self._potentials = getPotentials(self._env, self._constants, self._grid)
 
-		self._projector_mask = getProjectorMask(self._env, self._constants, self._grid)
+		self._projector = Projector(self._env, self._constants, self._grid)
 
 		self._addParameters(f_rabi=0, f_detuning=0, dt=1e-5, noise=False,
 			ensembles=1, itmax=3, components=2)
@@ -263,6 +263,8 @@ class SplitStepEvolution(Evolution):
 		# FIXME: matrix exponent in xpropagate() requires 2 components
 		# different number will require significant changes
 		assert self._p.components == 2
+
+		self._projector.prepare(components=self._p.components, ensembles=self._p.ensembles)
 
 		self._p.w_detuning = 2 * numpy.pi * self._p.f_detuning
 		self._p.w_rabi = 2 * numpy.pi * self._p.f_rabi
@@ -423,31 +425,11 @@ class SplitStepEvolution(Evolution):
 						complex_mul(val0, m[2]) + complex_mul(val1, m[3]);
 				%endif
 			}
-
-			EXPORTED_FUNC void projector(int gsize, GLOBAL_MEM COMPLEX *data,
-				GLOBAL_MEM SCALAR *projector_mask)
-			{
-				LIMITED_BY(${p.comp_size});
-				SCALAR mask_val = projector_mask[GLOBAL_INDEX % ${g.size}];
-				COMPLEX val;
-
-				%for comp in xrange(p.components):
-				val = data[GLOBAL_INDEX + ${comp * p.comp_size}];
-				data[GLOBAL_INDEX + ${comp * p.comp_size}] = complex_mul_scalar(val, mask_val);
-				%endfor
-			}
 		"""
 
 		self.__program = self.compileProgram(kernels)
 		self._kernel_kpropagate = self.__program.kpropagate
 		self._kernel_xpropagate = self.__program.xpropagate
-		self._kernel_projector = self.__program.projector
-
-	def _cpu__kernel_projector(self, gsize, data, projector_mask):
-		mask = numpy.tile(projector_mask,
-			(self._p.components, self._p.ensembles) + (1,) * self._grid.dim)
-
-		data *= mask
 
 	def _cpu__kernel_kpropagate(self, gsize, data, kvectors, dt):
 		data *= numpy.tile(numpy.exp(kvectors * (-1j * dt)),
@@ -525,9 +507,6 @@ class SplitStepEvolution(Evolution):
 			data[0] = m[0,0] * data_copy[0] + m[0,1] * data_copy[1]
 			data[1] = m[1,0] * data_copy[0] + m[1,1] * data_copy[1]
 
-	def _projector(self, psi):
-		self._kernel_projector(psi.size, psi.data, self._projector_mask)
-
 	def _kpropagate(self, psi, dt):
 		self._kdt += dt
 
@@ -558,9 +537,6 @@ class SplitStepEvolution(Evolution):
 		self._kpropagate(psi, dt / 2)
 		self._finish_kpropagate(psi)
 
-		if self._p.noise:
-			self._projector(psi)
-
 		psi.toXSpace()
 		self._xpropagate(psi, t, self._phi, dt)
 
@@ -569,6 +545,7 @@ class SplitStepEvolution(Evolution):
 
 		self._midstep = True
 		psi.toMSpace()
+		self._projector(psi.data)
 
 		self._kpropagate(psi, dt / 2)
 
@@ -603,6 +580,8 @@ class RK5IPEvolution(Evolution):
 		self._potentials = getPotentials(self._env, self._constants, self._grid)
 		self._energy = getPlaneWaveEnergy(self._env, self._constants, self._grid)
 
+		self._projector = Projector(self._env, self._constants, self._grid)
+
 		self._propagator = RK5Propagation(self._env, self._constants, self._grid, mspace=False)
 		self._noise_prop = NoisePropagator(self._env, self._constants, self._grid)
 
@@ -613,6 +592,8 @@ class RK5IPEvolution(Evolution):
 	def _prepare(self):
 		# FIXME: coupling terms assume that there are two components
 		assert self._p.f_rabi == 0 or self._p.components == 2
+
+		self._projector.prepare(components=self._p.components, ensembles=self._p.ensembles)
 
 		self._p.w_detuning = 2 * numpy.pi * self._p.f_detuning
 		self._p.w_rabi = 2 * numpy.pi * self._p.f_rabi
@@ -645,8 +626,8 @@ class RK5IPEvolution(Evolution):
 				from math import pi
 			%>
 
-			EXPORTED_FUNC void transformIP(int gsize, GLOBAL_MEM COMPLEX *data,
-				GLOBAL_MEM SCALAR *energy, SCALAR dt)
+			EXPORTED_FUNC void transformIP(
+				int gsize, GLOBAL_MEM COMPLEX *data, GLOBAL_MEM SCALAR *energy, SCALAR dt)
 			{
 				LIMITED_BY(${p.comp_size});
 				COMPLEX val;
@@ -760,34 +741,43 @@ class RK5IPEvolution(Evolution):
 		result *= dt0
 
 	def _propFunc(self, results, values, dt, dt_full, stage):
-		self._fromIP(values, dt)
+		self._fromIP(values, dt, False)
 		cast = self._constants.scalar.cast
 		self._kernel_propagationFunc(self._p.comp_size, self._buffer, values,
 			self._potentials, cast(dt_full), cast(self._t), cast(self._phi))
-		self._toIP(self._buffer, dt)
+		self._toIP(self._buffer, dt, True)
 		self._env.copyBuffer(self._buffer, dest=results,
 			dest_offset=stage * self._p.comp_size * self._p.components)
 
 	def _finalizeFunc(self, psi, dt_used):
-		self._fromIP(psi.data, dt_used)
+		self._fromIP(psi.data, dt_used, False)
 
 	def propagate(self, psi, t, max_dt):
 		self._t = t
-		return self._propagator.propagate(self._propFunc, self._finalizeFunc, psi,
+		dt_used = self._propagator.propagate(self._propFunc, self._finalizeFunc, psi,
 			max_dt=max_dt)
+		if self._p.noise:
+			self._noise_prop.propagateNoise(psi, dt)
+			if not self._projector.is_identity:
+				batch = self._p.components * self._p.ensembles
+				self._plan.execute(psi.data, batch=batch)
+				self._projector(psi.data)
+				self._plan.execute(psi.data, batch=batch, inverse=True)
 
-	def _toIP(self, data, dt):
-		if dt == 0.0:
-			return
+		return dt_used
 
+	def _toIP(self, data, dt, project):
 		batch = self._p.components * self._p.ensembles
 		self._plan.execute(data, batch=batch)
-		self._kernel_transformIP(self._p.comp_size,
-			data, self._energy, self._constants.scalar.cast(dt))
+		if dt != 0.0:
+			self._kernel_transformIP(self._p.comp_size,
+				data, self._energy, self._constants.scalar.cast(dt))
+		if project:
+			self._projector(data)
 		self._plan.execute(data, batch=batch, inverse=True)
 
-	def _fromIP(self, data, dt):
-		self._toIP(data, -dt)
+	def _fromIP(self, data, dt, project):
+		self._toIP(data, -dt, project)
 
 	def run(self, psi, *args, **kwds):
 
