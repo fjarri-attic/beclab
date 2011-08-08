@@ -8,7 +8,56 @@ import numpy
 from .helpers import *
 from .wavefunction import WavefunctionSet
 from .meters import ParticleStatistics
-from .constants import getPotentials, getPlaneWaveEnergy, getHarmonicEnergy, UniformGrid, HarmonicGrid
+from .constants import getPotentials, getPlaneWaveEnergy, getHarmonicEnergy, \
+	getProjectorMask, UniformGrid, HarmonicGrid
+
+
+class Projector(PairedCalculation):
+
+	def __init__(self, env, constants, grid):
+		PairedCalculation.__init__(self, env)
+		self._constants = constants.copy()
+		self._grid = grid.copy()
+		mask = getProjectorMask(None, constants, grid)
+
+		if int(mask.sum()) == mask.size:
+			self._projector_mask = None
+		else:
+			self._projector_mask = env.toDevice(mask)
+
+		self._addParameters(components=2, ensembles=1)
+
+	def _prepare(self):
+		self._p.comp_msize = self._p.components * self._p.ensembles * self._grid.msize
+
+	def _gpu__prepare_specific(self):
+		kernel_template = """
+			EXPORTED_FUNC void projector(int gsize, GLOBAL_MEM COMPLEX *data,
+				GLOBAL_MEM SCALAR *projector_mask)
+			{
+				LIMITED_BY(${p.comp_msize});
+				SCALAR mask_val = projector_mask[GLOBAL_INDEX % ${g.msize}];
+				COMPLEX val;
+
+				%for comp in xrange(p.components):
+				val = data[GLOBAL_INDEX + ${comp * p.comp_msize}];
+				data[GLOBAL_INDEX + ${comp * p.comp_msize}] = complex_mul_scalar(val, mask_val);
+				%endfor
+			}
+		"""
+
+		self._program = self.compileProgram(kernel_template)
+		self._kernel_projector = self._program.projector
+
+	def _cpu__kernel_projector(self, gsize, data, projector_mask):
+		mask = numpy.tile(projector_mask,
+			(self._p.components, self._p.ensembles) + (1,) * self._grid.dim)
+
+		data *= mask
+
+	def __call__(self, data):
+		if self._projector_mask is not None:
+			self._kernel_projector(data.size, data, self._projector_mask)
 
 
 class TFGroundState(PairedCalculation):
@@ -23,6 +72,7 @@ class TFGroundState(PairedCalculation):
 		self._grid = grid.copy()
 		self._potentials = getPotentials(env, constants, grid)
 		self._stats = ParticleStatistics(env, constants, grid)
+		self._projector = Projector(env, constants, grid)
 
 		if isinstance(grid, HarmonicGrid):
 			self._plan = createFHTPlan(env, constants, grid, 1)
@@ -31,6 +81,7 @@ class TFGroundState(PairedCalculation):
 		self.prepare()
 
 	def _prepare(self):
+		self._projector.prepare(components=self._p.components, ensembles=1)
 		self._stats.prepare(components=self._p.components)
 		self._p.g = numpy.array([
 			self._constants.g[c, c] / self._constants.hbar for c in xrange(self._p.components)
@@ -102,6 +153,7 @@ class TFGroundState(PairedCalculation):
 		# Otherwise first X-M-X transform removes some "excessive" parts
 		# TODO: need to mathematically justify this
 		psi.toMSpace()
+		self._projector(psi.data)
 		psi.toXSpace()
 
 		# The total number of atoms is equal to the number requested
@@ -227,7 +279,6 @@ class ImaginaryTimeGroundState(PairedCalculation):
 			new_N = stats.getN(psi)
 			coeffs = [numpy.sqrt(N[c] / new_N[c]) for c in xrange(self._p.components)]
 			self._renormalize(psi, coeffs)
-
 			E = new_E
 			new_E = total_E(psi, N_target)
 			self._toEvolutionSpace(psi)
@@ -271,9 +322,11 @@ class SplitStepGroundState(ImaginaryTimeGroundState):
 		ImaginaryTimeGroundState.__init__(self, env, constants, grid)
 		self._potentials = getPotentials(env, constants, grid)
 		self._addParameters(dt=1e-5, itmax=3, precision=1e-6)
+		self._projector = Projector(env, constants, grid)
 		self.prepare(**kwds)
 
 	def _prepare(self):
+		self._projector.prepare(components=self._p.components, ensembles=1)
 		self._p.relative_precision = self._p.precision / self._p.dt
 		self._p.g = self._constants.g / self._constants.hbar
 		energy = getPlaneWaveEnergy(None, self._constants, self._grid)
@@ -376,6 +429,7 @@ class SplitStepGroundState(ImaginaryTimeGroundState):
 		self._kernel_xpropagate(psi.size, psi.data, self._potentials)
 		self._toEvolutionSpace(psi)
 		self._kernel_mpropagate(psi.size, psi.data, self._mode_prop)
+		self._projector(psi.data)
 		return self._p.dt
 
 
@@ -639,12 +693,14 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 		self._energy = getPlaneWaveEnergy(self._env, self._constants, self._grid)
 
 		self._propagator = RK5Propagation(self._env, self._constants, self._grid, mspace=False)
+		self._projector = Projector(env, constants, grid)
 
 		self._addParameters(relative_precision=1e-0, atol_coeff=1e-3,
 			eps=1e-6, dt_guess=1e-4, Nscale=10000)
 		self.prepare(**kwds)
 
 	def _prepare(self):
+		self._projector.prepare(components=self._p.components, ensembles=1)
 		self._p.g = self._constants.g / self._constants.hbar
 
 		mu = self._constants.muTF(self._p.Nscale, dim=self._grid.dim, comp=0)
@@ -723,29 +779,30 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 			result[c] *= -dt0 * data[c, 0]
 
 	def _propFunc(self, results, values, dt, dt_full, stage):
-		self._fromIP(values, dt)
+		self._fromIP(values, dt, False)
 		self._kernel_propagationFunc(self._grid.size, self._buffer, values,
 			self._potentials, self._constants.scalar.cast(dt_full))
-		self._toIP(self._buffer, dt)
+		self._toIP(self._buffer, dt, True)
 		self._env.copyBuffer(self._buffer, dest=results,
 			dest_offset=stage * self._grid.size * self._p.components)
 
 	def _finalizeFunc(self, psi, dt_used):
-		self._fromIP(psi.data, dt_used)
+		self._fromIP(psi.data, dt_used, False)
 
 	def _propagate(self, psi):
 		return self._propagator.propagate(self._propFunc, self._finalizeFunc, psi)
 
-	def _toIP(self, data, dt):
-		if dt == 0.0:
-			return
-
+	def _toIP(self, data, dt, project):
 		self._plan.execute(data, batch=self._p.components)
-		self._kernel_transformIP(self._grid.size, data, self._energy, self._constants.scalar.cast(dt))
+		if dt != 0.0:
+			self._kernel_transformIP(self._grid.size, data, self._energy,
+				self._constants.scalar.cast(dt))
+		if project:
+			self._projector(data)
 		self._plan.execute(data, batch=self._p.components, inverse=True)
 
-	def _fromIP(self, data, dt):
-		self._toIP(data, -dt)
+	def _fromIP(self, data, dt, project):
+		self._toIP(data, -dt, project)
 
 	def create(self, N, **kwds):
 		kwds['Nscale'] = max(N)
@@ -761,13 +818,14 @@ class RK5HarmonicGroundState(ImaginaryTimeGroundState):
 		self._energy = getHarmonicEnergy(self._env, self._constants, self._grid)
 		self._plan3 = createFHTPlan(env, constants, grid, 3)
 
+		self._projector = Projector(env, constants, grid)
 		self._propagator = RK5Propagation(self._env, self._constants, self._grid, mspace=True)
 
 		self._addParameters(kwds, relative_precision=1e-0,
 			atol_coeff=1e-3, eps=1e-6, dt_guess=1e-4, Nscale=10000)
 
 	def _prepare(self):
-
+		self._projector.prepare(components=self._p.components, ensembles=1)
 		self._p.g = self._constants.g / self._constants.hbar
 
 		shape = self._grid.mshape
@@ -848,6 +906,7 @@ class RK5HarmonicGroundState(ImaginaryTimeGroundState):
 		self._plan3.execute(values, self._x3data, inverse=True, batch=self._p.components)
 		self._kernel_calculateNonlinear(self._grid.sizes[3], self._x3data)
 		self._plan3.execute(self._x3data, self._mdata, batch=self._p.components)
+		self._projector(self._mdata)
 		self._kernel_propagationFunc(self._grid.msize, results, values,
 			self._mdata, self._energy, cast(dt_full), numpy.int32(stage))
 
