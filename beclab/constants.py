@@ -128,7 +128,6 @@ def getIntegrationCoefficients(pts):
 		((pts[2:] - pts[:-2]) / 2.0).tolist() +
 		[(pts[-1] - pts[-2]) / 2])
 
-	#return numpy.array([0.5] + [1.0] * (N - 2) + [0.5])
 
 class UniformGrid:
 
@@ -205,18 +204,7 @@ class UniformGrid:
 	@classmethod
 	def forN(cls, env, constants, N, shape, border=1.2):
 		"""Create suitable lattice for trapped cloud of N atoms"""
-
-		# calculating approximate diameter of the cloud based on
-		# Thomas-Fermi chemical potential for the first component
-		dim = len(shape)
-		mu1 = constants.muTF(N, dim=dim, comp=0)
-		diameter = lambda w: 2.0 * border * numpy.sqrt(2.0 * mu1 / (constants.m * w ** 2))
-
-		if dim == 3:
-			box_size = (diameter(constants.wz), diameter(constants.wy), diameter(constants.wx))
-		else:
-			box_size = (diameter(constants.wz),)
-
+		box_size = constants.boxSizeForN(N, len(shape), border=border)
 		return cls(env, constants, shape, box_size)
 
 	def copy(self):
@@ -459,6 +447,70 @@ class Constants:
 		"""get TF-approximated chemical potential"""
 		return ((0.75 * g * N) ** (2.0 / 3)) * \
 			((self.m * self.wz * self.wz / 2) ** (1.0 / 3))
+
+	def boxSizeForN(self, N, dim, comp=0, border=1.2):
+		"""
+		Returns size of bounding box which contains cloud with given parameters
+		"""
+
+		# calculating approximate diameter of the cloud based on
+		# Thomas-Fermi chemical potential
+		mu = self.muTF(N, dim=dim, comp=comp)
+		diameter = lambda w: 2.0 * border * numpy.sqrt(2.0 * mu / (self.m * w ** 2))
+
+		if dim == 3:
+			box_size = (diameter(self.wz), diameter(self.wy), diameter(self.wx))
+		else:
+			box_size = (diameter(self.wz),)
+
+		return box_size
+
+	def harmonicModesForCutoff(self, dim):
+		"""
+		Returns minimal grid size which contains all possible modes with
+		energy below cutoff.
+		"""
+		assert self.e_cut is not None
+
+		if dim == 3:
+			wx, wy, wz = self.wx, self.wy, self.wz
+			xmodes = int((self.e_cut - wy / 2 - wz / 2) / wx + 0.5)
+			ymodes = int((self.e_cut - wx / 2 - wz / 2) / wy + 0.5)
+			zmodes = int((self.e_cut - wx / 2 - wy / 2) / wz + 0.5)
+			return (zmodes, ymodes, xmodes)
+		elif dim == 1:
+			zmodes = int(self.e_cut / self.wz + 0.5)
+			return (zmodes,)
+
+	def planeWaveModesForCutoff(self, box_size):
+		"""
+		Returns minimal grid size which contains all possible modes with
+		energy below cutoff.
+		"""
+		assert self.e_cut is not None
+		dim = len(box_size)
+
+		def get_modes(size):
+			ncut = size / (2 * numpy.pi) * numpy.sqrt(2 * self.m * self.e_cut / self.hbar)
+
+			# formula taken from numpy.fft.fftfreq
+			nk = lambda N: float((N / 2) * (N - 1)) / N
+
+			# find limiting even N (they have simple form of nk(N) function)
+			Neven = 2 * int((2 * ncut + 1) / 2)
+
+			# check that next odd nk is still lower than ncut
+			Nodd = Neven + 1
+			if nk(Nodd) < ncut:
+				return Nodd
+			else:
+				return Neven
+
+		if dim == 3:
+			zsize, ysize, xsize = box_size
+			return(get_modes(zsize), get_modes(ysize), get_modes(xsize))
+		elif dim == 1:
+			return (get_modes(box_size[0]),)
 
 	def __eq__(self, other):
 		for key in _DEFAULTS.keys() + ['double']:
