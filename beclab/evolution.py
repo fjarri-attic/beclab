@@ -794,3 +794,211 @@ class RK5IPEvolution(Evolution):
 		self.prepare(ensembles=psi.ensembles, components=psi.components,
 			noise=(psi.type == WIGNER))
 		Evolution.run(self, psi, *args, **kwds)
+
+
+class RK5HarmonicEvolution(Evolution):
+
+	def __init__(self, env, constants, grid, **kwds):
+		assert isinstance(grid, HarmonicGrid)
+		Evolution.__init__(self, env)
+		self._constants = constants
+		self._grid = grid
+
+		self._energy = getHarmonicEnergy(self._env, self._constants, self._grid)
+		self._plan3 = createFHTPlan(env, constants, grid, 3)
+
+		self._projector = Projector(env, constants, grid)
+		self._propagator = RK5Propagation(self._env, self._constants, self._grid, mspace=True)
+
+		self._addParameters(kwds, atol_coeff=1e-3, eps=1e-6,
+			dt_guess=1e-4, Nscale=10000, components=2, ensembles=1,
+			f_detuning=0, f_rabi=0, noise=False)
+
+	def _prepare(self):
+		self._projector.prepare(components=self._p.components, ensembles=self._p.ensembles)
+		self._p.g = self._constants.g / self._constants.hbar
+
+		shape = self._grid.mshape
+		cdtype = self._constants.complex.dtype
+
+		self._p.w_detuning = 2 * numpy.pi * self._p.f_detuning
+		self._p.w_rabi = 2 * numpy.pi * self._p.f_rabi
+
+		self._x3data = self._env.allocate((self._p.components, self._p.ensembles) + self._grid.shapes[3], dtype=cdtype)
+		self._p.comp_size3 = self._grid.sizes[3] * self._p.ensembles
+		self._p.comp_msize = self._grid.msize * self._p.ensembles
+
+		self._mdata = self._env.allocate((self._p.components, self._p.ensembles) + self._grid.mshape, dtype=cdtype)
+
+		self._p.losses_drift = copy.deepcopy(self._constants.losses_drift)
+
+		self._propagator.prepare(eps=self._p.eps, dt_guess=self._p.dt_guess,
+			tiny=numpy.sqrt(self._p.Nscale) * self._p.atol_coeff, components=self._p.components)
+
+		if self._p.noise:
+			self._noise_prop.prepare(components=self._p.components, ensembles=self._p.ensembles)
+
+	def _gpu__prepare_specific(self):
+		kernel_template = """
+			<%
+				from math import pi
+			%>
+
+			EXPORTED_FUNC void calculateNonlinear(int gsize, GLOBAL_MEM COMPLEX *data,
+				SCALAR t, SCALAR phi)
+			{
+				LIMITED_BY(${p.comp_size3});
+
+				%for comp in xrange(p.components):
+				COMPLEX val${comp} = data[GLOBAL_INDEX + ${comp * p.comp_size3}];
+				SCALAR n${comp} = squared_abs(val${comp});
+				COMPLEX N${comp};
+				%endfor
+
+				%for comp in xrange(p.components):
+				N${comp} = complex_mul(val${comp},
+					complex_ctr(
+					%if len(p.losses_drift[comp]) > 0:
+					%for coeff, orders in p.losses_drift[comp]:
+					-(SCALAR)${coeff}
+						%for loss_comp, order in enumerate(orders):
+						${(' * ' + ' * '.join(['n' + str(loss_comp)] * order)) if order != 0 else ''}
+						%endfor
+					%endfor
+					%else:
+					0
+					%endif
+					,
+					%for comp_other in xrange(p.components):
+					-(SCALAR)${p.g[comp, comp_other]} * n${comp_other}
+					%endfor
+					)
+				);
+				%endfor
+
+				%if p.f_rabi != 0:
+				SCALAR amplitude = ${p.w_rabi / 2};
+				SCALAR phase = ${p.w_detuning} * t + phi;
+
+				%for comp in xrange(p.components):
+				COMPLEX coupling${comp} = cexp(
+					amplitude,
+					${'-' if comp == 0 else ''}phase - (SCALAR)${pi / 2}
+				);
+				%endfor
+
+				%for comp in xrange(p.components):
+				N${comp} = N${comp} + complex_mul(val${1 - comp}, coupling${comp});
+				%endfor
+				%endif
+
+				%for comp in xrange(p.components):
+				data[GLOBAL_INDEX + ${p.comp_size3 * comp}] = N${comp};
+				%endfor
+			}
+
+			EXPORTED_FUNC void propagationFunc(int gsize,
+				GLOBAL_MEM COMPLEX *k, GLOBAL_MEM COMPLEX *data,
+				GLOBAL_MEM COMPLEX *nldata, GLOBAL_MEM SCALAR *energy, SCALAR dt0, int stage)
+			{
+				LIMITED_BY(${p.comp_msize});
+				COMPLEX val, nlval;
+				SCALAR e = energy[GLOBAL_INDEX];
+
+				%for comp in xrange(p.components):
+				val = data[GLOBAL_INDEX + gsize * ${comp}];
+				nlval = nldata[GLOBAL_INDEX + gsize * ${comp}];
+				k[GLOBAL_INDEX + gsize * ${p.components} * stage + gsize * ${comp}] =
+					complex_mul_scalar(
+						complex_mul(val, complex_ctr(0, -e)) + nlval,
+						dt0);
+				%endfor
+			}
+		"""
+
+		self._program = self.compileProgram(kernel_template)
+
+		self._kernel_propagationFunc = self._program.propagationFunc
+		self._kernel_calculateNonlinear = self._program.calculateNonlinear
+
+	def _cpu__kernel_calculateNonlinear(self, gsize, data, t, phi):
+		g = self._p.g
+		l = self._p.losses_drift
+		n = numpy.abs(data) ** 2
+		data_copy = data.copy()
+
+		for comp in xrange(self._p.components):
+			data[comp] = 0
+			for comp_other in xrange(self._p.components):
+				data[comp] -= 1j * n[comp_other] * g[comp, comp_other]
+
+			for coeff, orders in l[comp]:
+				to_add = -coeff
+				for i, order in enumerate(orders):
+					to_add = to_add * (n[i] ** order)
+				data[comp] += to_add
+
+		for comp in xrange(self._p.components):
+			data[comp] *= data_copy[comp]
+
+		if self._p.f_rabi != 0:
+			amplitude = self._p.w_rabi / 2
+			phase = self._p.w_detuning * t + phi
+
+			data[0] += data_copy[1] * amplitude * numpy.exp(-1j * (phase + numpy.pi / 2))
+			data[1] += data_copy[0] * amplitude * numpy.exp(1j * (phase - numpy.pi / 2))
+
+	def _cpu__kernel_propagationFunc(self, gsize, k, data, nldata, energy, dt0, stage):
+		tile = (self._p.components,) + (1,) * (self._grid.dim + 1)
+		e = numpy.tile(-1j * energy, tile)
+		k[stage].flat[:] = ((data * e + nldata) * dt0).flat
+
+	def _propFunc(self, results, values, dt, dt_full, stage):
+		cast = self._constants.scalar.cast
+		batch = self._p.components * self._p.ensembles
+		self._plan3.execute(values, self._x3data, inverse=True, batch=batch)
+		self._kernel_calculateNonlinear(self._grid.sizes[3], self._x3data,
+			cast(self._t), cast(self._phi))
+		self._plan3.execute(self._x3data, self._mdata, batch=batch)
+		self._projector(self._mdata)
+		self._kernel_propagationFunc(self._grid.msize, results, values,
+			self._mdata, self._energy, cast(dt_full), numpy.int32(stage))
+
+	def _toMeasurementSpace(self, psi):
+		psi.toXSpace()
+
+	def _toEvolutionSpace(self, psi):
+		psi.toMSpace()
+
+	def _finalizeFunc(self, psi, dt_used):
+		pass
+
+	def propagate(self, psi, t, max_dt):
+		self._t = t
+		dt_used = self._propagator.propagate(self._propFunc, self._finalizeFunc, psi,
+			max_dt=max_dt)
+		if self._p.noise:
+			self._noise_prop.propagateNoise(psi, dt)
+			if not self._projector.is_identity:
+				batch = self._p.components * self._p.ensembles
+				self._plan.execute(psi.data, batch=batch)
+				self._projector(psi.data)
+				self._plan.execute(psi.data, batch=batch, inverse=True)
+
+		return dt_used
+
+	def run(self, psi, *args, **kwds):
+
+		if 'callbacks' in kwds:
+			for cb in kwds['callbacks']:
+				cb.prepare(components=psi.components, ensembles=psi.ensembles)
+
+		if 'starting_phase' in kwds:
+			starting_phase = kwds.pop('starting_phase')
+			self._phi = starting_phase
+		else:
+			self._phi = 0.0
+
+		self.prepare(ensembles=psi.ensembles, components=psi.components,
+			noise=(psi.type == WIGNER))
+		Evolution.run(self, psi, *args, **kwds)
