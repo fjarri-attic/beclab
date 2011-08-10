@@ -42,7 +42,7 @@ def runTest(env, matrix_pulses, grid_type, dim, prop_type, use_cutoff):
 	}[dim]
 
 	e_cut = {
-		'1d': 8000,
+		'1d': 12000,
 		'3d': 7000
 	}[dim]
 
@@ -50,11 +50,21 @@ def runTest(env, matrix_pulses, grid_type, dim, prop_type, use_cutoff):
 	constants = Constants(double=env.supportsDouble(),
 		e_cut=(e_cut if use_cutoff else None),
 		**constants_kwds)
-	grid = UniformGrid.forN(env, constants, total_N, shape)
 
-	gs = SplitStepGroundState(env, constants, grid, dt=ss_dt)
+	if grid_type == 'uniform':
+		grid = UniformGrid.forN(env, constants, total_N, shape)
+	elif grid_type == 'harmonic':
+		grid = HarmonicGrid(env, constants, shape)
 
-	if prop_type == 'split-step':
+	if grid_type == 'uniform':
+		gs = SplitStepGroundState(env, constants, grid, dt=ss_dt)
+	elif grid_type == 'harmonic':
+		gs = RK5HarmonicGroundState(env, constants, grid, eps=1e-7)
+
+	if grid_type == 'harmonic':
+		evolution = RK5HarmonicEvolution(env, constants, grid,
+			atol_coeff=1e-3, eps=1e-6, Nscale=total_N)
+	elif prop_type == 'split-step':
 		evolution = SplitStepEvolution(env, constants, grid, dt=ss_dt)
 	elif prop_type == 'rk5':
 		evolution = RK5IPEvolution(env, constants, grid, Nscale=total_N,
@@ -63,7 +73,10 @@ def runTest(env, matrix_pulses, grid_type, dim, prop_type, use_cutoff):
 	if matrix_pulses:
 		pulse = Pulse(env, constants, grid, f_detuning=41, f_rabi=350)
 	else:
-		if prop_type == 'split-step':
+		if grid_type == 'harmonic':
+			pulse = EvolutionPulse(env, constants, grid, RK5HarmonicEvolution,
+				f_detuning=41, f_rabi=350, Nscale=total_N)
+		elif prop_type == 'split-step':
 			pulse = EvolutionPulse(env, constants, grid, SplitStepEvolution,
 				f_detuning=41, f_rabi=350, dt=1e-6)
 		elif prop_type == 'rk5':
@@ -110,7 +123,7 @@ if __name__ == '__main__':
 	prefix = 'axial_view_'
 
 	tests = (
-		('uniform',), # grid type
+		('uniform', 'harmonic',), # grid type
 		('split-step', 'rk5',), # propagation type
 		(False, True,), # matrix pulses
 		(False, True,), # cutoff usage
