@@ -839,8 +839,6 @@ class RK5HarmonicGroundState(ImaginaryTimeGroundState):
 			tiny=numpy.sqrt(self._p.Nscale) * self._p.atol_coeff, components=self._p.components)
 
 	def _gpu__prepare_specific(self):
-		ImaginaryTimeGroundState._gpu__prepare_specific(self)
-
 		kernel_template = """
 			EXPORTED_FUNC void calculateNonlinear(int gsize, GLOBAL_MEM COMPLEX *data)
 			{
