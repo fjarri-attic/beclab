@@ -29,17 +29,16 @@ class ParticleStatistics(PairedCalculation):
 		self._creduce_all = createReduce(env, constants.complex.dtype)
 		self._sreduce_single_to_comps = createReduce(env, constants.scalar.dtype)
 
+		self._density_modifiers = getDensityModifiers(env, constants, grid)
+		self._zero_density_modifiers = self._env.toDevice(
+			numpy.zeros(grid.shape).astype(constants.scalar.dtype))
+
 		self._addParameters(components=2, ensembles=1)
 		self.prepare(**kwds)
 
 	def _prepare(self):
 		self._p.g = self._constants.g / self._constants.hbar
 		self._p.need_potentials = isinstance(self._grid, UniformGrid)
-
-		# TODO: add modifier for harmonic grid
-		if isinstance(self._grid, UniformGrid):
-			projection_mask = getProjectorMask(None, self._constants, self._grid)
-			self._p.density_modifier = projection_mask.sum() / (2.0 * self._grid.V)
 
 		self._sreduce_ensembles.prepare(
 			sparse=True,
@@ -91,10 +90,12 @@ class ParticleStatistics(PairedCalculation):
 			}
 
 			EXPORTED_FUNC void density(int gsize, GLOBAL_MEM SCALAR *res,
-				GLOBAL_MEM COMPLEX *state, SCALAR modifier, int coeff)
+				GLOBAL_MEM COMPLEX *state, GLOBAL_MEM SCALAR *modifiers, int coeff)
 			{
 				LIMITED_BY(gsize);
 				int id;
+				SCALAR modifier = modifiers[GLOBAL_INDEX % (gsize / ${p.ensembles})];
+
 				%for comp in xrange(p.components):
 				id = GLOBAL_INDEX + gsize * ${comp};
 				res[id] = (squared_abs(state[id]) - modifier) / coeff;
@@ -172,9 +173,10 @@ class ParticleStatistics(PairedCalculation):
 	def _cpu__kernel_interaction(self, gsize, res, data):
 		self._env.copyBuffer(data[0] * data[1].conj(), dest=res)
 
-	def _cpu__kernel_density(self, gsize, density, data, modifier, coeff):
-		self._env.copyBuffer((numpy.abs(data) ** 2 -
-			modifier) / coeff, dest=density)
+	def _cpu__kernel_density(self, gsize, density, data, modifiers, coeff):
+		modifiers = numpy.tile(modifiers,
+			(self._p.components, self._p.ensembles,) + (1,) * self._grid.dim)
+		self._env.copyBuffer((numpy.abs(data) ** 2 - modifiers) / coeff, dest=density)
 
 	def _cpu__kernel_multiplyTiledSS(self, gsize, data, coeffs, ensembles):
 		data *= numpy.tile(coeffs,
@@ -215,12 +217,12 @@ class ParticleStatistics(PairedCalculation):
 
 	def getDensity(self, psi, coeff=1):
 		if psi.type == WIGNER:
-			modifier = self._p.density_modifier
+			modifiers = self._density_modifiers
 		else:
-			modifier = 0.0
+			modifiers = self._zero_density_modifiers
 
 		self._kernel_density(psi.size, self._s_xspace_buffer, psi.data,
-			self._constants.scalar.cast(modifier), numpy.int32(coeff))
+			modifiers, numpy.int32(coeff))
 		return self._s_xspace_buffer
 
 	def getAverageDensity(self, psi):

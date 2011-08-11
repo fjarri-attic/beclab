@@ -6,6 +6,8 @@ import copy
 import numpy
 
 from .helpers import *
+from .helpers.fht import getEigenfunction1D, getEigenfunction3D
+
 
 # representations
 CLASSICAL = 0
@@ -117,6 +119,39 @@ def getProjectorMask(env, constants, grid):
 		return mask
 	else:
 		return env.toDevice(mask)
+
+def getDensityModifiers(env, constants, grid):
+	if isinstance(grid, UniformGrid):
+		mask = getProjectorMask(None, constants, grid)
+		modifiers = numpy.ones(grid.shape) * mask.sum() / (2.0 * grid.V)
+	elif isinstance(grid, HarmonicGrid):
+		mask = getProjectorMask(None, constants, grid)
+		modifiers = numpy.zeros(grid.shape)
+
+		if grid.dim == 3:
+			x, y, z = grid.x_full / grid.lx, grid.y_full / grid.ly, grid.z_full / grid.lz
+			coeff = 0.5 / (grid.lx * grid.ly * grid.lz)
+			for ix in xrange(grid.shape[2]):
+				for iy in xrange(grid.shape[1]):
+					for iz in xrange(grid.shape[0]):
+						if mask[iz, iy, ix] == 0: continue
+						eigenfunc = getEigenfunction3D(ix, iy, iz)
+						modifiers += eigenfunc(x, y, z) ** 2
+		elif grid.dim == 1:
+			z = grid.z_full / grid.lz
+			coeff = 0.5 / grid.lz
+			for iz in xrange(grid.shape[0]):
+				if mask[iz] == 0: continue
+				eigenfunc = getEigenfunction1D(iz)
+				modifiers += eigenfunc(z) ** 2
+
+		modifiers *= coeff
+
+	if env is None:
+		return modifiers
+	else:
+		return env.toDevice(modifiers.astype(constants.scalar.dtype))
+
 
 def getIntegrationCoefficients(pts):
 	"""
