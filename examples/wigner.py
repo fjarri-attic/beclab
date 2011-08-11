@@ -58,12 +58,29 @@ def runTest(env, grid_type, dim, prop_type, repr_type):
 
 	wigner = (repr_type == 'wigner')
 
-	constants = Constants(double=env.supportsDouble(), **constants_kwds)
-	grid = UniformGrid.forN(env, constants, total_N, shape)
+	constants = Constants(double=env.supportsDouble(), e_cut=12000, **constants_kwds)
 
-	gs = SplitStepGroundState(env, constants, grid, dt=ss_gs_dt)
-	evolution = SplitStepEvolution(env, constants, grid, dt=ss_dt)
-	pulse = Pulse(env, constants, grid, f_detuning=41, f_rabi=350)
+	if grid_type == 'uniform':
+		grid = UniformGrid.forN(env, constants, total_N, shape)
+	elif grid_type == 'harmonic':
+		grid = HarmonicGrid(env, constants, shape)
+
+	if grid_type == 'uniform':
+		gs = SplitStepGroundState(env, constants, grid, dt=ss_dt)
+	elif grid_type == 'harmonic':
+		gs = RK5HarmonicGroundState(env, constants, grid, eps=1e-7)
+
+	if grid_type == 'harmonic':
+		evolution = RK5HarmonicEvolution(env, constants, grid,
+			atol_coeff=1e-3, eps=1e-6, Nscale=total_N)
+	elif prop_type == 'split-step':
+		evolution = SplitStepEvolution(env, constants, grid, dt=ss_dt)
+	elif prop_type == 'rk5':
+		evolution = RK5IPEvolution(env, constants, grid, Nscale=total_N,
+			atol_coeff=1e-3, eps=1e-6)
+
+	pulse = Pulse(env, constants, grid, f_detuning=41, f_rabi=350,
+		components=2, ensembles=ensembles)
 
 	# experiment
 	psi = gs.create((total_N, 0))
