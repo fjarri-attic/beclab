@@ -86,17 +86,28 @@ class NoisePropagator(PairedCalculation):
 
 		self._random = createRandom(env, constants.double)
 
-		self._addParameters(ensembles=1, components=2)
+		self._addParameters(ensembles=1, components=2, order=1)
 		self.prepare(**kwds)
 
 	def _prepare(self):
-		self._p.grid_size = self._grid.size
-		self._p.comp_size = self._grid.size * self._p.ensembles
+		if isinstance(self._grid, UniformGrid):
+			self._p.grid_size = self._grid.size
+			self._p.comp_size = self._grid.size * self._p.ensembles
+			grid_shape = self._grid.shape
+			dV = self._grid.dV
+		else:
+			self._p.grid_size = self._grid.sizes[self._p.order]
+			self._p.comp_size = self._p.grid_size * self._p.ensembles
+			grid_shape = self._grid.shapes[self._p.order]
+			dV = self._grid.dVs[self._p.order]
+
+		self._normalization = self._env.toDevice(
+			numpy.sqrt(1.0 / dV).astype(self._constants.scalar.dtype))
 
 		self._p.losses_diffusion = copy.deepcopy(self._constants.losses_diffusion)
 
 		self._randoms = self._env.allocate(
-			(2, self._constants.noise_sources, self._p.ensembles) + self._grid.shape,
+			(2, self._constants.noise_sources, self._p.ensembles) + grid_shape,
 			dtype=self._constants.complex.dtype
 		)
 
@@ -112,8 +123,6 @@ class NoisePropagator(PairedCalculation):
 				COMPLEX vals[${p.components}])
 			{
 				<%
-					normalization = sqrt(g.size / g.V)
-
 					def complex_mul_sequence(s):
 						if len(s) == 1:
 							return s[0]
@@ -137,7 +146,7 @@ class NoisePropagator(PairedCalculation):
 				%if coeff != 0:
 				G[${comp}][${i}] = complex_mul_scalar(
 					${product},
-					(SCALAR)${coeff * normalization}
+					(SCALAR)${coeff}
 				);
 				%else:
 				G[${comp}][${i}] = complex_ctr(0, 0);
@@ -147,7 +156,7 @@ class NoisePropagator(PairedCalculation):
 			}
 
 			EXPORTED_FUNC void add_noise(int gsize, GLOBAL_MEM COMPLEX *data,
-				GLOBAL_MEM COMPLEX *randoms, SCALAR dt)
+				GLOBAL_MEM COMPLEX *randoms, GLOBAL_MEM SCALAR *normalization, SCALAR dt)
 			{
 				LIMITED_BY(${p.comp_size});
 
@@ -162,11 +171,14 @@ class NoisePropagator(PairedCalculation):
 				vals[${comp}] = vals0[${comp}];
 				%endfor
 
+				SCALAR norm = normalization[GLOBAL_INDEX % ${p.grid_size}];
+
 				// load randoms
 				%for stage in xrange(2):
 				%for ns in xrange(c.noise_sources):
 				Z[${stage}][${ns}] = randoms[GLOBAL_INDEX +
 					${stage * p.comp_size * c.noise_sources + ns * p.comp_size}];
+				Z[${stage}][${ns}] = complex_mul_scalar(Z[${stage}][${ns}], norm);
 				%endfor
 				%endfor
 
@@ -199,7 +211,6 @@ class NoisePropagator(PairedCalculation):
 		self._kernel_add_noise = self.__program.add_noise
 
 	def _noiseFunc(self, data):
-		normalization = numpy.sqrt(self._grid.size / self._grid.V)
 
 		G = numpy.empty((self._p.components, self._constants.noise_sources,) + data.shape[1:],
 			dtype=data.dtype)
@@ -208,7 +219,7 @@ class NoisePropagator(PairedCalculation):
 			for i, e in enumerate(self._p.losses_diffusion[comp]):
 				coeff, orders = e
 				if coeff != 0:
-					res = coeff * normalization
+					res = coeff
 					for j, order in enumerate(orders):
 						if order > 0:
 							res = res * data[j]
@@ -218,20 +229,26 @@ class NoisePropagator(PairedCalculation):
 
 		return G
 
-	def _cpu__kernel_add_noise(self, gsize, data, randoms, dt):
+	def _cpu__kernel_add_noise(self, gsize, data, randoms, normalization, dt):
 
 		tile = (self._p.components,) + (1,) * (self._grid.dim + 2)
 
+		normalization = numpy.tile(
+			normalization,
+			randoms.shape[1:3] + (1,) * self._grid.dim
+		)
+
 		G0 = self._noiseFunc(data)
 		G1 = self._noiseFunc(data + numpy.sqrt(dt / 2) * (
-			(G0 * numpy.tile(randoms, tile)).sum(1)
+			(G0 * numpy.tile(randoms[0] * normalization, tile)).sum(1)
 		))
 
-		data += (G1 * numpy.tile(randoms, tile)).sum(1) * numpy.sqrt(dt)
+		data += (G1 * numpy.tile(randoms[1] * normalization, tile)).sum(1) * numpy.sqrt(dt)
 
 	def propagateNoise(self, psi, dt):
 		self._random.random_normal(self._randoms)
-		self._kernel_add_noise(psi.size, psi.data, self._randoms, self._constants.scalar.cast(dt))
+		self._kernel_add_noise(psi.size, psi.data, self._randoms,
+			self._normalization, self._constants.scalar.cast(dt))
 
 
 class SplitStepEvolution(Evolution):
