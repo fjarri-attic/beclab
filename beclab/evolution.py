@@ -826,6 +826,7 @@ class RK5HarmonicEvolution(Evolution):
 
 		self._projector = Projector(env, constants, grid)
 		self._propagator = RK5Propagation(self._env, self._constants, self._grid, mspace=True)
+		self._noise_prop = NoisePropagator(self._env, self._constants, self._grid)
 
 		self._addParameters(kwds, atol_coeff=1e-3, eps=1e-6,
 			dt_guess=1e-4, Nscale=10000, components=2, ensembles=1,
@@ -844,13 +845,15 @@ class RK5HarmonicEvolution(Evolution):
 		self._x3data = self._env.allocate((self._p.components, self._p.ensembles) + self._grid.shapes[3], dtype=cdtype)
 		self._p.comp_size3 = self._grid.sizes[3] * self._p.ensembles
 		self._p.comp_msize = self._grid.msize * self._p.ensembles
+		self._p.grid_msize = self._grid.msize
 
 		self._mdata = self._env.allocate((self._p.components, self._p.ensembles) + self._grid.mshape, dtype=cdtype)
 
 		self._p.losses_drift = copy.deepcopy(self._constants.losses_drift)
 
 		self._propagator.prepare(eps=self._p.eps, dt_guess=self._p.dt_guess,
-			tiny=numpy.sqrt(self._p.Nscale) * self._p.atol_coeff, components=self._p.components)
+			tiny=numpy.sqrt(self._p.Nscale) * self._p.atol_coeff, components=self._p.components,
+			ensembles=self._p.ensembles)
 
 		if self._p.noise:
 			self._noise_prop.prepare(components=self._p.components, ensembles=self._p.ensembles)
@@ -920,12 +923,12 @@ class RK5HarmonicEvolution(Evolution):
 			{
 				LIMITED_BY(${p.comp_msize});
 				COMPLEX val, nlval;
-				SCALAR e = energy[GLOBAL_INDEX];
+				SCALAR e = energy[GLOBAL_INDEX % ${p.grid_msize}];
 
 				%for comp in xrange(p.components):
-				val = data[GLOBAL_INDEX + gsize * ${comp}];
-				nlval = nldata[GLOBAL_INDEX + gsize * ${comp}];
-				k[GLOBAL_INDEX + gsize * ${p.components} * stage + gsize * ${comp}] =
+				val = data[GLOBAL_INDEX + ${p.comp_msize * comp}];
+				nlval = nldata[GLOBAL_INDEX + ${p.comp_msize * comp}];
+				k[GLOBAL_INDEX + ${p.comp_msize * p.components} * stage + ${p.comp_msize * comp}] =
 					complex_mul_scalar(
 						complex_mul(val, complex_ctr(0, -e)) + nlval,
 						dt0);
@@ -974,11 +977,11 @@ class RK5HarmonicEvolution(Evolution):
 		cast = self._constants.scalar.cast
 		batch = self._p.components * self._p.ensembles
 		self._plan3.execute(values, self._x3data, inverse=True, batch=batch)
-		self._kernel_calculateNonlinear(self._grid.sizes[3], self._x3data,
+		self._kernel_calculateNonlinear(self._p.comp_size3, self._x3data,
 			cast(self._t), cast(self._phi))
 		self._plan3.execute(self._x3data, self._mdata, batch=batch)
 		self._projector(self._mdata)
-		self._kernel_propagationFunc(self._grid.msize, results, values,
+		self._kernel_propagationFunc(self._p.comp_msize, results, values,
 			self._mdata, self._energy, cast(dt_full), numpy.int32(stage))
 
 	def _toMeasurementSpace(self, psi):
@@ -995,12 +998,11 @@ class RK5HarmonicEvolution(Evolution):
 		dt_used = self._propagator.propagate(self._propFunc, self._finalizeFunc, psi,
 			max_dt=max_dt)
 		if self._p.noise:
-			self._noise_prop.propagateNoise(psi, dt)
+			psi.toXSpace()
+			self._noise_prop.propagateNoise(psi, dt_used)
+			psi.toMSpace()
 			if not self._projector.is_identity:
-				batch = self._p.components * self._p.ensembles
-				self._plan.execute(psi.data, batch=batch)
 				self._projector(psi.data)
-				self._plan.execute(psi.data, batch=batch, inverse=True)
 
 		return dt_used
 
