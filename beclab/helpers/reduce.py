@@ -174,7 +174,7 @@ class GPUReduce(PairedCalculation):
 			data_in = data_out
 
 		if self._p.sparse:
-			self._for_tr = self._env.allocate((self._p.length,), self._p.dtype)
+			self._for_tr = self._env.allocate((self._p.length * self._p.batch,), self._p.dtype)
 
 	def __call__(self, data_in, data_out):
 		if self._p.final_length == self._p.length:
