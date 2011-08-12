@@ -29,6 +29,8 @@ class Pulse(PairedCalculation):
 			EXPORTED_FUNC void matrix_pulse(int gsize, GLOBAL_MEM COMPLEX *data,
 				SCALAR theta, SCALAR phi)
 			{
+				LIMITED_BY(gsize);
+
 				COMPLEX a0 = data[GLOBAL_INDEX];
 				COMPLEX b0 = data[GLOBAL_INDEX + ${p.comp_size}];
 
@@ -52,6 +54,8 @@ class Pulse(PairedCalculation):
 			EXPORTED_FUNC void matrix_pulse_noise(int gsize, GLOBAL_MEM COMPLEX *data,
 				SCALAR *thetas, SCALAR *phis)
 			{
+				LIMITED_BY(gsize);
+
 				COMPLEX a0 = data[GLOBAL_INDEX];
 				COMPLEX b0 = data[GLOBAL_INDEX + ${p.comp_size}];
 
