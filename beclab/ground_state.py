@@ -791,7 +791,14 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 		self._fromIP(psi.data, dt_used, False)
 
 	def _propagate(self, psi):
-		return self._propagator.propagate(self._propFunc, self._finalizeFunc, psi)
+		dt_used = self._propagator.propagate(self._propFunc, self._finalizeFunc, psi)
+		# FIXME: In an ideal world, it should not be necessary, because projection happens in toIP()
+		# but it seems that the error is accumulated after every sumResults in RK propagator
+		if not self._projector.is_identity:
+			psi.toMSpace()
+			self._projector(psi.data)
+			psi.toXSpace()
+		return dt_used
 
 	def _toIP(self, data, dt, project):
 		self._plan.execute(data, batch=self._p.components)
@@ -913,7 +920,12 @@ class RK5HarmonicGroundState(ImaginaryTimeGroundState):
 		pass
 
 	def _propagate(self, psi):
-		return self._propagator.propagate(self._propFunc, self._finalizeFunc, psi)
+		dt_used = self._propagator.propagate(self._propFunc, self._finalizeFunc, psi)
+		# FIXME: In an ideal world, it should not be necessary, because projection happens in toIP()
+		# but it seems that the error is accumulated after every M->X->M transformation
+		if not self._projector.is_identity:
+			self._projector(psi.data)
+		return dt_used
 
 	def _toMeasurementSpace(self, psi):
 		psi.toXSpace()
