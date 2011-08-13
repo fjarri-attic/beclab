@@ -39,7 +39,6 @@ class _Envs:
 
 envs = _Envs()
 
-from .model import Model
 from .constants import Constants, UniformGrid, HarmonicGrid
 from .ground_state import RK5HarmonicGroundState, RK5IPGroundState, SplitStepGroundState, TFGroundState
 from .evolution import SplitStepEvolution, RK5IPEvolution, RK5HarmonicEvolution
