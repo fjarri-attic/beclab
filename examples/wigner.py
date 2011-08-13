@@ -84,7 +84,6 @@ def runTest(env, grid_type, dim, prop_type, repr_type):
 
 	# experiment
 	psi = gs.create((total_N, 0))
-	#psi = WavefunctionSet(env, constants, grid, components=2, ensembles=1)
 	if wigner:
 		psi.toWigner(ensembles)
 
@@ -117,8 +116,8 @@ if __name__ == '__main__':
 	prefix = 'wigner_'
 
 	tests = (
-		('uniform',), # grid type
-		('split-step',), # propagation type
+		('uniform', 'harmonic',), # grid type
+		('split-step', 'rk5'), # propagation type
 		('classical', 'wigner',), # representation type
 		(False, True,), # GPU usage
 	)
