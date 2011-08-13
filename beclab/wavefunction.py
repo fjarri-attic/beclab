@@ -163,7 +163,7 @@ class WavefunctionSet(PairedCalculation):
 		# Scaling assumes that in modespace wavefunction normalized on atom number
 		randoms = self._env.allocate(self.shape, self._constants.complex.dtype)
 		self._random.random_normal(randoms, scale=numpy.sqrt(0.5))
-		projector_mask = getProjectorMask(self._env, self._constants, self._grid)
+		projector_mask = self._env.toDevice(getProjectorMask(self._constants, self._grid))
 		self._addVacuumParticles(randoms, projector_mask)
 
 		self.type = WIGNER
