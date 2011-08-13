@@ -157,7 +157,7 @@ def runTest(env, comp, grid_type, dim, gs_type, use_cutoff):
 	mask = numpy.tile(getProjectorMask(None, constants, grid),
 		(psi.components, 1) + (1,) * grid.dim)
 	masked_mode_data = mode_data * (1.0 - mask)
-	assert masked_mode_data.max() < 1e-5 * mode_data.max()
+	assert masked_mode_data.max() < 1e-6 * mode_data.max()
 
 	E = E.sum()
 	mu = mu.sum()
