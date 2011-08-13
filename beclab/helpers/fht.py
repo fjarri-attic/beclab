@@ -129,8 +129,8 @@ class FHT1D(PairedCalculation):
 		(f() cannot have mixed order, i.e. no f() = Psi^2 + Psi)
 		"""
 		PairedCalculation.__init__(self, env)
-		self._constants = constants.copy()
-		self._grid = grid.copy()
+		self._constants = constants
+		self._grid = grid
 
 		self.N = N
 		self.order = order
@@ -240,8 +240,8 @@ class FHT3D(PairedCalculation):
 		(f() cannot have mixed order, i.e. no f() = Psi^2 + Psi)
 		"""
 		PairedCalculation.__init__(self, env)
-		self._constants = constants.copy()
-		self._grid = grid.copy()
+		self._constants = constants
+		self._grid = grid
 
 		complex_cast = lambda x: x.astype(self._constants.complex.dtype)
 		scalar_cast = lambda x: x.astype(self._constants.scalar.dtype)

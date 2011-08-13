@@ -6,8 +6,7 @@ import numpy
 import copy
 
 from .helpers import *
-from .constants import getPotentials, getPlaneWaveEnergy, getHarmonicEnergy, \
-	getProjectorMask, UniformGrid, HarmonicGrid, WIGNER, CLASSICAL
+from .constants import *
 from .ground_state import RK5Propagation, Projector
 
 
@@ -81,8 +80,8 @@ class NoisePropagator(PairedCalculation):
 
 	def __init__(self, env, constants, grid, **kwds):
 		PairedCalculation.__init__(self, env)
-		self._constants = constants.copy()
-		self._grid = grid.copy()
+		self._constants = constants
+		self._grid = grid
 
 		self._random = createRandom(env, constants.double)
 
@@ -101,8 +100,7 @@ class NoisePropagator(PairedCalculation):
 			grid_shape = self._grid.shapes[self._p.order]
 			dV = self._grid.dVs[self._p.order]
 
-		self._normalization = self._env.toDevice(
-			numpy.sqrt(1.0 / dV).astype(self._constants.scalar.dtype))
+		self._normalization = self._env.toDevice(numpy.sqrt(1.0 / dV))
 
 		self._p.losses_diffusion = copy.deepcopy(self._constants.losses_diffusion)
 
@@ -261,16 +259,16 @@ class SplitStepEvolution(Evolution):
 		assert isinstance(grid, UniformGrid)
 
 		Evolution.__init__(self, env)
-		self._constants = constants.copy()
-		self._grid = grid.copy()
+		self._constants = constants
+		self._grid = grid
 
 		self._noise_prop = NoisePropagator(env, constants, grid)
 
 		self._kdt = 0
 
-		self._potentials = getPotentials(self._env, self._constants, self._grid)
+		self._potentials = env.toDevice(getPotentials(constants, grid))
 
-		self._projector = Projector(self._env, self._constants, self._grid)
+		self._projector = Projector(env, constants, grid)
 
 		self._addParameters(f_rabi=0, f_detuning=0, dt=1e-5, noise=False,
 			ensembles=1, itmax=3, components=2)
@@ -286,7 +284,7 @@ class SplitStepEvolution(Evolution):
 		self._p.w_detuning = 2 * numpy.pi * self._p.f_detuning
 		self._p.w_rabi = 2 * numpy.pi * self._p.f_rabi
 
-		self._kvectors = getPlaneWaveEnergy(self._env, self._constants, self._grid)
+		self._kvectors = self._env.toDevice(self._grid.energy)
 
 		self._p.grid_size = self._grid.size
 		self._p.comp_size = self._grid.size * self._p.ensembles
@@ -590,17 +588,17 @@ class RK5IPEvolution(Evolution):
 	def __init__(self, env, constants, grid, **kwds):
 		assert isinstance(grid, UniformGrid)
 		Evolution.__init__(self, env)
-		self._constants = constants.copy()
-		self._grid = grid.copy()
+		self._constants = constants
+		self._grid = grid
 
-		self._plan = createFFTPlan(self._env, self._constants, self._grid)
-		self._potentials = getPotentials(self._env, self._constants, self._grid)
-		self._energy = getPlaneWaveEnergy(self._env, self._constants, self._grid)
+		self._plan = createFFTPlan(env, constants, grid)
+		self._potentials = env.toDevice(getPotentials(constants, grid))
+		self._energy = env.toDevice(grid.energy)
 
-		self._projector = Projector(self._env, self._constants, self._grid)
+		self._projector = Projector(env, constants, grid)
 
-		self._propagator = RK5Propagation(self._env, self._constants, self._grid, mspace=False)
-		self._noise_prop = NoisePropagator(self._env, self._constants, self._grid)
+		self._propagator = RK5Propagation(env, constants, grid, mspace=False)
+		self._noise_prop = NoisePropagator(env, constants, grid)
 
 		self._addParameters(atol_coeff=1e-3, eps=1e-6, dt_guess=1e-4, Nscale=10000,
 			components=2, ensembles=1, f_detuning=0, f_rabi=0, noise=False)
@@ -774,7 +772,7 @@ class RK5IPEvolution(Evolution):
 		dt_used = self._propagator.propagate(self._propFunc, self._finalizeFunc, psi,
 			max_dt=max_dt)
 		if self._p.noise:
-			self._noise_prop.propagateNoise(psi, dt)
+			self._noise_prop.propagateNoise(psi, dt_used)
 			if not self._projector.is_identity:
 				batch = self._p.components * self._p.ensembles
 				self._plan.execute(psi.data, batch=batch)
@@ -821,12 +819,12 @@ class RK5HarmonicEvolution(Evolution):
 		self._constants = constants
 		self._grid = grid
 
-		self._energy = getHarmonicEnergy(self._env, self._constants, self._grid)
+		self._energy = env.toDevice(grid.energy)
 		self._plan3 = createFHTPlan(env, constants, grid, 3)
 
 		self._projector = Projector(env, constants, grid)
-		self._propagator = RK5Propagation(self._env, self._constants, self._grid, mspace=True)
-		self._noise_prop = NoisePropagator(self._env, self._constants, self._grid)
+		self._propagator = RK5Propagation(env, constants, grid, mspace=True)
+		self._noise_prop = NoisePropagator(env, constants, grid)
 
 		self._addParameters(kwds, atol_coeff=1e-3, eps=1e-6,
 			dt_guess=1e-4, Nscale=10000, components=2, ensembles=1,

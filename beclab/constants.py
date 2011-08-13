@@ -39,14 +39,17 @@ _DEFAULTS = {
 	'e_cut': None,
 }
 
-def getPotentials(env, constants, grid):
-	"""Returns array with values of external potential energy (in hbar units)."""
+
+def getPotentials(constants, grid):
+	"""
+	Builds array with values of external potential energy (in hbar units).
+	"""
 
 	if grid.dim == 1:
 		z = grid.z_full
 
 		potentials = constants.m * ((constants.wz * z) ** 2) / (2.0 * constants.hbar)
-	else:
+	elif grid.dim == 3:
 		x, y, z = grid.x_full, grid.y_full, grid.z_full
 
 		potentials = constants.m * (
@@ -54,59 +57,15 @@ def getPotentials(env, constants, grid):
 			(constants.wy * y) ** 2 +
 			(constants.wz * z) ** 2) / (2.0 * constants.hbar)
 
-	potentials = potentials.astype(constants.scalar.dtype)
+	return potentials.astype(constants.scalar.dtype)
 
-	if env is not None:
-		return env.toDevice(potentials)
-	else:
-		return potentials
-
-def getPlaneWaveEnergy(env, constants, grid):
+def getProjectorMask(constants, grid):
 	"""
-	Returns array with values of k-space energy
-	(coefficients for kinetic term) in hbar units
-	"""
-	assert isinstance(grid, UniformGrid)
-
-	if grid.dim == 1:
-		E = constants.hbar * grid.kz_full ** 2 / (2.0 * constants.m)
-	else:
-		E = constants.hbar * \
-			(grid.kx_full ** 2 + grid.ky_full ** 2 + grid.kz_full ** 2) / (2.0 * constants.m)
-
-	E = E.astype(constants.scalar.dtype)
-
-	if env is not None:
-		return env.toDevice(E)
-	else:
-		return E
-
-def getHarmonicEnergy(env, constants, grid):
-	"""
-	Returns array with energy values in harmonic mode space in hbar units
+	Returns array in mode space with 1.0 at places where mode energy is smaller
+	than cutoff energy and 0.0 everywhere else.
 	"""
 
-	assert isinstance(grid, HarmonicGrid)
-
-	if grid.dim == 3:
-		mx, my, mz = grid.mx_full, grid.my_full, grid.mz_full
-		wx, wy, wz = constants.wx, constants.wy, constants.wz
-		E = (wx * (mx + 0.5) + wy * (my + 0.5) + wz * (mz + 0.5))
-	else:
-		E = (constants.wz * (grid.mz_full + 0.5))
-
-	E = E.astype(constants.scalar.dtype)
-
-	if env is None:
-		return E
-	else:
-		return env.toDevice(E)
-
-def getProjectorMask(env, constants, grid):
-	if isinstance(grid, UniformGrid):
-		E = getPlaneWaveEnergy(None, constants, grid)
-	else:
-		E = getHarmonicEnergy(None, constants, grid)
+	E = grid.energy
 
 	if constants.e_cut is not None:
 		mask_func = lambda x: 0.0 if x > constants.e_cut * constants.hbar else 1.0
@@ -115,45 +74,10 @@ def getProjectorMask(env, constants, grid):
 	else:
 		mask = numpy.ones_like(E)
 
-	if env is None:
-		return mask
-	else:
-		return env.toDevice(mask)
-
-def getDensityModifiers(env, constants, grid):
-	if isinstance(grid, UniformGrid):
-		mask = getProjectorMask(None, constants, grid)
-		modifiers = numpy.ones(grid.shape) * mask.sum() / (2.0 * grid.V)
-	elif isinstance(grid, HarmonicGrid):
-		mask = getProjectorMask(None, constants, grid)
-		modifiers = numpy.zeros(grid.shape)
-
-		if grid.dim == 3:
-			x, y, z = grid.x_full / grid.lx, grid.y_full / grid.ly, grid.z_full / grid.lz
-			coeff = 0.5 / (grid.lx * grid.ly * grid.lz)
-			for ix in xrange(grid.shape[2]):
-				for iy in xrange(grid.shape[1]):
-					for iz in xrange(grid.shape[0]):
-						if mask[iz, iy, ix] == 0: continue
-						eigenfunc = getEigenfunction3D(ix, iy, iz)
-						modifiers += eigenfunc(x, y, z) ** 2
-		elif grid.dim == 1:
-			z = grid.z_full / grid.lz
-			coeff = 0.5 / grid.lz
-			for iz in xrange(grid.shape[0]):
-				if mask[iz] == 0: continue
-				eigenfunc = getEigenfunction1D(iz)
-				modifiers += eigenfunc(z) ** 2
-
-		modifiers *= coeff
-
-	if env is None:
-		return modifiers
-	else:
-		return env.toDevice(modifiers.astype(constants.scalar.dtype))
+	return mask.astype(constants.scalar.dtype)
 
 
-def getIntegrationCoefficients(pts):
+def _getIntegrationCoefficients(pts):
 	"""
 	Returns integration coefficients for simple trapezoidal rule.
 	Works for non-uniform grids.
@@ -166,9 +90,7 @@ def getIntegrationCoefficients(pts):
 
 class UniformGrid:
 
-	def __init__(self, env, constants, shape, box_size):
-
-		self._constants = constants.copy()
+	def __init__(self, constants, shape, box_size):
 
 		assert (isinstance(shape, int) and isinstance(size, float)) or \
 			(len(shape) == len(box_size))
@@ -219,9 +141,9 @@ class UniformGrid:
 			self.kx_full, self.ky_full, self.kz_full = tile3D(self.kx, self.ky, self.kz)
 
 			# coefficients for integration
-			self.dx = getIntegrationCoefficients(self.x)
-			self.dy = getIntegrationCoefficients(self.y)
-			self.dz = getIntegrationCoefficients(self.z)
+			self.dx = _getIntegrationCoefficients(self.x)
+			self.dy = _getIntegrationCoefficients(self.y)
+			self.dz = _getIntegrationCoefficients(self.z)
 			dx, dy, dz = tile3D(self.dx, self.dy, self.dz)
 			self.dV = dx * dy * dz
 
@@ -233,30 +155,48 @@ class UniformGrid:
 			self.kz = kvalues(d_space[0], self.shape[0])
 			self.kz_full = self.kz
 
-			self.dz = getIntegrationCoefficients(self.z)
+			self.dz = _getIntegrationCoefficients(self.z)
 			self.dV = self.dz
 
+		# prepare data arrays
+		self.dV = self.dV.astype(constants.scalar.dtype)
+		self._buildEnergy(constants)
+		self._buildDensityModifiers(constants)
+
 	@classmethod
-	def forN(cls, env, constants, N, shape, border=1.2):
+	def forN(cls, constants, N, shape, border=1.2):
 		"""Create suitable lattice for trapped cloud of N atoms"""
 		box_size = constants.boxSizeForN(N, len(shape), border=border)
-		return cls(env, constants, shape, box_size)
+		return cls(constants, shape, box_size)
 
-	def copy(self):
-		return copy.deepcopy(self)
+	def _buildEnergy(self, constants):
+		"""
+		Builds array with values of k-space energy
+		(coefficients for kinetic term) in hbar units
+		"""
+		if self.dim == 1:
+			E = constants.hbar * self.kz_full ** 2 / (2.0 * constants.m)
+		elif self.dim == 3:
+			E = constants.hbar * \
+				(self.kx_full ** 2 +
+				self.ky_full ** 2 +
+				self.kz_full ** 2) / (2.0 * constants.m)
 
-	def get_dV(self, env):
-		return env.toDevice(self.dV.astype(self._constants.scalar.dtype))
+		self.energy = E.astype(constants.scalar.dtype)
 
-	def __eq__(self, other):
-		return self.shape == other.shape and self.size == other.size
+	def _buildDensityModifiers(self, constants):
+		"""
+		Builds array with modifiers for calculating density in Wigner representation
+		(values of 0.5 \delta_P(x, x) on the grid)
+		"""
+		mask = getProjectorMask(constants, self)
+		modifiers = numpy.ones(self.shape) * mask.sum() / (2.0 * self.V)
+		self.density_modifiers = modifiers.astype(constants.scalar.dtype)
 
 
 class HarmonicGrid:
 
-	def __init__(self, env, constants, mshape):
-
-		self._constants = constants.copy()
+	def __init__(self, constants, mshape):
 
 		if isinstance(mshape, int):
 			mshape = (mshape,)
@@ -328,9 +268,9 @@ class HarmonicGrid:
 					tile3D(self.xs[l], self.ys[l], self.zs[l])
 
 				# Coefficients for integration
-				self.dxs[l] = getIntegrationCoefficients(self.xs[l])
-				self.dys[l] = getIntegrationCoefficients(self.ys[l])
-				self.dzs[l] = getIntegrationCoefficients(self.zs[l])
+				self.dxs[l] = _getIntegrationCoefficients(self.xs[l])
+				self.dys[l] = _getIntegrationCoefficients(self.ys[l])
+				self.dzs[l] = _getIntegrationCoefficients(self.zs[l])
 
 				dx, dy, dz = tile3D(
 					self.dxs[l],
@@ -347,14 +287,13 @@ class HarmonicGrid:
 				self.zs_full[l] = self.zs[l]
 
 				# dVs for debugging (integration in x-space)
-				self.dzs[l] = getIntegrationCoefficients(self.zs[l])
+				self.dzs[l] = _getIntegrationCoefficients(self.zs[l])
 				self.dVs[l] = self.dzs[l]
 
 		# Create aliases for 1st order arrays,
 		# making it look like UniformGrid
 		# (high orders are used only inside evolution classes anyway)
 		self.shape = self.shapes[1]
-		self.dV = self.dVs[1]
 
 		self.sizes = {}
 		for j in (1, 2, 3, 4):
@@ -375,14 +314,54 @@ class HarmonicGrid:
 		self.z_full = self.zs_full[1]
 		self.dz = self.dzs[1]
 
-	def copy(self):
-		return copy.deepcopy(self)
+		# prepare data arrays
+		self._buildEnergy(constants)
+		self._buildDensityModifiers(constants)
+		for order in self.dVs:
+			self.dVs[order] = self.dVs[order].astype(constants.scalar.dtype)
+		self.dV = self.dVs[1]
 
-	def get_dV(self, env, order=1):
-		return env.toDevice(self.dVs[order].astype(self._constants.scalar.dtype))
+	def _buildEnergy(self, constants):
+		"""
+		Builds array with energy values in harmonic mode space in hbar units
+		"""
 
-	def __eq__(self, other):
-		return self.mshape == other.mshape
+		if self.dim == 3:
+			mx, my, mz = self.mx_full, self.my_full, self.mz_full
+			wx, wy, wz = constants.wx, constants.wy, constants.wz
+			E = (wx * (mx + 0.5) + wy * (my + 0.5) + wz * (mz + 0.5))
+		elif self.dim == 1:
+			E = (constants.wz * (self.mz_full + 0.5))
+
+		self.energy = E.astype(constants.scalar.dtype)
+
+	def _buildDensityModifiers(self, constants):
+		"""
+		Builds array with modifiers for calculating density in Wigner representation
+		(values of 0.5 \delta_P(x, x) on the grid)
+		"""
+		mask = getProjectorMask(constants, self)
+		modifiers = numpy.zeros(self.shape)
+
+		if self.dim == 3:
+			x, y, z = self.x_full / self.lx, self.y_full / self.ly, self.z_full / self.lz
+			coeff = 0.5 / (self.lx * self.ly * self.lz)
+			for ix in xrange(self.shape[2]):
+				for iy in xrange(self.shape[1]):
+					for iz in xrange(self.shape[0]):
+						if mask[iz, iy, ix] == 0: continue
+						eigenfunc = getEigenfunction3D(ix, iy, iz)
+						modifiers += eigenfunc(x, y, z) ** 2
+		elif self.dim == 1:
+			z = self.z_full / self.lz
+			coeff = 0.5 / self.lz
+			for iz in xrange(self.shape[0]):
+				if mask[iz] == 0: continue
+				eigenfunc = getEigenfunction1D(iz)
+				modifiers += eigenfunc(z) ** 2
+
+		modifiers *= coeff
+		self.density_modifiers = modifiers.astype(constants.scalar.dtype)
 
 
 class Constants:
@@ -553,6 +532,3 @@ class Constants:
 				return False
 
 		return True
-
-	def copy(self):
-		return copy.deepcopy(self)

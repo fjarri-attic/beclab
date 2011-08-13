@@ -12,8 +12,8 @@ class WavefunctionSet(PairedCalculation):
 
 	def __init__(self, env, constants, grid, **kwds):
 		PairedCalculation.__init__(self, env)
-		self._constants = constants.copy()
-		self._grid = grid.copy()
+		self._constants = constants
+		self._grid = grid
 
 		self.type = CLASSICAL
 		self.in_mspace = False

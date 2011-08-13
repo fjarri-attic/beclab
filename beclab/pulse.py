@@ -7,8 +7,8 @@ class Pulse(PairedCalculation):
 
 	def __init__(self, env, constants, grid, **kwds):
 		PairedCalculation.__init__(self, env)
-		self._constants = constants.copy()
-		self._grid = grid.copy()
+		self._constants = constants
+		self._grid = grid
 
 		self._addParameters(components=2, f_detuning=0, starting_phase=0, ensembles=1,
 			f_rabi=0)

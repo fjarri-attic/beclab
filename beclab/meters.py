@@ -12,25 +12,20 @@ class ParticleStatistics(PairedCalculation):
 
 	def __init__(self, env, constants, grid, **kwds):
 		PairedCalculation.__init__(self, env)
-		self._constants = constants.copy()
-		self._grid = grid.copy()
+		self._constants = constants
+		self._grid = grid
 
-		self._potentials = getPotentials(env, constants, grid)
-
-		if isinstance(grid, HarmonicGrid):
-			self._energy = getHarmonicEnergy(env, constants, grid)
-		elif isinstance(grid, UniformGrid):
-			self._energy = getPlaneWaveEnergy(env, constants, grid)
-
-		self._dV = grid.get_dV(env)
+		self._potentials = env.toDevice(getPotentials(constants, grid))
+		self._energy = env.toDevice(grid.energy)
+		self._dV = env.toDevice(grid.dV)
 
 		self._sreduce_ensembles = createReduce(env, constants.scalar.dtype)
 		self._sreduce_all = createReduce(env, constants.scalar.dtype)
 		self._creduce_all = createReduce(env, constants.complex.dtype)
 		self._sreduce_single_to_comps = createReduce(env, constants.scalar.dtype)
 
-		self._density_modifiers = getDensityModifiers(env, constants, grid)
-		self._zero_density_modifiers = self._env.toDevice(
+		self._density_modifiers = env.toDevice(grid.density_modifiers)
+		self._zero_density_modifiers = env.toDevice(
 			numpy.zeros(grid.shape).astype(constants.scalar.dtype))
 
 		self._addParameters(components=2, ensembles=1)
@@ -346,8 +341,8 @@ class DensityProfile(PairedCalculation):
 
 	def __init__(self, env, constants, grid):
 		PairedCalculation.__init__(self, env)
-		self._constants = constants.copy()
-		self._grid = grid.copy()
+		self._constants = constants
+		self._grid = grid
 		self._stats = ParticleStatistics(env, constants, grid)
 		self._addParameters(components=2, ensembles=1)
 		self._reduce = createReduce(env, constants.scalar.dtype)

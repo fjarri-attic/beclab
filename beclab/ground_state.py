@@ -8,18 +8,17 @@ import numpy
 from .helpers import *
 from .wavefunction import WavefunctionSet
 from .meters import ParticleStatistics
-from .constants import getPotentials, getPlaneWaveEnergy, getHarmonicEnergy, \
-	getProjectorMask, UniformGrid, HarmonicGrid
+from .constants import *
 
 
 class Projector(PairedCalculation):
 
 	def __init__(self, env, constants, grid):
 		PairedCalculation.__init__(self, env)
-		self._constants = constants.copy()
-		self._grid = grid.copy()
-		mask = getProjectorMask(None, constants, grid)
+		self._constants = constants
+		self._grid = grid
 
+		mask = getProjectorMask(constants, grid)
 		if int(mask.sum()) == mask.size:
 			self.is_identity = True
 		else:
@@ -69,9 +68,9 @@ class TFGroundState(PairedCalculation):
 
 	def __init__(self, env, constants, grid):
 		PairedCalculation.__init__(self, env)
-		self._constants = constants.copy()
-		self._grid = grid.copy()
-		self._potentials = getPotentials(env, constants, grid)
+		self._constants = constants
+		self._grid = grid
+		self._potentials = env.toDevice(getPotentials(constants, grid))
 		self._stats = ParticleStatistics(env, constants, grid)
 		self._projector = Projector(env, constants, grid)
 
@@ -197,8 +196,8 @@ class ImaginaryTimeGroundState(PairedCalculation):
 
 	def __init__(self, env, constants, grid):
 		PairedCalculation.__init__(self, env)
-		self._constants = constants.copy()
-		self._grid = grid.copy()
+		self._constants = constants
+		self._grid = grid
 		self._tf_gs = TFGroundState(env, constants, grid)
 		self._statistics = ParticleStatistics(env, constants, grid)
 		self._addParameters(components=1)
@@ -321,7 +320,7 @@ class SplitStepGroundState(ImaginaryTimeGroundState):
 	def __init__(self, env, constants, grid, **kwds):
 		assert isinstance(grid, UniformGrid)
 		ImaginaryTimeGroundState.__init__(self, env, constants, grid)
-		self._potentials = getPotentials(env, constants, grid)
+		self._potentials = env.toDevice(getPotentials(constants, grid))
 		self._addParameters(dt=1e-5, itmax=3, precision=1e-6)
 		self._projector = Projector(env, constants, grid)
 		self.prepare(**kwds)
@@ -330,7 +329,7 @@ class SplitStepGroundState(ImaginaryTimeGroundState):
 		self._projector.prepare(components=self._p.components, ensembles=1)
 		self._p.relative_precision = self._p.precision / self._p.dt
 		self._p.g = self._constants.g / self._constants.hbar
-		energy = getPlaneWaveEnergy(None, self._constants, self._grid)
+		energy = self._grid.energy
 		self._mode_prop = self._env.toDevice(numpy.exp(energy * (-self._p.dt / 2)))
 
 	def _gpu__prepare_specific(self, **kwds):
@@ -438,8 +437,8 @@ class RK5Propagation(PairedCalculation):
 
 	def __init__(self, env, constants, grid, mspace):
 		PairedCalculation.__init__(self, env)
-		self._constants = constants.copy()
-		self._grid = grid.copy()
+		self._constants = constants
+		self._grid = grid
 
 		self._maxFinder = createMaxFinder(self._env, self._constants.complex.dtype)
 
@@ -689,11 +688,11 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 		assert isinstance(grid, UniformGrid)
 		ImaginaryTimeGroundState.__init__(self, env, constants, grid)
 
-		self._plan = createFFTPlan(self._env, self._constants, self._grid)
-		self._potentials = getPotentials(self._env, self._constants, self._grid)
-		self._energy = getPlaneWaveEnergy(self._env, self._constants, self._grid)
+		self._plan = createFFTPlan(env, constants, grid)
+		self._potentials = env.toDevice(getPotentials(constants, grid))
+		self._energy = env.toDevice(grid.energy)
 
-		self._propagator = RK5Propagation(self._env, self._constants, self._grid, mspace=False)
+		self._propagator = RK5Propagation(env, constants, grid, mspace=False)
 		self._projector = Projector(env, constants, grid)
 
 		self._addParameters(relative_precision=1e-0, atol_coeff=1e-3,
@@ -823,11 +822,11 @@ class RK5HarmonicGroundState(ImaginaryTimeGroundState):
 		assert isinstance(grid, HarmonicGrid)
 		ImaginaryTimeGroundState.__init__(self, env, constants, grid)
 
-		self._energy = getHarmonicEnergy(self._env, self._constants, self._grid)
+		self._energy = env.toDevice(grid.energy)
 		self._plan3 = createFHTPlan(env, constants, grid, 3)
 
 		self._projector = Projector(env, constants, grid)
-		self._propagator = RK5Propagation(self._env, self._constants, self._grid, mspace=True)
+		self._propagator = RK5Propagation(env, constants, grid, mspace=True)
 
 		self._addParameters(kwds, relative_precision=1e-0,
 			atol_coeff=1e-3, eps=1e-6, dt_guess=1e-4, Nscale=10000)
