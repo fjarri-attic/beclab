@@ -61,9 +61,9 @@ def runTest(env, grid_type, dim, prop_type, repr_type):
 	constants = Constants(double=env.supportsDouble(), e_cut=12000, **constants_kwds)
 
 	if grid_type == 'uniform':
-		grid = UniformGrid.forN(env, constants, total_N, shape)
+		grid = UniformGrid.forN(constants, total_N, shape)
 	elif grid_type == 'harmonic':
-		grid = HarmonicGrid(env, constants, shape)
+		grid = HarmonicGrid(constants, shape)
 
 	if grid_type == 'uniform':
 		gs = SplitStepGroundState(env, constants, grid, dt=ss_dt)

@@ -52,9 +52,9 @@ def runTest(env, matrix_pulses, grid_type, dim, prop_type, use_cutoff):
 		**constants_kwds)
 
 	if grid_type == 'uniform':
-		grid = UniformGrid.forN(env, constants, total_N, shape)
+		grid = UniformGrid.forN(constants, total_N, shape)
 	elif grid_type == 'harmonic':
-		grid = HarmonicGrid(env, constants, shape)
+		grid = HarmonicGrid(constants, shape)
 
 	if grid_type == 'uniform':
 		gs = SplitStepGroundState(env, constants, grid, dt=ss_dt)
@@ -85,8 +85,8 @@ def runTest(env, matrix_pulses, grid_type, dim, prop_type, use_cutoff):
 				atol_coeff=1e-3, eps=1e-6)
 
 	a = AxialProjectionCollector(env, constants, grid, pulse=pulse)
-	p = ParticleNumberCollector(env, constants, grid, pulse=pulse, verbose=True)
-	v = VisibilityCollector(env, constants, grid, verbose=True)
+	p = ParticleNumberCollector(env, constants, grid, pulse=pulse)
+	v = VisibilityCollector(env, constants, grid)
 
 	# experiment
 	psi = gs.create((total_N, 0))

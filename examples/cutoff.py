@@ -3,7 +3,7 @@ import time
 import itertools
 
 from beclab import *
-from beclab.meters import ParticleStatistics
+from beclab.constants import getProjectorMask
 from beclab.helpers.misc import log2
 
 
@@ -68,14 +68,14 @@ def runTest(env, dim, grid_type, prop_type, use_cutoff, use_big_grid):
 			if use_big_grid:
 				shape = tuple([2 * x for x in shape])
 
-		grid = UniformGrid.forN(env, constants, total_N, shape)
+		grid = UniformGrid.forN(constants, total_N, shape)
 	elif grid_type == 'harmonic':
 		if use_cutoff:
 			shape = constants.harmonicModesForCutoff(len(shape))
 			if use_big_grid:
 				shape = tuple([x + 3 for x in shape])
 
-		grid = HarmonicGrid(env, constants, shape)
+		grid = HarmonicGrid(constants, shape)
 
 	if grid_type == 'uniform':
 		gs = SplitStepGroundState(env, constants, grid, dt=ss_dt)

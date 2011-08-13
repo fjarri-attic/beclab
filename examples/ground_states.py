@@ -84,9 +84,9 @@ def runTest(env, comp, grid_type, dim, gs_type, use_cutoff):
 		e_cut=(e_cut if use_cutoff else None),
 		**constants_kwds)
 	if grid_type == 'uniform':
-		grid = UniformGrid.forN(env, constants, total_N, shape)
+		grid = UniformGrid.forN(constants, total_N, shape)
 	elif grid_type == 'harmonic':
-		grid = HarmonicGrid(env, constants, shape)
+		grid = HarmonicGrid(constants, shape)
 
 	# Prepare 'apparatus'
 
@@ -154,7 +154,7 @@ def runTest(env, comp, grid_type, dim, gs_type, use_cutoff):
 	assert abs(mu.sum() - mu_tf) / mu_tf < 0.35
 
 	# Check that GS is really restricted by mask
-	mask = numpy.tile(getProjectorMask(None, constants, grid),
+	mask = numpy.tile(getProjectorMask(constants, grid),
 		(psi.components, 1) + (1,) * grid.dim)
 	masked_mode_data = mode_data * (1.0 - mask)
 	assert masked_mode_data.max() < 1e-6 * mode_data.max()
