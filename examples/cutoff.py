@@ -109,6 +109,14 @@ def runTest(env, dim, grid_type, prop_type, use_cutoff, use_big_grid):
 
 	times, heightmap = a.getData()
 
+	# check that the final state is still projected
+	psi.toMSpace()
+	mode_data = env.fromDevice(psi.data)
+	mask = numpy.tile(getProjectorMask(constants, grid),
+		(psi.components, 1) + (1,) * grid.dim)
+	masked_mode_data = mode_data * (1.0 - mask)
+	assert masked_mode_data.max() < 1e-6 * mode_data.max()
+
 	res = HeightmapPlot(
 		HeightmapData("test", heightmap,
 			xmin=0, xmax=total_time * 1e3,
