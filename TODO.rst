@@ -2,8 +2,8 @@
 Features/bugfixes for the future
 --------------------------------
 
+- Refactor all remaining collectors (and add examples for them)
 - Parse keywords to Constants constructor and extract values/orders of loss coefficients
-- Separate tests and examples, add missing examples
 - Add reference documentation
 - Move helpers folder to a separate project
 - Try to build Wigner function (and see if it is negative at some points)

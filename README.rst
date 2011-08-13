@@ -26,7 +26,11 @@ Release history
 * Added some tests (mostly functionality and coverage)
 * Executing callbacks at exact times, not approximate
 * Support for "restricted" ground states, i.e. containing only modes below cutoff
-* Support for different potentials for each component (static)
+
+TODO:
+* Add support for different potentials for each component (static)
+* Separate tests and examples
+* Add performance tests, profile evolution and try to optimise it
 
 -----
 0.1.3
