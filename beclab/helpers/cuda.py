@@ -18,10 +18,11 @@ _header = Template(filename=os.path.join(_dir, 'header.mako'))
 
 class _KernelWrapper:
 
-	def __init__(self, env, kernel):
+	def __init__(self, env, kernel, sync_calls):
 		self._env = env
 		self._stream = env.stream
 		self._kernel = kernel
+		self._sync_calls = sync_calls
 
 		if self._kernel.num_regs > 0:
 			self._max_block_size = 2 ** log2(min(self._env.max_block_size,
@@ -51,6 +52,7 @@ class _KernelWrapper:
 
 	def _customCall(self, grid, block, *args):
 		self._kernel(*args, grid=grid, block=block, stream=self._stream)
+		if self._sync_calls: self._env.synchronize()
 
 	def customCall(self, global_size, block, *args):
 		block = tuple(list(block) + [1] * (3 - len(block)))
@@ -68,12 +70,13 @@ class _KernelWrapper:
 
 class _ProgramWrapper:
 
-	def __init__(self, env, source, double=False, prelude="", **kwds):
+	def __init__(self, env, source, sync_calls, double=False, prelude="", **kwds):
 		# program and kernels are tied to queue, which is not exactly logical,
 		# but works for our purposes and makes code simpler (because program uses
 		# single queue for all calculations anyway)
 		self._env = env
 		self._compile(source, double=double, prelude=prelude, **kwds)
+		self._sync_calls = sync_calls
 
 	def _compile(self, source, double=False, prelude="", **kwds):
 		"""
@@ -90,12 +93,12 @@ class _ProgramWrapper:
 			raise
 
 	def __getattr__(self, name):
-		return _KernelWrapper(self._env, self._program.get_function(name))
+		return _KernelWrapper(self._env, self._program.get_function(name), self._sync_calls)
 
 
 class CUDAEnvironment:
 
-	def __init__(self, device_num=0):
+	def __init__(self, device_num=0, sync_calls=False):
 
 		cuda.init()
 
@@ -120,6 +123,8 @@ class CUDAEnvironment:
 
 		self.gpu = True
 		self.cuda = True
+
+		self._sync_calls = sync_calls
 
 		self.allocated = 0
 
@@ -181,7 +186,8 @@ class CUDAEnvironment:
 		gc.collect() # forcefully frees all buffers on GPU
 
 	def compile(self, source, double=False, prelude="", **kwds):
-		return _ProgramWrapper(self, source, double=double, prelude=prelude, **kwds)
+		return _ProgramWrapper(self, source, self._sync_calls,
+			double=double, prelude=prelude, **kwds)
 
 	def supportsDouble(self):
 		major, minor = self.context.get_device().compute_capability()
