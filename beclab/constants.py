@@ -316,10 +316,22 @@ class HarmonicGrid:
 
 		# prepare data arrays
 		self._buildEnergy(constants)
-		self._buildDensityModifiers(constants)
 		for order in self.dVs:
 			self.dVs[order] = self.dVs[order].astype(constants.scalar.dtype)
 		self.dV = self.dVs[1]
+
+		# building it dynamically on first request, because it takes too long
+		#self._buildDensityModifiers(constants)
+
+	def __getattr__(self, name):
+
+		# density modifiers take quite a long time to create in 3D case,
+		# so we will build them dynamically on first request
+		if name == 'density_modifiers':
+			self._buildDensityModifiers()
+			return self.density_modifiers
+		else:
+			raise AttributeError(name)
 
 	def _buildEnergy(self, constants):
 		"""
