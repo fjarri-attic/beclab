@@ -24,16 +24,18 @@ class ParticleStatistics(PairedCalculation):
 		self._creduce_all = createReduce(env, constants.complex.dtype)
 		self._sreduce_single_to_comps = createReduce(env, constants.scalar.dtype)
 
-		self._density_modifiers = env.toDevice(grid.density_modifiers)
-		self._zero_density_modifiers = env.toDevice(
-			numpy.zeros(grid.shape).astype(constants.scalar.dtype))
-
-		self._addParameters(components=2, ensembles=1)
+		self._addParameters(components=2, ensembles=1, psi_type=CLASSICAL)
 		self.prepare(**kwds)
 
 	def _prepare(self):
 		self._p.g = self._constants.g / self._constants.hbar
 		self._p.need_potentials = isinstance(self._grid, UniformGrid)
+
+		if self._p.psi_type == WIGNER:
+			self._density_modifiers = self._env.toDevice(self._grid.density_modifiers)
+		else:
+			self._density_modifiers = self._env.toDevice(
+				numpy.zeros(self._grid.shape).astype(self._constants.scalar.dtype))
 
 		self._sreduce_ensembles.prepare(
 			sparse=True,
@@ -211,13 +213,8 @@ class ParticleStatistics(PairedCalculation):
 		return 2.0 * interaction / N.sum()
 
 	def getDensity(self, psi, coeff=1):
-		if psi.type == WIGNER:
-			modifiers = self._density_modifiers
-		else:
-			modifiers = self._zero_density_modifiers
-
 		self._kernel_density(psi.size, self._s_xspace_buffer, psi.data,
-			modifiers, numpy.int32(coeff))
+			self._density_modifiers, numpy.int32(coeff))
 		return self._s_xspace_buffer
 
 	def getAverageDensity(self, psi):
@@ -344,12 +341,13 @@ class DensityProfile(PairedCalculation):
 		self._constants = constants
 		self._grid = grid
 		self._stats = ParticleStatistics(env, constants, grid)
-		self._addParameters(components=2, ensembles=1)
+		self._addParameters(components=2, ensembles=1, psi_type=CLASSICAL)
 		self._reduce = createReduce(env, constants.scalar.dtype)
 		self.prepare()
 
 	def _prepare(self):
-		self._stats.prepare(components=self._p.components, ensembles=self._p.ensembles)
+		self._stats.prepare(components=self._p.components,
+			ensembles=self._p.ensembles, psi_type=self._p.psi_type)
 		self._reduce.prepare(length=self._p.components * self._grid.size,
 			final_length=self._grid.shape[0] * self._p.components)
 		self._z_buffer = self._env.allocate(

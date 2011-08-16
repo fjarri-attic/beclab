@@ -1,7 +1,8 @@
 import numpy
 import math
 
-from helpers import *
+from .helpers import *
+from .constants import CLASSICAL, WIGNER
 from .meters import ParticleStatistics, DensityProfile
 from .evolution import TerminateEvolution
 from .pulse import Pulse
@@ -20,10 +21,11 @@ class ParticleNumberCollector(PairedCalculation):
 		self.N = []
 
 		self._psi = WavefunctionSet(env, constants, grid)
-		self._addParameters(components=2, ensembles=1)
+		self._addParameters(components=2, ensembles=1, psi_type=CLASSICAL)
 
 	def _prepare(self):
-		self.stats.prepare(components=self._p.components, ensembles=self._p.ensembles)
+		self.stats.prepare(components=self._p.components, ensembles=self._p.ensembles,
+			psi_type=self._p.psi_type)
 		self._psi.prepare(components=self._p.components, ensembles=self._p.ensembles)
 
 	def __call__(self, t, psi):
@@ -118,10 +120,11 @@ class VisibilityCollector(PairedCalculation):
 		self.times = []
 		self.visibility = []
 
-		self._addParameters(components=2, ensembles=1)
+		self._addParameters(components=2, ensembles=1, psi_type=CLASSICAL)
 
 	def _prepare(self):
-		self.stats.prepare(components=self._p.components, ensembles=self._p.ensembles)
+		self.stats.prepare(components=self._p.components,
+			ensembles=self._p.ensembles, psi_type=self._p.psi_type)
 
 	def __call__(self, t, psi):
 		v = self.stats.getVisibility(psi)
@@ -221,10 +224,11 @@ class AxialProjectionCollector(PairedCalculation):
 		self.snapshots = []
 		self._psi = WavefunctionSet(env, constants, grid)
 
-		self._addParameters(components=2, ensembles=1)
+		self._addParameters(components=2, ensembles=1, psi_type=CLASSICAL)
 
 	def _prepare(self):
-		self._projection.prepare(components=self._p.components, ensembles=self._p.ensembles)
+		self._projection.prepare(components=self._p.components,
+			ensembles=self._p.ensembles, psi_type=self._p.psi_type)
 		self._psi.prepare(components=self._p.components, ensembles=self._p.ensembles)
 
 	def __call__(self, t, psi):
