@@ -37,7 +37,15 @@ class Evolution(PairedCalculation):
 			callback(psi.time, psi)
 		self._toEvolutionSpace(psi)
 
-	def run(self, psi, time, callbacks=None, callback_dt=0):
+	def run(self, psi, time, callbacks=None, callback_dt=0, starting_phase=0):
+
+		if callbacks is not None:
+			for cb in callbacks:
+				cb.prepare(components=psi.components, ensembles=psi.ensembles)
+
+		self._phi = starting_phase
+		self.prepare(ensembles=psi.ensembles, components=psi.components,
+			noise=(psi.type == WIGNER))
 
 		starting_time = psi.time
 		callback_t = 0
@@ -566,22 +574,6 @@ class SplitStepEvolution(Evolution):
 
 		return dt
 
-	def run(self, psi, *args, **kwds):
-
-		if 'callbacks' in kwds:
-			for cb in kwds['callbacks']:
-				cb.prepare(components=psi.components, ensembles=psi.ensembles)
-
-		if 'starting_phase' in kwds:
-			starting_phase = kwds.pop('starting_phase')
-			self._phi = starting_phase
-		else:
-			self._phi = 0.0
-
-		self.prepare(ensembles=psi.ensembles, components=psi.components,
-			noise=(psi.type == WIGNER))
-		Evolution.run(self, psi, *args, **kwds)
-
 
 class RK5IPEvolution(Evolution):
 
@@ -794,22 +786,6 @@ class RK5IPEvolution(Evolution):
 	def _fromIP(self, data, dt, project):
 		self._toIP(data, -dt, project)
 
-	def run(self, psi, *args, **kwds):
-
-		if 'callbacks' in kwds:
-			for cb in kwds['callbacks']:
-				cb.prepare(components=psi.components, ensembles=psi.ensembles)
-
-		if 'starting_phase' in kwds:
-			starting_phase = kwds.pop('starting_phase')
-			self._phi = starting_phase
-		else:
-			self._phi = 0.0
-
-		self.prepare(ensembles=psi.ensembles, components=psi.components,
-			noise=(psi.type == WIGNER))
-		Evolution.run(self, psi, *args, **kwds)
-
 
 class RK5HarmonicEvolution(Evolution):
 
@@ -1003,19 +979,3 @@ class RK5HarmonicEvolution(Evolution):
 				self._projector(psi.data)
 
 		return dt_used
-
-	def run(self, psi, *args, **kwds):
-
-		if 'callbacks' in kwds:
-			for cb in kwds['callbacks']:
-				cb.prepare(components=psi.components, ensembles=psi.ensembles)
-
-		if 'starting_phase' in kwds:
-			starting_phase = kwds.pop('starting_phase')
-			self._phi = starting_phase
-		else:
-			self._phi = 0.0
-
-		self.prepare(ensembles=psi.ensembles, components=psi.components,
-			noise=(psi.type == WIGNER))
-		Evolution.run(self, psi, *args, **kwds)
