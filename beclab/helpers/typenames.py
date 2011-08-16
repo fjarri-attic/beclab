@@ -6,6 +6,7 @@ class _Type:
 		self.dtype = dtype
 		self.nbytes = dtype().nbytes
 		self.cast = dtype # numpy.cast[dtype]
+		self.is_complex = (dtype in (numpy.complex64, numpy.complex128))
 
 	def __getstate__(self):
 		d = dict(self.__dict__)
