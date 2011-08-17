@@ -354,24 +354,35 @@ class DensityProfile(PairedCalculation):
 			(self._p.components, self._grid.shape[0]), self._constants.scalar.dtype)
 
 	def getXY(self, psi):
-		p = self._stats.getAveragePopulation(psi)
-		x = self._grid.shape[2]
-		y = self._grid.shape[1]
-		# FIXME: need to properly account for non-uniform dV (like getZ)
-		return NotImplementedError()
-		#return self._env.fromDevice(self._reduce.sparse(p, final_length=x * y), shape=(y, x))
+		# TODO: use reduction on device if it starts to take too much time
+		p = self._env.fromDevice(self._stats.getAveragePopulation(psi))
+		nx = self._grid.shape[2]
+		ny = self._grid.shape[1]
+
+		# sum over ensembles (since it is only 1 of them, just removes this dimension)
+		# and over z-axis
+		xy = p.sum(1).sum(1)
+		dy = self._grid.dy.reshape(self._grid.shape[1], 1)
+		xy /= numpy.tile(dy, (self._p.components, 1, nx))
+		xy /= numpy.tile(self._grid.dx, (self._p.components, ny, 1))
+		return xy
 
 	def getYZ(self, psi):
-		p = self._stats.getAveragePopulation(psi)
-		y = self._grid.shape[1]
-		z = self._grid.shape[0]
-		# FIXME: need to properly account for non-uniform dV (like getZ)
-		return NotImplementedError()
-		#return self._env.fromDevice(self._reduce(p, final_length=y * z), shape=(z, y))
+		# TODO: use reduction on device if it starts to take too much time
+		p = self._env.fromDevice(self._stats.getAveragePopulation(psi))
+		ny = self._grid.shape[1]
+		nz = self._grid.shape[0]
+
+		# sum over ensembles (since it is only 1 of them, just removes this dimension)
+		# and over x-axis
+		yz = p.sum(1).sum(3)
+		dz = self._grid.dz.reshape(self._grid.shape[0], 1)
+		yz /= numpy.tile(dz, (self._p.components, 1, ny))
+		yz /= numpy.tile(self._grid.dy, (self._p.components, nz, 1))
+		return yz
 
 	def getZ(self, psi):
 		p = self._stats.getAveragePopulation(psi)
-		z = self._grid.shape[0]
 		self._reduce(p, self._z_buffer)
 		res = self._env.fromDevice(self._z_buffer)
 		return res / numpy.tile(self._grid.dz, (self._p.components, 1))

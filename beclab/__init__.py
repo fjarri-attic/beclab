@@ -44,8 +44,8 @@ from .ground_state import RK5HarmonicGroundState, RK5IPGroundState, SplitStepGro
 from .evolution import SplitStepEvolution, RK5IPEvolution, RK5HarmonicEvolution
 from .pulse import Pulse, EvolutionPulse
 from .collectors import AxialProjectionCollector, ParticleNumberCollector, \
-	VisibilityCollector
-#	SurfaceProjectionCollector, SliceCollector, \
+	VisibilityCollector, SurfaceProjectionCollector
+#	SliceCollector, \
 #	PhaseNoiseCollector, PzNoiseCollector, UncertaintyCollector, SpinCloudCollector, \
 #	AnalyticNoiseCollector
 

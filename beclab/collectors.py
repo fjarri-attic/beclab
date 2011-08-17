@@ -139,40 +139,45 @@ class VisibilityCollector(PairedCalculation):
 		return numpy.array(self.times), numpy.array(self.visibility)
 
 
-class SurfaceProjectionCollector:
+class SurfaceProjectionCollector(PairedCalculation):
 
-	def __init__(self, env, constants, pulse=None, matrix_pulse=True):
-		self._projection = Projection(env, constants)
+	def __init__(self, env, constants, grid, pulse=None):
+		PairedCalculation.__init__(self, env)
+		self._projection = DensityProfile(env, constants, grid)
 		self._pulse = pulse
-		self._matrix_pulse = matrix_pulse
 		self._constants = constants
+		self._grid = grid
+
+		self._psi = WavefunctionSet(env, constants, grid)
 
 		self.times = []
-		self.a_xy = []
-		self.a_yz = []
-		self.b_xy = []
-		self.b_yz = []
+		self.xy = []
+		self.yz = []
 
-	def __call__(self, t, cloud):
-		"""Returns numbers in units (particles per square micrometer)"""
+		self._addParameters(components=2, ensembles=1, psi_type=CLASSICAL)
 
-		cloud = cloud.copy()
+	def _prepare(self):
+		self._projection.prepare(components=self._p.components,
+			ensembles=self._p.ensembles, psi_type=self._p.psi_type)
+		self._psi.prepare(components=self._p.components, ensembles=self._p.ensembles)
+
+	def __call__(self, t, psi):
+		psi.copyTo(self._psi)
 
 		if self._pulse is not None:
-			self._pulse.apply(cloud, theta=0.5 * math.pi, matrix=self._matrix_pulse)
+			self._pulse.apply(self._psi, theta=0.5 * numpy.pi)
 
 		self.times.append(t)
-
-		coeff_xy = self._constants.dz
-		coeff_yz = self._constants.dx
-
-		self.a_xy.append(self._projection.getXY(cloud.a) * coeff_xy)
-		self.a_yz.append(self._projection.getYZ(cloud.a) * coeff_yz)
-		self.b_xy.append(self._projection.getXY(cloud.b) * coeff_xy)
-		self.b_yz.append(self._projection.getYZ(cloud.b) * coeff_yz)
+		self.xy.append(self._projection.getXY(self._psi))
+		self.yz.append(self._projection.getYZ(self._psi))
 
 	def getData(self):
-		return self.times, self.a_xy, self.a_yz, self.b_xy, self.b_yz
+		shape = (len(self.times), self._p.components)
+		shape_xy = shape + (self._grid.shape[1:3])
+		shape_yz = shape + (self._grid.shape[:2])
+		return numpy.array(self.times), \
+			numpy.transpose(numpy.concatenate(self.xy).reshape(*shape_xy), axes=(1, 0, 2, 3)), \
+			numpy.transpose(numpy.concatenate(self.yz).reshape(*shape_yz), axes=(1, 0, 2, 3))
 
 
 class SliceCollector:
