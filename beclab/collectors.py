@@ -36,7 +36,7 @@ class ParticleNumberCollector(PairedCalculation):
 
 		N = self.stats.getN(self._psi)
 		if self.verbose:
-			print "Particle counter: ", t, N, N.sum()
+			print "Particle counter: ", t, "s,", N, N.sum()
 
 		self.times.append(t)
 		self.N.append(N)
@@ -130,7 +130,7 @@ class VisibilityCollector(PairedCalculation):
 		v = self.stats.getVisibility(psi)
 
 		if self.verbose:
-			print "Visibility: ", (t, v)
+			print "Visibility: ", t, "s,", v
 
 		self.times.append(t)
 		self.visibility.append(v)
