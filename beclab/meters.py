@@ -23,6 +23,8 @@ class ParticleStatistics(PairedCalculation):
 		self._sreduce_all = createReduce(env, constants.scalar.dtype)
 		self._creduce_all = createReduce(env, constants.complex.dtype)
 		self._sreduce_single_to_comps = createReduce(env, constants.scalar.dtype)
+		self._creduce_grid = createReduce(env, constants.complex.dtype)
+		self._sreduce_comp_grid = createReduce(env, constants.scalar.dtype)
 
 		self._addParameters(components=2, ensembles=1, psi_type=CLASSICAL)
 		self.prepare(**kwds)
@@ -55,6 +57,18 @@ class ParticleStatistics(PairedCalculation):
 			sparse=False, final_length=1,
 			length=self._p.ensembles * self._grid.size)
 
+		self._creduce_grid.prepare(
+			sparse=False,
+			final_length=self._p.ensembles,
+			length=self._p.ensembles * self._grid.size
+		)
+
+		self._sreduce_comp_grid.prepare(
+			sparse=False,
+			final_length=self._p.components * self._p.ensembles,
+			length=self._p.components * self._p.ensembles * self._grid.size
+		)
+
 		self._c_mspace_buffer = self._env.allocate(
 			(self._p.components, self._p.ensembles) + self._grid.mshape,
 			self._constants.complex.dtype)
@@ -73,6 +87,12 @@ class ParticleStatistics(PairedCalculation):
 		self._c_1_buffer = self._env.allocate(
 			(1,),
 			self._constants.complex.dtype)
+		self._c_ensembles_buffer = self._env.allocate(
+			(self._p.ensembles,), self._constants.complex.dtype
+		)
+		self._s_comp_ensembles_buffer = self._env.allocate(
+			(self._p.components, self._p.ensembles), self._constants.scalar.dtype
+		)
 
 	def _gpu__prepare_specific(self):
 		kernel_template = """
@@ -268,20 +288,17 @@ class ParticleStatistics(PairedCalculation):
 
 		return comps / self._p.ensembles / N * self._constants.hbar
 
-	def getPhaseNoise(self, psi0, psi1):
+	def getPhaseNoise(self, psi):
 		"""
 		Warning: this function considers spin distribution ellipse to be horizontal,
 		which is not always so.
 		"""
+		assert self._p.components == 2
 
-		ensembles = psi0.shape[0]
-		get = self._env.fromDevice
-		reduce = self._reduce
-		creduce = self._creduce
+		self._kernel_interaction(psi.size, self._c_xspace_buffer, psi.data)
+		self._creduce_grid(self._c_xspace_buffer, self._c_ensembles_buffer)
+		i = self._env.fromDevice(self._c_ensembles_buffer) # Complex numbers {S_xj + iS_yj, j = 1..N}
 
-		i = self._getInteraction(psi0, psi1)
-
-		i = get(creduce(i, ensembles)) # Complex numbers {S_xj + iS_yj, j = 1..N}
 		phi = numpy.angle(i) # normalizing
 
 		# Center of the distribution can be shifted to pi or -pi,
@@ -303,18 +320,13 @@ class ParticleStatistics(PairedCalculation):
 
 		return phi_centered.std()
 
-	def getPzNoise(self, psi0, psi1):
-		ensembles = psi0.shape[0]
-		get = self._env.fromDevice
-		reduce = self._reduce
-
-		n0 = self.getDensity(psi0)
-		n1 = self.getDensity(psi1)
-
-		n0 = get(reduce(n0, ensembles))
-		n1 = get(reduce(n1, ensembles))
-
-		Pz = (n0 - n1) / (n0 + n1)
+	def getPzNoise(self, psi):
+		n = self.getDensity(psi)
+		self._kernel_multiplyTiledSS(self._grid.size * self._p.ensembles,
+			n, self._dV, numpy.int32(self._p.ensembles))
+		self._sreduce_comp_grid(n, self._s_comp_ensembles_buffer)
+		n = self._env.fromDevice(self._s_comp_ensembles_buffer)
+		Pz = (n[0] - n[1]) / (n[0] + n[1])
 
 		return Pz.std()
 
