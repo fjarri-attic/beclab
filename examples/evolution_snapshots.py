@@ -12,8 +12,7 @@ constants = Constants(double=env.supportsDouble())
 grid = UniformGrid.forN(constants, N, (128, 16, 16))
 
 gs = SplitStepGroundState(env, constants, grid, dt=1e-5)
-#evolution = RK5IPEvolution(env, constants, grid)
-evolution = SplitStepEvolution(env, constants, grid, dt=1e-5)
+evolution = RK5IPEvolution(env, constants, grid, eps=1e-4, atol_coeff=1e-1)
 pulse = Pulse(env, constants, grid, f_rabi=350, f_detuning=41)
 a = SurfaceProjectionCollector(env, constants, grid, pulse=pulse)
 
