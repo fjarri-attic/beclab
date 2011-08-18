@@ -1,45 +1,80 @@
+"""
+Comparison of GPE, GPE with classical noise, Wigner representation
+and classical noise + Wigner
+"""
+
 import numpy
-import time
-import math
-
 from beclab import *
-from beclab.state import ParticleStatistics
 
-def testPhaseNoise(gpu):
-	constants = Constants(Model(N=40000, detuning=-41, nvx=8, nvy=8, nvz=64,
-		ensembles=16, e_cut=1e6), double=(False if gpu else True))
-	env = envs.cuda() if gpu else envs.cpu()
-	evolution = SplitStepEvolution(env, constants)
-	pulse = Pulse(env, constants)
-	a = VisibilityCollector(env, constants, verbose=True)
-	b = ParticleNumberCollector(env, constants, verbose=True, pulse=pulse, matrix_pulse=True)
-	p = ParticleStatistics(env, constants)
-	n1 = PhaseNoiseCollector(env, constants, verbose=True)
-	n2 = PzNoiseCollector(env, constants, verbose=True)
+N = 55000
+ensembles = 256
 
-	gs = GPEGroundState(env, constants)
+def test(classical_noise, wigner):
 
-	cloud = gs.createCloud()
-	cloud.toWigner()
+	if wigner and classical_noise:
+		name = "Wigner + classical noise"
+	elif wigner:
+		name = "Wigner"
+	elif classical_noise:
+		name = "Classical noise"
+	else:
+		name = "GPE"
 
-	pulse.apply(cloud, 0.5 * math.pi, matrix=True)
+	print "\n* Running:", name, "\n"
 
-	t1 = time.time()
-	evolution.run(cloud, 0.05, callbacks=[n1, n2, a], callback_dt=0.01, noise=True)
-	env.synchronize()
-	t2 = time.time()
-	print "Time spent: " + str(t2 - t1) + " s"
+	env = envs.cuda()
+	constants = Constants(double=env.supportsDouble(),
+		fx=97.0, fy=97.0 * 1.03, fz=11.69,
+		a12=97.99, a22=95.57,
+		gamma12=1.53e-20, gamma22=7.7e-20)
+	grid = UniformGrid.forN(constants, N, (64, 8, 8))
 
-	times, vis = a.getData()
-	vis = XYData("noise", times * 1000, vis, ymin=0, ymax=1,
-		xname="Time, ms", yname="Visibility")
-	XYPlot([vis]).save('phase_noise_visibility_' + str(env) + '.pdf')
+	gs = SplitStepGroundState(env, constants, grid, dt=1e-5)
+	evolution = SplitStepEvolution(env, constants, grid, dt=1e-5)
+	pulse = Pulse(env, constants, grid, f_rabi=350, f_detuning=-37)
 
-	times, noise = n1.getData()
-	XYPlot([XYData("noise", times * 1000, noise, ymin=0, xname="Time, ms")]).save(
-		'phase_noise_' + str(env) + '.pdf')
+	v = VisibilityCollector(env, constants, grid, verbose=True)
+	pn = ParticleNumberCollector(env, constants, grid, verbose=True, pulse=pulse)
+	phn = PhaseNoiseCollector(env, constants, grid, verbose=True)
+	pzn = PzNoiseCollector(env, constants, grid, verbose=True)
 
+	# run simulation
+	psi = gs.create((N, 0))
+	if wigner:
+		psi.toWigner(ensembles)
+	else:
+		psi.createEnsembles(ensembles)
+
+	if classical_noise:
+		pulse.apply(psi, math.pi / 2, theta_noise=0.02)
+	else:
+		pulse.apply(psi, math.pi / 2)
+
+	evolution.run(psi, 1.0, callbacks=[v, pn, phn, pzn], callback_dt=0.01)
 	env.release()
 
-testPhaseNoise(True)
-testPhaseNoise(False)
+	# save data
+	times, vis = v.getData()
+	vis = XYData(name, times * 1000, vis, ymin=0, ymax=1,
+		xname="T (ms)", yname="$\\mathcal{V}$")
+
+	times, phnoise = phn.getData()
+	phnoise = XYData(name, times * 1000, phnoise, ymin=0, xname="T (ms)", yname="Phase noise, rad")
+
+	times, pznoise = pzn.getData()
+	pznoise = XYData(name, times * 1000, pznoise, ymin=0, xname="T (ms)", yname="$P_z$ noise, rad")
+
+	return vis, phnoise, pznoise
+
+if __name__ == '__main__':
+
+	results = [
+		test(False, False),
+		test(False, True),
+		test(True, False),
+		test(True, True)
+	]
+
+	XYPlot([res[0] for res in results]).save('phase_noise_visibility.pdf')
+	XYPlot([res[1] for res in results]).save('phase_noise_phnoise.pdf')
+	XYPlot([res[2] for res in results]).save('phase_noise_pznoise.pdf')
