@@ -66,48 +66,60 @@ class ParticleNumberCondition(ParticleNumberCollector):
 			raise TerminateEvolution()
 
 
-class PhaseNoiseCollector:
+class PhaseNoiseCollector(PairedCalculation):
 
-	def __init__(self, env, constants, verbose=False):
-		self._stats = ParticleStatistics(env, constants)
-		self._constants = constants
-		self._times = []
-		self._var = []
+	def __init__(self, env, constants, grid, verbose=False):
+		PairedCalculation.__init__(self, env)
+		self._stats = ParticleStatistics(env, constants, grid)
+		self.times = []
+		self.phnoise = []
 		self._verbose = verbose
 
-	def __call__(self, t, cloud):
-		noise = self._stats.getPhaseNoise(cloud.a, cloud.b)
+		self._addParameters(components=2, ensembles=1, psi_type=CLASSICAL)
+
+	def _prepare(self):
+		self._stats.prepare(components=self._p.components, ensembles=self._p.ensembles,
+			psi_type=self._p.psi_type)
+
+	def __call__(self, t, psi):
+		phnoise = self._stats.getPhaseNoise(psi)
 
 		if self._verbose:
-			print "Phase noise: " + repr((t, noise))
+			print "Phase noise:", t, "s,", phnoise
 
-		self._times.append(t)
-		self._var.append(noise)
+		self.times.append(t)
+		self.phnoise.append(phnoise)
 
 	def getData(self):
-		return numpy.array(self._times), numpy.array(self._var)
+		return numpy.array(self.times), numpy.array(self.phnoise)
 
 
-class PzNoiseCollector:
+class PzNoiseCollector(PairedCalculation):
 
-	def __init__(self, env, constants, verbose=False):
-		self._stats = ParticleStatistics(env, constants)
-		self._constants = constants
-		self._times = []
-		self._var = []
+	def __init__(self, env, constants, grid, verbose=False):
+		PairedCalculation.__init__(self, env)
+		self._stats = ParticleStatistics(env, constants, grid)
+		self.times = []
+		self.pznoise = []
 		self._verbose = verbose
 
-	def __call__(self, t, cloud):
-		noise = self._stats.getPzNoise(cloud.a, cloud.b)
+		self._addParameters(components=2, ensembles=1, psi_type=CLASSICAL)
+
+	def _prepare(self):
+		self._stats.prepare(components=self._p.components, ensembles=self._p.ensembles,
+			psi_type=self._p.psi_type)
+
+	def __call__(self, t, psi):
+		pznoise = self._stats.getPzNoise(psi)
 
 		if self._verbose:
-			print "Pz noise: " + repr((t, noise))
+			print "Pz noise:", t, "s,", pznoise
 
-		self._times.append(t)
-		self._var.append(noise)
+		self.times.append(t)
+		self.pznoise.append(pznoise)
 
 	def getData(self):
-		return numpy.array(self._times), numpy.array(self._var)
+		return numpy.array(self.times), numpy.array(self.pznoise)
 
 
 class VisibilityCollector(PairedCalculation):
