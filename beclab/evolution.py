@@ -41,7 +41,8 @@ class Evolution(PairedCalculation):
 
 		if callbacks is not None:
 			for cb in callbacks:
-				cb.prepare(components=psi.components, ensembles=psi.ensembles)
+				cb.prepare(components=psi.components, ensembles=psi.ensembles,
+					psi_type=psi.type)
 
 		self._phi = starting_phase
 		self.prepare(ensembles=psi.ensembles, components=psi.components,
