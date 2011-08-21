@@ -3,7 +3,7 @@ import math
 
 from .helpers import *
 from .constants import CLASSICAL, WIGNER
-from .meters import ParticleStatistics, DensityProfile, Uncertainty
+from .meters import ParticleStatistics, DensityProfile, Uncertainty, getXiSquared
 from .evolution import TerminateEvolution
 from .pulse import Pulse
 from .wavefunction import WavefunctionSet
@@ -285,7 +285,8 @@ class UncertaintyCollector(PairedCalculation):
 	def __call__(self, t, psi):
 		self.times.append(t)
 		self.N_stddev.append(self._unc.getNstddev(psi))
-		self.XiSquared.append(self._unc.getXiSquared(psi))
+		i, n = self._unc.getEnsembleSums(psi)
+		self.XiSquared.append(getXiSquared(i, n[0], n[1]))
 
 	def getData(self):
 		return numpy.array(self.times), \
