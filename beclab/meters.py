@@ -75,6 +75,10 @@ class ParticleStatistics(PairedCalculation):
 		self._c_xspace_buffer = self._env.allocate(
 			(self._p.components, self._p.ensembles) + self._grid.shape,
 			self._constants.complex.dtype)
+		self._c_xspace_buffer_1comp = self._env.allocate(
+			(1, self._p.ensembles) + self._grid.shape,
+			self._constants.complex.dtype)
+
 		self._s_xspace_buffer = self._env.allocate(
 			(self._p.components, self._p.ensembles) + self._grid.shape,
 			self._constants.scalar.dtype)
@@ -220,13 +224,17 @@ class ParticleStatistics(PairedCalculation):
 				res[comp] += n[comp] * (g[comp, comp_other] * n[comp_other] / coeff)
 			res[comp] += (xdata[comp].conj() * mdata[comp]).real
 
+	def getInteraction(self, psi):
+		self._kernel_interaction(psi.size, self._c_xspace_buffer_1comp, psi.data)
+		self._kernel_multiplyTiledCS(psi.size, self._c_xspace_buffer_1comp,
+			self._dV, numpy.int32(1))
+		return self._c_xspace_buffer_1comp
+
 	def getVisibility(self, psi):
 		assert self._p.components == 2
 		N = self.getN(psi)
-		self._kernel_interaction(psi.size, self._c_xspace_buffer, psi.data)
-		self._kernel_multiplyTiledCS(psi.size, self._c_xspace_buffer,
-			self._dV, numpy.int32(1))
-		self._creduce_all(self._c_xspace_buffer, self._c_1_buffer)
+		i = self.getInteraction(psi)
+		self._creduce_all(i, self._c_1_buffer)
 		interaction = self._env.fromDevice(self._c_1_buffer)
 		interaction = numpy.abs(interaction[0]) / self._p.ensembles
 
@@ -236,6 +244,13 @@ class ParticleStatistics(PairedCalculation):
 		self._kernel_density(psi.size, self._s_xspace_buffer, psi.data,
 			self._density_modifiers, numpy.int32(coeff))
 		return self._s_xspace_buffer
+
+	def getPopulation(self, psi):
+		density = self.getDensity(psi)
+		if not psi.in_mspace:
+			self._kernel_multiplyTiledSS(psi.size, density, self._dV,
+				numpy.int32(self._p.ensembles))
+		return density
 
 	def getAverageDensity(self, psi):
 		# Using psi.size and .shape instead of grid here, to make it work
