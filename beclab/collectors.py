@@ -3,7 +3,7 @@ import math
 
 from .helpers import *
 from .constants import CLASSICAL, WIGNER
-from .meters import ParticleStatistics, DensityProfile
+from .meters import ParticleStatistics, DensityProfile, Uncertainty
 from .evolution import TerminateEvolution
 from .pulse import Pulse
 from .wavefunction import WavefunctionSet
@@ -267,24 +267,30 @@ class AxialProjectionCollector(PairedCalculation):
 				len(self.times), self.snapshots[0].size).transpose()
 
 
-class UncertaintyCollector:
+class UncertaintyCollector(PairedCalculation):
 
-	def __init__(self, env, constants):
-		self._unc = Uncertainty(env, constants)
+	def __init__(self, env, constants, grid):
+		PairedCalculation.__init__(self, env)
+		self._unc = Uncertainty(env, constants, grid)
 		self.times = []
-		self.Na_stddev = []
-		self.Nb_stddev = []
+		self.N_stddev = []
 		self.XiSquared = []
 
-	def __call__(self, t, cloud):
+		self._addParameters(components=2, ensembles=1, psi_type=CLASSICAL)
+
+	def _prepare(self):
+		self._unc.prepare(components=self._p.components,
+			ensembles=self._p.ensembles, psi_type=self._p.psi_type)
+
+	def __call__(self, t, psi):
 		self.times.append(t)
-		self.Na_stddev.append(self._unc.getNstddev(cloud.a))
-		self.Nb_stddev.append(self._unc.getNstddev(cloud.b))
-		self.XiSquared.append(self._unc.getXiSquared(cloud.a, cloud.b))
+		self.N_stddev.append(self._unc.getNstddev(psi))
+		self.XiSquared.append(self._unc.getXiSquared(psi))
 
 	def getData(self):
-		return [numpy.array(x) for x in
-			(self.times, self.Na_stddev, self.Nb_stddev, self.XiSquared)]
+		return numpy.array(self.times), \
+			numpy.array(self.N_stddev).transpose(), \
+			numpy.array(self.XiSquared)
 
 
 class SpinCloudCollector:
