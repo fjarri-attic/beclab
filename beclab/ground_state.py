@@ -442,7 +442,7 @@ class RK5Propagation(PairedCalculation):
 
 		self._maxFinder = createMaxFinder(self._env, self._constants.complex.dtype)
 
-		self._addParameters(dt_guess=1e-4, eps=1e-6, tiny=0, mspace=mspace,
+		self._addParameters(dt_guess=1e-7, eps=1e-6, tiny=0, mspace=mspace,
 			components=1, ensembles=1)
 
 	def _prepare(self):
@@ -696,7 +696,7 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 		self._projector = Projector(env, constants, grid)
 
 		self._addParameters(relative_precision=1e-0, atol_coeff=1e-3,
-			eps=1e-6, dt_guess=1e-4, Nscale=10000)
+			eps=1e-6, dt_guess=1e-7, Nscale=10000)
 		self.prepare(**kwds)
 
 	def _prepare(self):
@@ -829,7 +829,7 @@ class RK5HarmonicGroundState(ImaginaryTimeGroundState):
 		self._propagator = RK5Propagation(env, constants, grid, mspace=True)
 
 		self._addParameters(kwds, relative_precision=1e-0,
-			atol_coeff=1e-3, eps=1e-6, dt_guess=1e-4, Nscale=10000)
+			atol_coeff=1e-3, eps=1e-6, dt_guess=1e-7, Nscale=10000)
 
 	def _prepare(self):
 		self._projector.prepare(components=self._p.components, ensembles=1)

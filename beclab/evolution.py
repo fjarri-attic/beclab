@@ -593,7 +593,7 @@ class RK5IPEvolution(Evolution):
 		self._propagator = RK5Propagation(env, constants, grid, mspace=False)
 		self._noise_prop = NoisePropagator(env, constants, grid)
 
-		self._addParameters(atol_coeff=1e-3, eps=1e-6, dt_guess=1e-4, Nscale=10000,
+		self._addParameters(atol_coeff=1e-3, eps=1e-6, dt_guess=1e-7, Nscale=10000,
 			components=2, ensembles=1, f_detuning=0, f_rabi=0, noise=False)
 		self.prepare(**kwds)
 
@@ -804,7 +804,7 @@ class RK5HarmonicEvolution(Evolution):
 		self._noise_prop = NoisePropagator(env, constants, grid)
 
 		self._addParameters(kwds, atol_coeff=1e-3, eps=1e-6,
-			dt_guess=1e-4, Nscale=10000, components=2, ensembles=1,
+			dt_guess=1e-7, Nscale=10000, components=2, ensembles=1,
 			f_detuning=0, f_rabi=0, noise=False)
 
 	def _prepare(self):
