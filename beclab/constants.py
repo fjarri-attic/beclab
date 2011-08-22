@@ -198,6 +198,8 @@ class HarmonicGrid:
 
 	def __init__(self, constants, mshape):
 
+		self._constants = constants
+
 		if isinstance(mshape, int):
 			mshape = (mshape,)
 
@@ -328,7 +330,7 @@ class HarmonicGrid:
 		# density modifiers take quite a long time to create in 3D case,
 		# so we will build them dynamically on first request
 		if name == 'density_modifiers':
-			self._buildDensityModifiers()
+			self._buildDensityModifiers(self._constants)
 			return self.density_modifiers
 		else:
 			raise AttributeError(name)
