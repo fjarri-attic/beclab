@@ -408,29 +408,25 @@ class DensityProfile(PairedCalculation):
 		yz /= numpy.tile(self._grid.dy, (self._p.components, nz, 1))
 		return yz
 
+	def getXYSlice(self, psi, z_index=None):
+		# TODO: use reduction on device if it starts to take too much time
+		p = self._env.fromDevice(self._stats.getAverageDensity(psi))
+		if z_index is None:
+			z_index = self._grid.shape[0] / 2
+		return p[:,0,z_index,:,:]
+
+	def getYZSlice(self, psi, x_index=None):
+		# TODO: use reduction on device if it starts to take too much time
+		p = self._env.fromDevice(self._stats.getAverageDensity(psi))
+		if x_index is None:
+			x_index = self._grid.shape[2] / 2
+		return p[:,0,:,:,x_index]
+
 	def getZ(self, psi):
 		p = self._stats.getAveragePopulation(psi)
 		self._reduce(p, self._z_buffer)
 		res = self._env.fromDevice(self._z_buffer)
 		return res / numpy.tile(self._grid.dz, (self._p.components, 1))
-
-
-class Slice:
-
-	def __init__(self, env, constants):
-		self._env = env
-		self._constants = constants
-		self._stats = ParticleStatistics(env, constants)
-
-	def getXY(self, state):
-		density = self._stats.getAverageDensity(state)
-		temp = self._env.fromDevice(density)
-		return temp[self._constants.nvz / 2,:,:]
-
-	def getYZ(self, state):
-		density = self._stats.getAverageDensity(state)
-		temp = self._env.fromDevice(density).transpose((2, 0, 1))
-		return temp[self._constants.nvx / 2,:,:]
 
 
 class Uncertainty(PairedCalculation):
