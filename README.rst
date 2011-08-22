@@ -14,6 +14,12 @@ Simulation results can be saved as JSON files or several types of graphs; see ex
 Release history
 ===============
 
+-----
+0.2.1
+-----
+
+* Add support for different potentials for each component (static)
+
 -------------------------
 0.2.0 (under development)
 -------------------------
@@ -26,11 +32,7 @@ Release history
 * Added some tests (mostly functionality and coverage)
 * Executing callbacks at exact times, not approximate
 * Support for "restricted" ground states, i.e. containing only modes below cutoff
-
-TODO:
-* Add support for different potentials for each component (static)
-* Separate tests and examples
-* Add performance tests, profile evolution and try to optimise it
+* Separated tests and examples
 
 -----
 0.1.3
