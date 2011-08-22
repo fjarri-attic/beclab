@@ -192,42 +192,6 @@ class SurfaceProjectionCollector(PairedCalculation):
 			numpy.transpose(numpy.concatenate(self.yz).reshape(*shape_yz), axes=(1, 0, 2, 3))
 
 
-class SliceCollector:
-
-	def __init__(self, env, constants, pulse=None, matrix_pulse=True):
-		self._slice = Slice(env, constants)
-		self._pulse = pulse
-		self._matrix_pulse = matrix_pulse
-		self._constants = constants
-
-		self.times = []
-		self.a_xy = []
-		self.a_yz = []
-		self.b_xy = []
-		self.b_yz = []
-
-	def __call__(self, t, cloud):
-		"""Returns numbers in units (particles per square micrometer)"""
-
-		cloud = cloud.copy()
-
-		if self._pulse is not None:
-			self._pulse.apply(cloud, theta=0.5 * math.pi, matrix=self._matrix_pulse)
-
-		self.times.append(t)
-
-		coeff_xy = 1.0
-		coeff_yz = 1.0
-
-		self.a_xy.append(self._slice.getXY(cloud.a) * coeff_xy)
-		self.a_yz.append(self._slice.getYZ(cloud.a) * coeff_yz)
-		self.b_xy.append(self._slice.getXY(cloud.b) * coeff_xy)
-		self.b_yz.append(self._slice.getYZ(cloud.b) * coeff_yz)
-
-	def getData(self):
-		return self.times, self.a_xy, self.a_yz, self.b_xy, self.b_yz
-
-
 class AxialProjectionCollector(PairedCalculation):
 
 	def __init__(self, env, constants, grid, pulse=None):
