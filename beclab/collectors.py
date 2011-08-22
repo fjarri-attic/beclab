@@ -260,15 +260,20 @@ class UncertaintyCollector(PairedCalculation):
 
 class SpinCloudCollector:
 
-	def __init__(self, env, constants):
-		self._unc = Uncertainty(env, constants)
+	def __init__(self, env, constants, grid):
+		self._unc = Uncertainty(env, constants, grid)
 		self.times = []
 		self.phi = []
 		self.yps = []
 
-	def __call__(self, t, cloud):
+	def prepare(self, **kwds):
+		self._unc.prepare(components=kwds['components'],
+			ensembles=kwds['ensembles'], psi_type=kwds['psi_type'])
+
+	def __call__(self, t, psi):
 		self.times.append(t)
-		phi, yps = self._unc.getSpins(cloud.a, cloud.b)
+		i, n = self._unc.getEnsembleSums(psi)
+		phi, yps = getSpins(i, n[0], n[1])
 		self.phi.append(phi)
 		self.yps.append(yps)
 
@@ -281,28 +286,40 @@ class AnalyticNoiseCollector:
 	According to Ueda and Kitagawa, http://link.aps.org/doi/10.1103/PhysRevA.47.5138, (5)
 	"""
 
-	def __init__(self, env, constants):
-		self._stats = ParticleStatistics(env, constants)
+	def __init__(self, env, constants, grid):
+		self._stats = ParticleStatistics(env, constants, grid)
+		self._env = env
+		self._constants = constants
+		self._grid = grid
 		self.times = []
 		self.noise = []
-		self._constants = constants
-		self._env = env
 
-	def __call__(self, t, cloud):
-		n1 = self._env.fromDevice(self._stats.getAverageDensity(cloud.a))
-		n2 = self._env.fromDevice(self._stats.getAverageDensity(cloud.b))
+	def prepare(self, **kwds):
+		self._stats.prepare(components=kwds['components'],
+			ensembles=kwds['ensembles'], psi_type=kwds['psi_type'])
 
-		N1 = n1.sum() * self._constants.dV
-		N2 = n2.sum() * self._constants.dV
+	def __call__(self, t, psi):
+		n = self._env.fromDevice(self._stats.getAverageDensity(psi))
+		dV = self._grid.dV
+
+		comp1 = 0
+		comp2 = 1
+		g = self._constants.g
+
+		n1 = n[comp1]
+		n2 = n[comp2]
+
+		N1 = (n1 * dV).sum()
+		N2 = (n2 * dV).sum()
 		N = N1 + N2
 
 		n1 /= N1
 		n2 /= N2
 
 		chi = 1.0 / (2.0 * self._constants.hbar) * (
-			self._constants.g[cloud.a.comp, cloud.a.comp] * (n1 * n1).sum() * self._constants.dV +
-			self._constants.g[cloud.b.comp, cloud.b.comp] * (n2 * n2).sum() * self._constants.dV -
-			2 * self._constants.g[cloud.a.comp, cloud.b.comp] * (n1 * n2).sum() * self._constants.dV)
+			g[comp1, comp1] * (n1 * n1 * dV).sum() +
+			g[comp2, comp2] * (n2 * n2 * dV).sum() -
+			2 * g[comp1, comp2] * (n1 * n2 * dV).sum())
 
 		self.times.append(t)
 		self.noise.append(numpy.sqrt(N) * chi * t)
