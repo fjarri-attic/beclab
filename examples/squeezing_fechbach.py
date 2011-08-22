@@ -104,6 +104,7 @@ def combinedTest(N, a12, gamma12, losses):
 if __name__ == '__main__':
 
 	iterations = 2
+	prefix = 'squeezing_feschbach'
 
 	xi1nl = combinedTest(iterations, 80.0, 38.8e-19, False)
 	xi2nl = combinedTest(iterations, 85.0, 19.5e-19, False)
@@ -115,10 +116,10 @@ if __name__ == '__main__':
 	xi3nl.color = 'green'
 	xi4nl.color = 'black'
 
-	xi1nl.save('squeezing_ramsey_80.0_nolosses.json')
-	xi2nl.save('squeezing_ramsey_85.0_nolosses.json')
-	xi3nl.save('squeezing_ramsey_90.0_nolosses.json')
-	xi4nl.save('squeezing_ramsey_95.0_nolosses.json')
+	xi1nl.save(prefix + '_80.0_nolosses.json')
+	xi2nl.save(prefix + '_85.0_nolosses.json')
+	xi3nl.save(prefix + '_90.0_nolosses.json')
+	xi4nl.save(prefix + '_95.0_nolosses.json')
 
 	for x in (xi1nl, xi2nl, xi3nl, xi4nl):
 		x.linestyle = '--'
@@ -133,10 +134,10 @@ if __name__ == '__main__':
 	xi3.color = 'green'
 	xi4.color = 'black'
 
-	xi1.save('squeezing_ramsey_80.0.json')
-	xi2.save('squeezing_ramsey_85.0.json')
-	xi3.save('squeezing_ramsey_90.0.json')
-	xi4.save('squeezing_ramsey_95.0.json')
+	xi1.save(prefix + '_80.0.json')
+	xi2.save(prefix + '_85.0.json')
+	xi3.save(prefix + '_90.0.json')
+	xi4.save(prefix + '_95.0.json')
 
 	XYPlot([xi1nl, xi2nl, xi3nl, xi4nl, xi1, xi2, xi3, xi4],
-		location="upper left").save('squeezing.pdf')
+		location="upper left").save(prefix + '.pdf')
