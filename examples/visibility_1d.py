@@ -1,109 +1,115 @@
+"""
+Visibility for Ramsey sequence in 1D case and different parameters
+"""
+
 import numpy
-import time
-import math
-
 from beclab import *
-from beclab.state import ParticleStatistics
 
+def test(ensembles=256, points=40, a12=97.9,
+	losses=True, equilibration_time=0, wigner=True,
+	e_cut=3000, eps=1e-6):
 
-def test(gpu=False, ensembles=256, nvz=32, dt_evo=1e-5, a12=97.9,
-	losses=True, equilibration_time=0, noise=True, wigner=True,
-	zero_gs=False, e_cut=1):
-
-	kwds = {}
+	N = 60
+	parameters = dict(use_effective_area=True,
+		fx=42e3, fy=42e3, fz=90,
+		a11=100.4, a12=a12, a22=95.5)
 
 	if not losses:
-		kwds['gamma111'] = 0
-		kwds['gamma12'] = 0
-		kwds['gamma22'] = 0
+		parameters.update(dict(gamma111=0, gamma12=0, gamma22=0))
 
-	constants = Constants(Model(N=60, nvx=1, nvy=1, nvz=nvz, ensembles=ensembles,
-		fx=42e3, fy=42e3, fz=90, dt_evo=dt_evo, border=2.0, e_cut=e_cut,
-		a11=100.4, a12=a12, a22=95.5, detuning=0, **kwds),
-		double=(not gpu))
-	env = envs.cuda() if gpu else envs.cpu()
+	env = envs.cuda()
+	constants = Constants(double=env.supportsDouble(),
+		e_cut=e_cut, **parameters)
+	grid = HarmonicGrid(constants, (points,))
 
-	evolution = SplitStepEvolution(env, constants)
+	gs = RK5HarmonicGroundState(env, constants, grid, Nscale=N)
+	evolution = RK5HarmonicEvolution(env, constants, grid, eps=eps, Nscale=N)
+	pulse = Pulse(env, constants, grid, f_rabi=350)
 
-	gs = GPEGroundState(env, constants)
-	pulse = Pulse(env, constants)
-	v = VisibilityCollector(env, constants, verbose=False)
-	p = ParticleNumberCollector(env, constants, pulse=pulse, matrix_pulse=True, verbose=False)
+	v = VisibilityCollector(env, constants, grid)
+	p = ParticleNumberCollector(env, constants, grid, pulse=pulse)
 
-	cloud = gs.createCloud()
-	if zero_gs:
-		cloud.a._initializeMemory()
+	psi = gs.create((N, 0))
 	if wigner:
-		cloud.toWigner()
+		psi.toWigner(ensembles)
 
 	if equilibration_time > 0:
-		evolution.run(cloud, equilibration_time, noise=noise)
+		evolution.run(psi, equilibration_time)
 
-	pulse.apply(cloud, math.pi * 0.5, matrix=True)
+	pulse.apply(psi, math.pi / 2)
 
-	t1 = time.time()
-	evolution.run(cloud, 0.05, callbacks=[v, p], callback_dt=0.001, noise=noise)
-	env.synchronize()
-	t2 = time.time()
-	print "Time spent: " + str(t2 - t1) + " s"
+	evolution.run(psi, 0.05, callbacks=[v, p], callback_dt=0.001)
+	env.release()
 
-	name = ["gpu" if gpu else "cpu"] + \
-		([str(ensembles) + " ens."] if wigner else []) + \
-		[str(nvz) + " cells",
-		"dt = " + str(dt_evo * 1e6) + " $\mu$s",
+	name = ([str(ensembles) + " ens."] if wigner else []) + \
+		[str(points) + " cells",
+		"eps = " + str(eps),
 		"a12 = " + str(a12)] + \
 		([] if losses else ["no losses"]) + \
-		(["eq. " + str(equilibration_time * 1e3) + " ms"] if equilibration_time > 0 else []) + \
-		(["noise"] if noise else [])
+		(["eq. " + str(equilibration_time * 1e3) + " ms"] if equilibration_time > 0 else [])
 
 	name = ", ".join(name)
 
 	times, vis = v.getData()
 	vis_data = XYData(name, times * 1e3, vis, ymin=0, ymax=1,
-		xname="Time, ms", yname="Visibility")
+		xname="T (ms)", yname="$\\mathcal{V}$")
 
-	times, N1, N2, N = p.getData()
-	pop_data = XYData(name, times * 1e3, N1,
-		ymin=0, ymax=60, xname="Time, ms", yname="Population, N1")
-
-	env.release()
+	times, Ns, Ntotal = p.getData()
+	pop_data = XYData(name, times * 1e3, Ns[0],
+		ymin=0, ymax=N, xname="T (ms)", yname="Population, |1>")
 
 	return vis_data, pop_data
 
-# showcase 1: visibility(t) & N1(t) for different lattice sizes (no diffusion, no initial noise)
-#results = [test(noise=False, wigner=False, gpu=True, nvz=nvz, a12=97.9)
-#	for nvz in [16,32,64,128,256,512,1024,2048]]
-#XYPlot([r[0] for r in results], title="GPEs, visibility", gradient=True).save("visibility_1d_s1_979.pdf")
-#XYPlot([r[1] for r in results], title="GPEs, N1", gradient=True).save("1_population_979.pdf")
-#results = [test(noise=False, wigner=False, gpu=True, nvz=nvz, a12=80.8)
-#	for nvz in [16,32,64,128,256,512,1024,2048]]
-#XYPlot([r[0] for r in results], title="GPEs, visibility", gradient=True).save("visibility_1d_s1_808.pdf")
-#XYPlot([r[1] for r in results], title="GPEs, N1", gradient=True).save("1_population_808.pdf")
+if __name__ == '__main__':
 
-# showcase 2: visibility(t) & N1(t) for different time steps (no diffusion, no initial noise)
-#results = [test(noise=False, wigner=False, gpu=True, nvz=1024, a12=97.9, dt_evo=dt)
-#	for dt in [4e-5, 2e-5, 1e-5, 4e-6, 2e-6, 1e-6, 4e-7]]
-#XYPlot([r[0] for r in results], title="GPEs, visibility", gradient=True).save("visibility_1d_s2_979.pdf")
-#XYPlot([r[1] for r in results], title="GPEs, N1", gradient=True).save("2_population_979.pdf")
-#results = [test(noise=False, wigner=False, gpu=True, nvz=1024, a12=80.8, dt_evo=dt)
-#	for dt in [4e-5, 2e-5, 1e-5, 4e-6, 2e-6, 1e-6, 4e-7]]
-#XYPlot([r[0] for r in results], title="GPEs, visibility", gradient=True).save("visibility_1d_s2_808.pdf")
-#XYPlot([r[1] for r in results], title="GPEs, N1", gradient=True).save("2_population_808.pdf")
+	prefix = 'evolution_1d'
 
-# showcase 3: visibility(t) & N1(t) for different lattice sizes (no diffusion, but with initial noise)
-#results = [test(noise=False, wigner=True, ensembles=512, gpu=True, nvz=nvz, a12=97.9)
-#	for nvz in [16,32,64,128,256]]
-#XYPlot([r[0] for r in results], title="Wigner + vacuum noise, visibility", gradient=True).save("visibility_1d_s3_979.pdf")
-#XYPlot([r[1] for r in results], title="Wigner + vacuum noise, N1", gradient=True).save("visibility_1d_s3_979.pdf")
-#results = [test(noise=False, wigner=True, ensembles=512, gpu=True, nvz=nvz, a12=80.8)
-#	for nvz in [16,32,64,128,256]]
-#XYPlot([r[0] for r in results], title="Wigner + vacuum noise, visibility", gradient=True).save("visibility_1d_s3_808.pdf")
-#XYPlot([r[1] for r in results], title="Wigner + vacuum noise, N1", gradient=True).save("visibility_1d_s3_808.pdf")
+	# showcase 1: visibility(t) & N1(t) for different lattice sizes (no diffusion, no initial noise)
+	results = [test(losses=False, wigner=False, points=points, a12=97.9)
+		for points in [20, 30, 40, 50]]
+	XYPlot([r[0] for r in results], title="GPEs, visibility", gradient=True).save(
+		prefix + "_s1_V_97.9.pdf")
+	XYPlot([r[1] for r in results], title="GPEs, N1", gradient=True).save(
+		prefix + "_s1_N_97.9.pdf")
+	results = [test(losses=False, wigner=False, points=points, a12=80.8)
+		for points in [20, 30, 40, 50]]
+	XYPlot([r[0] for r in results], title="GPEs, visibility", gradient=True).save(
+		prefix + "_s1_V_80.8.pdf")
+	XYPlot([r[1] for r in results], title="GPEs, N1", gradient=True).save(
+		prefix + "_s1_N_80.8.pdf")
 
-# showcase 4: visibility(t) & N1(t) - divergence of trajectories (no diffusion, but with initial noise)
-results = [test(noise=False, wigner=True, gpu=True, nvz=32, ensembles=512, a12=97.9)[0]
-	for i in xrange(10)]
-XYPlot(results, legend=False, title=results[0].name).save("visibility_1d_s4_979.pdf")
-results = [test(noise=False, wigner=True, gpu=True, nvz=32, ensembles=512, a12=80.8)[0]
-	for i in xrange(10)]
-XYPlot(results, legend=False, title=results[0].name).save("visibility_1d_s4_808.pdf")
+	# showcase 2: visibility(t) & N1(t) for different time steps (no diffusion, no initial noise)
+	results = [test(losses=False, wigner=False, points=40, a12=97.9, eps=eps)
+		for eps in [1e-3, 1e-4, 1e-5, 1e-6, 1e-7]]
+	XYPlot([r[0] for r in results], title="GPEs, visibility", gradient=True).save(
+		prefix + "_s2_V_97.9.pdf")
+	XYPlot([r[1] for r in results], title="GPEs, N1", gradient=True).save(
+		prefix + "_s2_N_97.9.pdf")
+	results = [test(losses=False, wigner=False, points=40, a12=80.8, eps=eps)
+		for eps in [1e-3, 1e-4, 1e-5, 1e-6, 1e-7]]
+	XYPlot([r[0] for r in results], title="GPEs, visibility", gradient=True).save(
+		prefix + "_s2_V_80.8.pdf")
+	XYPlot([r[1] for r in results], title="GPEs, N1", gradient=True).save(
+		prefix + "_s2_N_80.8.pdf")
+
+	# showcase 3: visibility(t) & N1(t) for different lattice sizes (no diffusion, but with initial noise)
+	results = [test(losses=False, wigner=True, ensembles=512, points=points, a12=97.9)
+		for points in [20, 30, 40, 50]]
+	XYPlot([r[0] for r in results], title="Wigner + vacuum noise, visibility", gradient=True).save(
+		prefix + "_s3_V_97.9.pdf")
+	XYPlot([r[1] for r in results], title="Wigner + vacuum noise, N1", gradient=True).save(
+		prefix + "_s3_N_97.9.pdf")
+	results = [test(losses=False, wigner=True, ensembles=512, points=points, a12=80.8)
+		for points in [20, 30, 40, 50]]
+	XYPlot([r[0] for r in results], title="Wigner + vacuum noise, visibility", gradient=True).save(
+		prefix + "_s3_V_80.8.pdf")
+	XYPlot([r[1] for r in results], title="Wigner + vacuum noise, N1", gradient=True).save(
+		prefix + "_s3_N_80.8.pdf")
+
+	# showcase 4: visibility(t) & N1(t) - divergence of trajectories
+	results = [test(losses=False, wigner=True, points=40, ensembles=512, a12=97.9)[0]
+		for i in xrange(10)]
+	XYPlot(results, legend=False, title=results[0].name).save(prefix + "_s4_97.9.pdf")
+	results = [test(losses=False, wigner=True, points=40, ensembles=512, a12=80.8)[0]
+		for i in xrange(10)]
+	XYPlot(results, legend=False, title=results[0].name).save(prefix + "_s4_80.8.pdf")
