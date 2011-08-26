@@ -13,3 +13,6 @@ Features/bugfixes for the future
 - In tests where CPU and GPU are compared add an assertion which checks that their
   results are identical (for doubles)
 - Implement more accurate propagation schemes for ground states (from Bao et al., 2004)
+- Add an ability to create GS with slightly different number of atoms in each ensemble
+  (possible solutions: 1. create normal GS, create ensembles, renormalize each ensembles;
+  2. create GS in all ensembles simultaneously with required N)
