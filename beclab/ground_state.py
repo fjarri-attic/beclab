@@ -242,6 +242,12 @@ class ImaginaryTimeGroundState(PairedCalculation):
 	def _toMeasurementSpace(self, psi):
 		pass
 
+	def _total_E(self, psi, N):
+		return self._statistics.getEnergy(psi, N=N).sum()
+
+	def _total_mu(self, psi, N):
+		return self._statistics.getMu(psi, N=N).sum()
+
 	def _create(self, psi, N):
 
 		# it would be nice to use two-component TF state here,
@@ -255,8 +261,8 @@ class ImaginaryTimeGroundState(PairedCalculation):
 		dt_used = 0
 
 		total_N = lambda psi: stats.getN(psi).sum()
-		total_E = lambda psi, N: stats.getEnergy(psi, N=N).sum()
-		total_mu = lambda psi, N: stats.getMu(psi, N=N).sum()
+		total_E = self._total_E
+		total_mu = self._total_mu
 
 		E = 0.0
 
