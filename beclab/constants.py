@@ -80,9 +80,9 @@ def getSOEnergy(constants, grid, coeff=1):
 	diff2 = constants.hbar * k2 / 2 / constants.m
 	int1 = constants.lambda_R / constants.hbar * (ky + 1j * kx)
 	int2 = constants.lambda_R / constants.hbar * (ky - 1j * kx)
-	return numpy.array([
+	return (numpy.array([
 		[diff2, int1], [int2, diff2]
-	]) * coeff
+	]) * coeff).astype(constants.complex.dtype)
 
 def getSOEnergyExp(constants, grid, dt=1, imaginary_time=False):
 
