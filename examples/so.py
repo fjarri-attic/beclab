@@ -41,6 +41,7 @@ print "N =", N
 psi = gs.create((N / 2, N / 2))
 
 data = env.fromDevice(stats.getDensity(psi))
+env.release()
 HeightmapPlot(HeightmapData("|up>", data[0, 0],
 	xmin=-box_size[1] / 2 / a_perp, xmax=box_size[1] / 2 / a_perp,
 	ymin=-box_size[0] / 2 / a_perp, ymax=box_size[0] / 2 / a_perp,
