@@ -49,6 +49,15 @@ def getPotentials(constants, grid):
 		z = grid.z_full
 
 		potentials = constants.m * ((constants.wz * z) ** 2) / (2.0 * constants.hbar)
+
+	elif grid.dim == 2:
+		x, y = grid.x_full, grid.y_full
+
+		potentials = constants.m * (
+			(constants.wx * x) ** 2 +
+			(constants.wy * y) ** 2
+		) / (2.0 * constants.hbar)
+
 	elif grid.dim == 3:
 		x, y, z = grid.x_full, grid.y_full, grid.z_full
 
@@ -99,7 +108,7 @@ class UniformGrid:
 			shape = (shape,)
 			box_size = (box_size,)
 
-		assert len(shape) in [1, 3]
+		assert len(shape) in [1, 2, 3]
 
 		self.dim = len(shape)
 		self.shape = shape
@@ -147,6 +156,26 @@ class UniformGrid:
 			dx, dy, dz = tile3D(self.dx, self.dy, self.dz)
 			self.dV = dx * dy * dz
 
+		elif self.dim == 2:
+
+			# 1D grids
+			self.x = grid_space[1]
+			self.y = grid_space[0]
+
+			# tiled grid arrays to use in elementwise numpy operations
+			self.x_full, self.y_full = tile2D(self.x, self.y)
+
+			self.kx = kvalues(d_space[1], self.shape[1])
+			self.ky = kvalues(d_space[0], self.shape[0])
+
+			self.kx_full, self.ky_full = tile2D(self.kx, self.ky)
+
+			# coefficients for integration
+			self.dx = _getIntegrationCoefficients(self.x)
+			self.dy = _getIntegrationCoefficients(self.y)
+			dx, dy = tile2D(self.dx, self.dy)
+			self.dV = dx * dy
+
 		else:
 			# using 'z' axis for 1D, because it seems more natural
 			self.z = grid_space[0]
@@ -176,6 +205,10 @@ class UniformGrid:
 		"""
 		if self.dim == 1:
 			E = constants.hbar * self.kz_full ** 2 / (2.0 * constants.m)
+		elif self.dim == 2:
+			E = constants.hbar * \
+				(self.kx_full ** 2 +
+				self.ky_full ** 2) / (2.0 * constants.m)
 		elif self.dim == 3:
 			E = constants.hbar * \
 				(self.kx_full ** 2 +
