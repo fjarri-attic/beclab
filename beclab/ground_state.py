@@ -342,7 +342,7 @@ class SOGroundState(ImaginaryTimeGroundState):
 		self._potentials = self._env.toDevice(
 			getPotentials(self._constants, self._grid))
 		self._mode_prop = self._env.toDevice(getSOEnergyExp(
-			self._constants, self._grid, coeff=-1j * self._p.dt / 2))
+			self._constants, self._grid, dt=self._p.dt / 2, imaginary_time=True))
 
 	def _cpu__kernel_mpropagate(self, gsize, data, mode_prop):
 		data_copy = data.copy()

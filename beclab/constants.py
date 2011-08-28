@@ -84,31 +84,31 @@ def getSOEnergy(constants, grid, coeff=1):
 		[diff2, int1], [int2, diff2]
 	]) * coeff
 
-def getSOEnergyExp(constants, grid, coeff=1):
+def getSOEnergyExp(constants, grid, dt=1, imaginary_time=False):
 
-	# FIXME: use getSOEnergy() and analytic expression for matrix exponent
+	e = getSOEnergy(constants, grid, coeff=-1j * dt * (-1j if imaginary_time else 1))
 
-	from scipy.linalg import expm
+	delta = numpy.sqrt((e[0, 0] - e[1, 1]) ** 2 + 4 * e[0, 1] * e[1, 0])
+	sinh_d = numpy.sinh(delta / 2)
+	cosh_d = numpy.cosh(delta / 2)
+	t = numpy.exp((e[0, 0] + e[1, 1]) / 2)
 
-	def func(kx, ky):
-		k2 = kx ** 2 + ky ** 2
-		diff2 = -1j * constants.hbar * k2 / 2 / constants.m
-		int1 = constants.lambda_R / constants.hbar * (kx - 1j * ky)
-		int2 = constants.lambda_R / constants.hbar * (-kx - 1j * ky)
-		D = numpy.array([
-			[diff2, int1], [int2, diff2]
-		])
+	m11 = t * (delta * cosh_d + (e[0, 0] - e[1, 1]) * sinh_d)
+	m12 = 2 * e[0, 1] * t * sinh_d
+	m21 = 2 * e[1, 0] * t * sinh_d
+	m22 = t * (delta * cosh_d + (e[1, 1] - e[0, 0]) * sinh_d)
 
-		return expm(D * coeff)
+	res = numpy.array([[m11, m12], [m21, m22]])
 
-	res = []
-	for ky in grid.ky:
-		for kx in grid.kx:
-			res.append(func(kx, ky))
+	# delta[0, 0] == 0, so we need to process this point separately
+	# taking the limit of delta -> 0
+	delta[0, 0] = 1
+	res /= delta
+	res[:,:,0,0] = t[0, 0] * numpy.array([
+		[1 + (e[0, 0, 0, 0] - e[1, 1, 0, 0]) / 2, e[0, 1, 0, 0]],
+		[e[1, 0, 0, 0], 1 - (e[0, 0, 0, 0] - e[1, 1, 0, 0]) / 2]
+	])
 
-	res = numpy.concatenate(res)
-	res = res.reshape(grid.shape[0], grid.shape[1], 2, 2)
-	res = res.transpose((2, 3, 0, 1))
 	return res.astype(constants.complex.dtype)
 
 def getProjectorMask(constants, grid):
