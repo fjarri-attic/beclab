@@ -344,6 +344,81 @@ class SOGroundState(ImaginaryTimeGroundState):
 		self._mode_prop = self._env.toDevice(getSOEnergyExp(
 			self._constants, self._grid, dt=self._p.dt / 2, imaginary_time=True))
 
+	def _gpu__prepare_specific(self, **kwds):
+		kernel_template = """
+			// Propagates psi function in mode space
+			EXPORTED_FUNC void mpropagate(int gsize, GLOBAL_MEM COMPLEX *data,
+				GLOBAL_MEM COMPLEX *mode_prop)
+			{
+				LIMITED_BY(gsize);
+
+				COMPLEX mode_prop00 = mode_prop[GLOBAL_INDEX];
+				COMPLEX mode_prop01 = mode_prop[GLOBAL_INDEX + ${g.msize}];
+				COMPLEX mode_prop10 = mode_prop[GLOBAL_INDEX + ${g.msize * 2}];
+				COMPLEX mode_prop11 = mode_prop[GLOBAL_INDEX + ${g.msize * 3}];
+
+				COMPLEX data0 = data[GLOBAL_INDEX];
+				COMPLEX data1 = data[GLOBAL_INDEX + ${g.msize}];
+
+				data[GLOBAL_INDEX] = complex_mul(data0, mode_prop00) +
+					complex_mul(data1, mode_prop01);
+				data[GLOBAL_INDEX + ${g.msize}] = complex_mul(data0, mode_prop10) +
+					complex_mul(data1, mode_prop11);
+			}
+
+			// Propagates state in x-space for steady state calculation
+			EXPORTED_FUNC void xpropagate(int gsize, GLOBAL_MEM COMPLEX *data,
+				GLOBAL_MEM SCALAR *potentials)
+			{
+				LIMITED_BY(gsize);
+
+				%for comp in xrange(p.components):
+				COMPLEX val${comp} = data[GLOBAL_INDEX + gsize * ${comp}];
+				COMPLEX val${comp}_copy = val${comp}; // store initial x-space field
+				SCALAR dval${comp}, n${comp};
+				%endfor
+
+				SCALAR V = potentials[GLOBAL_INDEX];
+
+				<%
+					p.gg = [
+						[p.g_intra, p.g_inter],
+						[p.g_inter, p.g_intra]
+					]
+				%>
+
+				// iterate to midpoint solution
+				%for i in range(p.itmax):
+					// calculate midpoint log derivative and exponentiate
+					%for comp in xrange(p.components):
+					n${comp} = squared_abs(val${comp});
+					%endfor
+
+					%for comp in xrange(p.components):
+					dval${comp} = exp((SCALAR)${p.dt / 2.0} * (-V
+						%for other_comp in xrange(p.components):
+						- (SCALAR)${p.gg[comp][other_comp]} * n${other_comp}
+						%endfor
+					));
+
+					//propagate to midpoint using log derivative
+					val${comp} = complex_mul_scalar(val${comp}_copy, dval${comp});
+					%endfor
+				%endfor
+
+				//propagate to endpoint using log derivative
+				%for comp in xrange(p.components):
+				data[GLOBAL_INDEX + gsize * ${comp}] =
+					complex_mul_scalar(val${comp}, dval${comp});
+				%endfor
+			}
+		"""
+
+		self.__program = self.compileProgram(kernel_template)
+
+		self._kernel_mpropagate = self.__program.mpropagate
+		self._kernel_xpropagate = self.__program.xpropagate
+
 	def _cpu__kernel_mpropagate(self, gsize, data, mode_prop):
 		data_copy = data.copy()
 		data[0] = mode_prop[0, 0] * data_copy[0] + mode_prop[0, 1] * data_copy[1]

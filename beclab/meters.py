@@ -152,9 +152,55 @@ class ParticleStatistics(PairedCalculation):
 				COMPLEX differential${comp} = complex_mul(
 					conj(xdata[id${comp}]), mdata[id${comp}]);
 
-				// differential.y will be equal to 0, because \psi * D \psi is a real number
+				// integral over imaginary part is zero
 				res[id${comp}] = nonlinear${comp} + differential${comp}.x;
 				%endfor
+			}
+
+			EXPORTED_FUNC void invariantSO(int gsize, GLOBAL_MEM SCALAR *res,
+				GLOBAL_MEM COMPLEX *xdata, GLOBAL_MEM COMPLEX *mdata,
+				GLOBAL_MEM SCALAR *potentials, int coeff)
+			{
+				LIMITED_BY(gsize);
+
+				%for comp in xrange(p.components):
+				int id${comp} = GLOBAL_INDEX + gsize * ${comp};
+				SCALAR n${comp} = squared_abs(xdata[id${comp}]);
+				%endfor
+
+				SCALAR potential = potentials[GLOBAL_INDEX % (gsize / ${p.ensembles})];
+
+				SCALAR nonlinear0 = potential +
+					((SCALAR)${p.g_intra} * n0 + (SCALAR)${p.g_inter} * n1) / coeff;
+				SCALAR nonlinear1 = potential +
+					((SCALAR)${p.g_inter} * n0 + (SCALAR)${p.g_intra} * n1) / coeff;
+
+				%for comp in xrange(p.components):
+				nonlinear${comp} *= n${comp};
+				COMPLEX differential${comp} = complex_mul(
+					conj(xdata[id${comp}]), mdata[id${comp}]);
+
+				// integral over imaginary part is zero
+				res[id${comp}] = nonlinear${comp} + differential${comp}.x;
+				%endfor
+			}
+
+			EXPORTED_FUNC void multiplySOEnergy(int gsize,
+				GLOBAL_MEM COMPLEX *mdata, GLOBAL_MEM COMPLEX *energy)
+			{
+				LIMITED_BY(gsize);
+
+				COMPLEX energy00 = energy[GLOBAL_INDEX];
+				COMPLEX energy01 = energy[GLOBAL_INDEX + ${g.msize}];
+				COMPLEX energy10 = energy[GLOBAL_INDEX + ${g.msize * 2}];
+				COMPLEX energy11 = energy[GLOBAL_INDEX + ${g.msize * 3}];
+
+				COMPLEX data0 = mdata[GLOBAL_INDEX];
+				COMPLEX data1 = mdata[GLOBAL_INDEX + ${g.msize}];
+
+				mdata[GLOBAL_INDEX] = complex_mul(data0, energy00) + complex_mul(data1, energy01);
+				mdata[GLOBAL_INDEX + ${g.msize}] = complex_mul(data0, energy10) +
+					complex_mul(data1, energy11);
 			}
 
 			EXPORTED_FUNC void multiplyTiledSS(int gsize,
@@ -192,6 +238,8 @@ class ParticleStatistics(PairedCalculation):
 
 		self._kernel_interaction = self._program.interaction
 		self._kernel_invariant = self._program.invariant
+		self._kernel_invariantSO = self._program.invariantSO
+		self._kernel_multiplySOEnergy = self._program.multiplySOEnergy
 		self._kernel_density = self._program.density
 		self._kernel_multiplyTiledSS = self._program.multiplyTiledSS
 		self._kernel_multiplyTiledCS = self._program.multiplyTiledCS
