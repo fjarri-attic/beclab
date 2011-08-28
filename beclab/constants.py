@@ -23,6 +23,12 @@ _DEFAULTS = {
 	'a22': 95.68,
 	'a12': 98.13,
 
+	# FIXME: temporary constants for SO-coupling
+	# (at least, need to fill it with some real values)
+	'g_intra': 1,
+	'g_inter': 1,
+	'lambda_R': 1,
+
 	# mass of one particle (rubidium-87)
 	'm': 1.443160648e-25,
 
@@ -67,6 +73,43 @@ def getPotentials(constants, grid):
 			(constants.wz * z) ** 2) / (2.0 * constants.hbar)
 
 	return potentials.astype(constants.scalar.dtype)
+
+def getSOEnergy(constants, grid, coeff=1):
+	kx, ky = grid.kx_full, grid.ky_full
+	k2 = kx ** 2 + ky ** 2
+	diff2 = constants.hbar * k2 / 2 / constants.m
+	int1 = constants.lambda_R / constants.hbar * (ky + 1j * kx)
+	int2 = constants.lambda_R / constants.hbar * (ky - 1j * kx)
+	return numpy.array([
+		[diff2, int1], [int2, diff2]
+	]) * coeff
+
+def getSOEnergyExp(constants, grid, coeff=1):
+
+	# FIXME: use getSOEnergy() and analytic expression for matrix exponent
+
+	from scipy.linalg import expm
+
+	def func(kx, ky):
+		k2 = kx ** 2 + ky ** 2
+		diff2 = -1j * constants.hbar * k2 / 2 / constants.m
+		int1 = constants.lambda_R / constants.hbar * (kx - 1j * ky)
+		int2 = constants.lambda_R / constants.hbar * (-kx - 1j * ky)
+		D = numpy.array([
+			[diff2, int1], [int2, diff2]
+		])
+
+		return expm(D * coeff)
+
+	res = []
+	for ky in grid.ky:
+		for kx in grid.kx:
+			res.append(func(kx, ky))
+
+	res = numpy.concatenate(res)
+	res = res.reshape(grid.shape[0], grid.shape[1], 2, 2)
+	res = res.transpose((2, 3, 0, 1))
+	return res.astype(constants.complex.dtype)
 
 def getProjectorMask(constants, grid):
 	"""
