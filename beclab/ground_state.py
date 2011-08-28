@@ -321,6 +321,78 @@ class ImaginaryTimeGroundState(PairedCalculation):
 		return psi
 
 
+class SOGroundState(ImaginaryTimeGroundState):
+	"""
+	Calculates GPE ground state using split-step propagation in imaginary time.
+	"""
+
+	def __init__(self, env, constants, grid, **kwds):
+		assert isinstance(grid, UniformGrid)
+		ImaginaryTimeGroundState.__init__(self, env, constants, grid)
+		self._addParameters(dt=1e-5, itmax=3, precision=1e-6)
+		self._projector = Projector(env, constants, grid)
+		self.prepare(**kwds)
+
+	def _prepare(self):
+		self._projector.prepare(components=self._p.components, ensembles=1)
+		self._p.relative_precision = self._p.precision / self._p.dt
+		self._p.g_intra = self._constants.g_intra / self._constants.hbar
+		self._p.g_inter = self._constants.g_inter / self._constants.hbar
+
+		self._potentials = self._env.toDevice(
+			getPotentials(self._constants, self._grid))
+		self._mode_prop = self._env.toDevice(getSOEnergyExp(
+			self._constants, self._grid, coeff=-1j * self._p.dt / 2))
+
+	def _cpu__kernel_mpropagate(self, gsize, data, mode_prop):
+		data_copy = data.copy()
+		data[0] = mode_prop[0, 0] * data_copy[0] + mode_prop[0, 1] * data_copy[1]
+		data[1] = mode_prop[1, 0] * data_copy[0] + mode_prop[1, 1] * data_copy[1]
+
+	def _cpu__kernel_xpropagate(self, gsize, data, potentials):
+		data_copy = data.copy()
+
+		g_intra = self._p.g_intra
+		g_inter = self._p.g_inter
+
+		dt = -self._p.dt / 2
+		tile = (self._p.components, 1,) + (1,) * self._grid.dim
+		p_tiled = numpy.tile(potentials, tile)
+
+		for i in xrange(self._p.itmax):
+			n = numpy.abs(data) ** 2
+			dp = p_tiled.copy()
+
+			dp[0] += n[0] * g_intra + n[1] * g_inter
+			dp[1] += n[0] * g_inter + n[1] * g_intra
+
+			d = numpy.exp(dp * dt)
+			data.flat[:] = (data_copy * d).flat
+
+		data *= d
+
+	def _toEvolutionSpace(self, psi):
+		psi.toMSpace()
+
+	def _toMeasurementSpace(self, psi):
+		psi.toXSpace()
+
+	def _total_E(self, psi, N):
+		return self._statistics.getSOEnergy(psi, N=N).sum()
+
+	def _total_mu(self, psi, N):
+		return self._statistics.getSOMu(psi, N=N).sum()
+
+	def _propagate(self, psi):
+		self._kernel_mpropagate(psi.size, psi.data, self._mode_prop)
+		self._toMeasurementSpace(psi)
+		self._kernel_xpropagate(psi.size, psi.data, self._potentials)
+		self._toEvolutionSpace(psi)
+		self._kernel_mpropagate(psi.size, psi.data, self._mode_prop)
+		self._projector(psi.data)
+		return self._p.dt
+
+
 class SplitStepGroundState(ImaginaryTimeGroundState):
 	"""
 	Calculates GPE ground state using split-step propagation in imaginary time.
