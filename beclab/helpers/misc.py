@@ -139,3 +139,12 @@ def tile3D(x, y, z):
 	zz = numpy.transpose(numpy.tile(z, ny * nx).reshape(nx, ny, nz), axes=(2, 1, 0))
 
 	return xx, yy, zz
+
+def tile2D(x, y):
+	nx = len(x)
+	ny = len(y)
+
+	xx = numpy.tile(x, ny).reshape(ny, nx)
+	yy = numpy.tile(y, nx).reshape(nx, ny).transpose()
+
+	return xx, yy
