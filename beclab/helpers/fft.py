@@ -23,6 +23,28 @@ class NumpyPlan3D:
 		data_out *= coeff
 
 
+class NumpyPlan2D:
+
+	def __init__(self, shape, scale):
+		self._shape = shape
+		self._scale = scale
+
+	def execute(self, data_in, data_out=None, inverse=False, batch=1):
+		if data_out is None:
+			data_out = data_in
+
+		if inverse:
+			func = numpy.fft.ifftn
+			coeff = 1.0 / self._scale
+		else:
+			func = numpy.fft.fftn
+			coeff = self._scale
+
+		shape = self._shape
+		data_out.flat[:] = func(data_in.reshape(batch, *shape), axes=(-2, -1)).flat
+		data_out *= coeff
+
+
 class NumpyPlan1D:
 
 	def __init__(self, shape, scale):
@@ -88,6 +110,7 @@ def createFFTPlan(env, constants, grid):
 	else:
 		plans = {
 			1: NumpyPlan1D,
+			2: NumpyPlan2D,
 			3: NumpyPlan3D
 		}
 
