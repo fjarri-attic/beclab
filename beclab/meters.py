@@ -19,6 +19,8 @@ class ParticleStatistics(PairedCalculation):
 		self._energy = env.toDevice(grid.energy)
 		self._dV = env.toDevice(grid.dV)
 
+		self._so_energy = env.toDevice(getSOEnergy(constants, grid))
+
 		self._sreduce_ensembles = createReduce(env, constants.scalar.dtype)
 		self._sreduce_all = createReduce(env, constants.scalar.dtype)
 		self._creduce_all = createReduce(env, constants.complex.dtype)
@@ -32,6 +34,9 @@ class ParticleStatistics(PairedCalculation):
 	def _prepare(self):
 		self._p.g = self._constants.g / self._constants.hbar
 		self._p.need_potentials = isinstance(self._grid, UniformGrid)
+
+		self._p.g_intra = self._constants.g_intra / self._constants.hbar
+		self._p.g_inter = self._constants.g_inter / self._constants.hbar
 
 		if self._p.psi_type == WIGNER:
 			self._density_modifiers = self._env.toDevice(self._grid.density_modifiers)
@@ -224,6 +229,29 @@ class ParticleStatistics(PairedCalculation):
 				res[comp] += n[comp] * (g[comp, comp_other] * n[comp_other] / coeff)
 			res[comp] += (xdata[comp].conj() * mdata[comp]).real
 
+	def _cpu__kernel_invariantSO(self, gsize, res, xdata, mdata, potentials, coeff):
+
+		tile = (self._p.ensembles,) + (1,) * self._grid.dim
+		g_intra = self._p.g_intra
+		g_inter = self._p.g_inter
+		n = numpy.abs(xdata) ** 2
+		components = self._p.components
+
+		self._env.copyBuffer(numpy.zeros_like(res), dest=res)
+		for comp in xrange(components):
+			res[comp] += numpy.tile(potentials, tile) * n[comp]
+
+		res[0] += n[0] * (g_intra * n[0] + g_inter * n[1]) / coeff
+		res[1] += n[1] * (g_inter * n[0] + g_intra * n[1]) / coeff
+
+		for comp in xrange(components):
+			res[comp] += (xdata[comp].conj() * mdata[comp]).real
+
+	def _cpu__kernel_multiplySOEnergy(self, msize, mdata, energy):
+		mdata_copy = mdata.copy()
+		mdata[0, 0] = mdata_copy[0, 0] * energy[0, 0] + mdata_copy[1, 0] * energy[0, 1]
+		mdata[1, 0] = mdata_copy[0, 0] * energy[1, 0] + mdata_copy[1, 0] * energy[1, 1]
+
 	def getInteraction(self, psi):
 		self._kernel_interaction(psi.size, self._c_xspace_buffer_1comp, psi.data)
 		self._kernel_multiplyTiledCS(psi.size, self._c_xspace_buffer_1comp,
@@ -303,6 +331,38 @@ class ParticleStatistics(PairedCalculation):
 
 		return comps / self._p.ensembles / N * self._constants.hbar
 
+	def _getSOInvariant(self, psi, coeff, N):
+
+		# TODO: work out the correct formula for Wigner function's E/mu
+		if psi.type != CLASSICAL:
+			raise NotImplementedError()
+
+		# If N is not known beforehand, we have to calculate it first
+		if N is None:
+			N = self.getN(psi).sum()
+
+		batch = self._p.ensembles * self._p.components
+		xsize = self._grid.size * self._p.ensembles
+		msize = self._grid.msize * self._p.ensembles
+
+		# FIXME: not a good way to provide transformation
+		psi._plan.execute(psi.data, self._c_mspace_buffer, batch=batch)
+		self._kernel_multiplySOEnergy(msize, self._c_mspace_buffer, self._so_energy)
+		psi._plan.execute(self._c_mspace_buffer, self._c_xspace_buffer,
+			batch=batch, inverse=True)
+		cast = self._constants.scalar.cast
+
+		self._kernel_invariantSO(xsize, self._s_xspace_buffer,
+			psi.data, self._c_xspace_buffer,
+			self._potentials, numpy.int32(coeff))
+		self._kernel_multiplyTiledSS(xsize, self._s_xspace_buffer, self._dV,
+			numpy.int32(self._p.ensembles))
+
+		self._sreduce_all(self._s_xspace_buffer, self._s_comp_buffer)
+		comps = self._env.fromDevice(self._s_comp_buffer)
+
+		return comps / self._p.ensembles / N * self._constants.hbar
+
 	def getPhaseNoise(self, psi):
 		"""
 		Warning: this function considers spin distribution ellipse to be horizontal,
@@ -359,6 +419,14 @@ class ParticleStatistics(PairedCalculation):
 	def getMu(self, psi, N=None):
 		"""Returns average chemical potential per particle"""
 		return self._getInvariant(psi, 1, N)
+
+	def getSOEnergy(self, psi, N=None):
+		"""Returns average energy per particle"""
+		return self._getSOInvariant(psi, 2, N)
+
+	def getSOMu(self, psi, N=None):
+		"""Returns average chemical potential per particle"""
+		return self._getSOInvariant(psi, 1, N)
 
 
 class DensityProfile(PairedCalculation):
