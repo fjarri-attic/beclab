@@ -275,7 +275,10 @@ class ImaginaryTimeGroundState(PairedCalculation):
 		# propagation will be terminated too soon (because dE is too small)
 		# (TODO: dE ~ dt, but not exactly; see W. Bao and Q. Du, 2004, eqn. 2.7
 		# Now default precision is chosen so that usual dt's work well with it)
-		while abs(E - new_E) / new_E > precision * dt_used:
+		# FIXME: E can be negative (not sure if this is a good thing,
+		# but this can happen if chem. potential should be added to it;
+		# anyway, we just need to find the state where energy does not change)
+		while abs((E - new_E) / new_E) > precision * dt_used:
 
 			# propagation
 			dt_used = self._propagate(psi)
