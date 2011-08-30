@@ -42,11 +42,15 @@ psi = gs.create((N / 2, N / 2))
 
 data = env.fromDevice(stats.getDensity(psi))
 env.release()
+
+data *= a_perp ** 2
 HeightmapPlot(HeightmapData("|up>", data[0, 0],
 	xmin=-box_size[1] / 2 / a_perp, xmax=box_size[1] / 2 / a_perp,
 	ymin=-box_size[0] / 2 / a_perp, ymax=box_size[0] / 2 / a_perp,
-	zmin=0)).save('so_1.pdf')
+	xname="$x / a_{\\perp}$", yname="$y / a_{\\perp}$", zname="density",
+	zmin=0, zmax=data.max())).save('so_a.pdf')
 HeightmapPlot(HeightmapData("|down>", data[1, 0],
 	xmin=-box_size[1] / 2 / a_perp, xmax=box_size[1] / 2 / a_perp,
 	ymin=-box_size[0] / 2 / a_perp, ymax=box_size[0] / 2 / a_perp,
-	zmin=0)).save('so_2.pdf')
+	xname="$x / a_{\\perp}$", yname="$y / a_{\\perp}$", zname="density",
+	zmin=0, zmax=data.max())).save('so_b.pdf')
