@@ -49,6 +49,19 @@ _DEFAULTS = {
 	'e_cut': None,
 }
 
+_SO_DEFAULTS = {
+	# dimensionless parameters
+	'g_ratio': 1, # g_interspecies / g_intraspecies
+	'g_strength': 1, # g_intraspecies * (N - 1) / (hbar * w_perp) / a_perp ** 2
+	'lambda_SO': 1, # dimensionless coupling strength, a_perp / a_lambda
+
+	# free experimental parameters
+	'a': 100, # scattering length for intra-species interaction, Bohr radii
+	'm': 1.443160648e-25, # mass of one particle (rubidium-87)
+	'f_z': 1.9e3, # frequency of 2D-creating confinement, Hz
+	'f_perp': 20, # frequency of the actual trap, Hz
+}
+
 
 def getPotentials(constants, grid):
 	"""
@@ -621,3 +634,32 @@ class Constants:
 			return (get_modes(box_size[0]),)
 
 
+class SOConstants:
+
+	def __init__(self, **kwds):
+
+		self.__dict__.update(_SO_DEFAULTS)
+		for key in kwds.keys():
+			assert key in _SO_DEFAULTS
+		self.__dict__.update(kwds)
+
+		w_z = self.f_z * numpy.pi * 2
+		w_perp = self.f_perp * numpy.pi * 2
+
+		a_z = numpy.sqrt(_HBAR / (self.m * w_z))
+		a_perp = numpy.sqrt(_HBAR / (self.m * w_perp)) # characteristic length
+
+		g_intra = numpy.sqrt(numpy.pi * 8) * (_HBAR ** 2 / self.m) * (self.a * _R_BOHR / a_z)
+		g_inter = g_intra * self.g_ratio
+
+		N = self.g_strength * _HBAR * w_perp * a_perp ** 2 / g_intra + 1
+
+		a_lambda = a_perp / self.lambda_SO
+		lambda_R = _HBAR ** 2 / (self.m * a_lambda)
+
+		# save calculated parameters
+		self.a_perp = a_perp
+		self.g_intra = g_intra
+		self.g_inter = g_inter
+		self.lambda_R = lambda_R
+		self.N = N
