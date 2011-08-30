@@ -9,6 +9,10 @@ from .helpers import *
 from .helpers.fht import getEigenfunction1D, getEigenfunction3D
 
 
+# Physical constants
+_R_BOHR = 5.2917720859e-11 # Bohr radius
+_HBAR = 1.054571628e-34 # Planck constant
+
 # representations
 CLASSICAL = 0
 WIGNER = 1
@@ -456,8 +460,8 @@ class HarmonicGrid:
 
 class Constants:
 
-	hbar = 1.054571628e-34 # Planck constant
-	r_bohr = 5.2917720859e-11 # Bohr radius
+	hbar = _HBAR
+	r_bohr = _R_BOHR
 
 	def __init__(self, double=True, use_effective_area=False, **kwds):
 
