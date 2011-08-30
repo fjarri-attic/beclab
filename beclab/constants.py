@@ -620,9 +620,4 @@ class Constants:
 		elif dim == 1:
 			return (get_modes(box_size[0]),)
 
-	def __eq__(self, other):
-		for key in _DEFAULTS.keys() + ['double']:
-			if getattr(self, key) != getattr(other, key):
-				return False
 
-		return True
