@@ -253,7 +253,17 @@ class ImaginaryTimeGroundState(PairedCalculation):
 		# it would be nice to use two-component TF state here,
 		# but the formula is quite complex, and it is much easier
 		# just to start from something approximately correct
-		self._tf_gs.fillWithTF(psi, N)
+		#self._tf_gs.fillWithTF(psi, N)
+
+		# starting with plain distribution, because it allows to keep
+		# starting conditions the same for any number of atoms
+		# (necessary for SO calculations, which are very sensitive)
+		#psi.fillWithValue(1)
+		psi.fillWithRandoms(1)
+		new_N = self._statistics.getN(psi)
+		coeffs = [numpy.sqrt(N[c] / new_N[c]) for c in xrange(self._p.components)]
+		self._renormalize(psi, coeffs)
+
 		N_target = numpy.array(N).sum()
 
 		stats = self._statistics
