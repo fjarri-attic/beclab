@@ -649,17 +649,16 @@ class SOConstants:
 		a_z = numpy.sqrt(_HBAR / (self.m * w_z))
 		a_perp = numpy.sqrt(_HBAR / (self.m * w_perp)) # characteristic length
 
-		g_intra = numpy.sqrt(numpy.pi * 8) * (_HBAR ** 2 / self.m) * (self.a * _R_BOHR / a_z)
-		g_inter = g_intra * self.g_ratio
+		g = numpy.sqrt(numpy.pi * 8) * (_HBAR ** 2 / self.m) * (self.a * _R_BOHR / a_z)
 
-		N = self.g_strength * _HBAR * w_perp * a_perp ** 2 / g_intra + 1
+		N = self.g_strength * _HBAR * w_perp * a_perp ** 2 / g # + 1
 
 		a_lambda = a_perp / self.lambda_SO
 		lambda_R = _HBAR ** 2 / (self.m * a_lambda)
 
 		# save calculated parameters
 		self.a_perp = a_perp
-		self.g_intra = g_intra
-		self.g_inter = g_inter
+		self.g_intra = g
+		self.g_inter = g * self.g_ratio
 		self.lambda_R = lambda_R
 		self.N = N
