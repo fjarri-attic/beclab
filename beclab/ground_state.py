@@ -200,7 +200,7 @@ class ImaginaryTimeGroundState(PairedCalculation):
 		self._grid = grid
 		self._tf_gs = TFGroundState(env, constants, grid)
 		self._statistics = ParticleStatistics(env, constants, grid)
-		self._addParameters(components=1)
+		self._addParameters(components=1, fix_total_N=False)
 
 	def _prepare(self):
 		self._tf_gs.prepare(components=self._p.components)
@@ -286,7 +286,11 @@ class ImaginaryTimeGroundState(PairedCalculation):
 			# renormalization
 			self._toMeasurementSpace(psi)
 			new_N = stats.getN(psi)
-			coeffs = [numpy.sqrt(N[c] / new_N[c]) for c in xrange(self._p.components)]
+			if self._p.fix_total_N:
+				coeff = numpy.sqrt(N_target / new_N.sum())
+				coeffs = [coeff] * self._p.components
+			else:
+				coeffs = [numpy.sqrt(N[c] / new_N[c]) for c in xrange(self._p.components)]
 			self._renormalize(psi, coeffs)
 			E = new_E
 			new_E = total_E(psi, N_target)
