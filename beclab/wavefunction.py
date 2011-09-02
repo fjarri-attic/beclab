@@ -67,6 +67,14 @@ class WavefunctionSet(PairedCalculation):
 				%endfor
 			}
 
+			EXPORTED_FUNC void fillWithValue(int gsize, GLOBAL_MEM COMPLEX *res, SCALAR val)
+			{
+				LIMITED_BY(gsize);
+				%for comp in xrange(p.components):
+					res[gsize * ${comp} + GLOBAL_INDEX] = complex_ctr(val, 0);
+				%endfor
+			}
+
 			// Initialize ensembles with the copy of the current state
 			EXPORTED_FUNC void fillEnsembles(int gsize, GLOBAL_MEM COMPLEX *result,
 				GLOBAL_MEM COMPLEX *data)
@@ -100,6 +108,7 @@ class WavefunctionSet(PairedCalculation):
 
 		self.__program = self.compileProgram(kernel_template)
 		self._kernel_fillWithZeros = self.__program.fillWithZeros
+		self._kernel_fillWithValue = self.__program.fillWithValue
 		self._kernel_fillEnsembles = self.__program.fillEnsembles
 		self._kernel_addVacuumParticles = self.__program.addVacuumParticles
 
@@ -110,6 +119,9 @@ class WavefunctionSet(PairedCalculation):
 
 	def _cpu__kernel_fillWithZeros(self, gsize, data):
 		data.flat[:] = numpy.zeros_like(data).flat
+
+	def _cpu__kernel_fillWithValue(self, gsize, data, val):
+		data.flat[:] = numpy.ones_like(data).flat * val
 
 	def _cpu__kernel_fillEnsembles(self, gsize, result, data):
 		tile = (self._p.ensembles,) + (1,) * self._grid.dim
@@ -192,3 +204,12 @@ class WavefunctionSet(PairedCalculation):
 			src_offset=source_comp * comp_size,
 			dest_offset=target_comp * comp_size,
 			length=comp_size)
+
+	def fillWithValue(self, val):
+		self._kernel_fillWithValue(self.size, self.data, self._constants.scalar.cast(val))
+
+	def fillWithRandoms(self, val):
+		params = dict(size=self.shape, loc=val, scale=numpy.sqrt(val))
+		randoms = numpy.random.normal(**params) + 1j * numpy.random.normal(**params)
+		gpu_data = self._env.toDevice(randoms.astype(self._constants.complex.dtype))
+		self._env.copyBuffer(gpu_data, dest=self.data)
