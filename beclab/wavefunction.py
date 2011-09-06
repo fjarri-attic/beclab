@@ -209,7 +209,7 @@ class WavefunctionSet(PairedCalculation):
 		self._kernel_fillWithValue(self.size, self.data, self._constants.scalar.cast(val))
 
 	def fillWithRandoms(self, val):
-		params = dict(size=self.shape, loc=val, scale=numpy.sqrt(val))
+		params = dict(size=self.shape, loc=val, scale=numpy.sqrt(val) / 5)
 		randoms = numpy.random.normal(**params) + 1j * numpy.random.normal(**params)
 		gpu_data = self._env.toDevice(randoms.astype(self._constants.complex.dtype))
 		self._env.copyBuffer(gpu_data, dest=self.data)
