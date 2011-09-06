@@ -200,7 +200,8 @@ class ImaginaryTimeGroundState(PairedCalculation):
 		self._grid = grid
 		self._tf_gs = TFGroundState(env, constants, grid)
 		self._statistics = ParticleStatistics(env, constants, grid)
-		self._addParameters(components=1, fix_total_N=False)
+		self._addParameters(components=1, fix_total_N=False, E_modifier=0,
+			random_init=False)
 
 	def _prepare(self):
 		self._tf_gs.prepare(components=self._p.components)
@@ -258,8 +259,11 @@ class ImaginaryTimeGroundState(PairedCalculation):
 		# starting with plain distribution, because it allows to keep
 		# starting conditions the same for any number of atoms
 		# (necessary for SO calculations, which are very sensitive)
-		#psi.fillWithValue(1)
-		psi.fillWithRandoms(1)
+		if self._p.random_init:
+			psi.fillWithRandoms(1)
+		else:
+			psi.fillWithValue(1)
+
 		new_N = self._statistics.getN(psi)
 		coeffs = [numpy.sqrt(N[c] / new_N[c]) for c in xrange(self._p.components)]
 		self._renormalize(psi, coeffs)
@@ -275,6 +279,7 @@ class ImaginaryTimeGroundState(PairedCalculation):
 		total_mu = self._total_mu
 
 		E = 0.0
+		dE = self._p.E_modifier
 
 		new_E = total_E(psi, N_target)
 
@@ -288,7 +293,7 @@ class ImaginaryTimeGroundState(PairedCalculation):
 		# FIXME: E can be negative (not sure if this is a good thing,
 		# but this can happen if chem. potential should be added to it;
 		# anyway, we just need to find the state where energy does not change)
-		while abs((E - new_E) / new_E) > precision * dt_used:
+		while abs((E - new_E) / (new_E + dE)) > precision * dt_used:
 
 			# propagation
 			dt_used = self._propagate(psi)
