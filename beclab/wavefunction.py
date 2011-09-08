@@ -104,6 +104,22 @@ class WavefunctionSet(PairedCalculation):
 					data[id] = val;
 				%endfor
 			}
+
+			EXPORTED_FUNC void renormalize(int gsize, GLOBAL_MEM COMPLEX *data
+				%for comp in xrange(p.components):
+				, SCALAR c${comp}
+				%endfor
+				)
+			{
+				LIMITED_BY(gsize);
+				COMPLEX val;
+
+				%for comp in xrange(p.components):
+				val = data[GLOBAL_INDEX + gsize * ${comp}];
+				data[GLOBAL_INDEX + gsize * ${comp}] =
+					complex_mul_scalar(val, c${comp});
+				%endfor
+			}
 		"""
 
 		self.__program = self.compileProgram(kernel_template)
@@ -111,6 +127,7 @@ class WavefunctionSet(PairedCalculation):
 		self._kernel_fillWithValue = self.__program.fillWithValue
 		self._kernel_fillEnsembles = self.__program.fillEnsembles
 		self._kernel_addVacuumParticles = self.__program.addVacuumParticles
+		self._kernel_renormalize = self.__program.renormalize
 
 	def _cpu__kernel_addVacuumParticles(self, gsize, modespace_data, randoms, mask):
 		tile = (self.components, self.ensembles,) + (1,) * self._grid.dim
@@ -127,6 +144,10 @@ class WavefunctionSet(PairedCalculation):
 		tile = (self._p.ensembles,) + (1,) * self._grid.dim
 		for comp in xrange(self._p.components):
 			result[comp].flat[:] = numpy.tile(data[comp], tile).flat
+
+	def _cpu__kernel_renormalize(self, gsize, data, *coeffs):
+		for c in xrange(self._p.components):
+			data[c] *= coeffs[c]
 
 	def toMSpace(self):
 		assert not self.in_mspace
@@ -213,3 +234,8 @@ class WavefunctionSet(PairedCalculation):
 		randoms = numpy.random.normal(**params) + 1j * numpy.random.normal(**params)
 		gpu_data = self._env.toDevice(randoms.astype(self._constants.complex.dtype))
 		self._env.copyBuffer(gpu_data, dest=self.data)
+
+	def renormalize(self, coeffs):
+		cast = self._constants.scalar.cast
+		coeffs = tuple(cast(x) for x in coeffs)
+		self._kernel_renormalize(self.size, self.data, *coeffs)
