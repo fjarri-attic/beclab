@@ -4,7 +4,7 @@ from .helpers import *
 from .constants import *
 
 
-class ParticleStatistics(PairedCalculation):
+class DensityMeter(PairedCalculation):
 	"""
 	Calculates number of particles, energy per particle or
 	chemical potential per particle for given state.
@@ -15,20 +15,213 @@ class ParticleStatistics(PairedCalculation):
 		self._constants = constants
 		self._grid = grid
 
-		self._potentials = env.toDevice(getPotentials(constants, grid))
-		self._energy = env.toDevice(grid.energy)
-		self._dV = env.toDevice(grid.dV)
+		self._dV = grid.dV_device
 
-		self._so_energy = env.toDevice(getSOEnergy(constants, grid))
+		self._sreduce_cex_to_cx = createReduce(env, constants.scalar.dtype)
+		self._sreduce_cex_to_c = createReduce(env, constants.scalar.dtype)
 
-		self._sreduce_ensembles = createReduce(env, constants.scalar.dtype)
-		self._sreduce_all = createReduce(env, constants.scalar.dtype)
-		self._creduce_all = createReduce(env, constants.complex.dtype)
-		self._sreduce_single_to_comps = createReduce(env, constants.scalar.dtype)
-		self._creduce_grid = createReduce(env, constants.complex.dtype)
-		self._sreduce_comp_grid = createReduce(env, constants.scalar.dtype)
+		self._sreduce_cem_to_cm = createReduce(env, constants.scalar.dtype)
+		self._sreduce_cem_to_c = createReduce(env, constants.scalar.dtype)
 
-		self._addParameters(components=2, ensembles=1, psi_type=CLASSICAL)
+		self._sreduce_cem_to_ce = createReduce(env, constants.scalar.dtype)
+		self._sreduce_cex_to_ce = createReduce(env, constants.scalar.dtype)
+
+		self._addParameters(components=2, ensembles=1, psi_type=REPR_CLASSICAL)
+		self.prepare(**kwds)
+
+	def _prepare(self):
+
+		if self._p.psi_type == REPR_WIGNER:
+			self._p.modify_density = True
+			self._density_modifiers = self._grid.density_modifiers_device
+		else:
+			self._p.modify_density = False
+
+			# This is supposed to be a NULL pointer.
+			# No idea how to do it properly in PyCuda.
+			self._density_modifiers = self._env.allocate((1,), self._constants.scalar.dtype)
+
+		scalar_t = self._constants.scalar.dtype
+		comp = self._p.components
+		ens = self._p.ensembles
+		xsize = self._grid.size
+		msize = self._grid.msize
+		xshape = self._grid.shape
+		mshape = self._grid.mshape
+
+		self._sreduce_cex_to_cx.prepare(sparse=True,
+			batch=comp, length=ens * xsize, final_length=xsize)
+		self._sreduce_cex_to_c.prepare(sparse=False,
+			length=comp * ens * xsize, final_length=comp)
+		self._sreduce_cem_to_cm.prepare(sparse=True,
+			batch=comp, length=ens * msize, final_length=msize)
+		self._sreduce_cem_to_c.prepare(sparse=False,
+			length=comp * ens * msize, final_length=comp)
+		self._sreduce_cex_to_ce.prepare(sparse=False,
+			length=comp * ens * xsize, final_length=comp * ens)
+		self._sreduce_cem_to_ce.prepare(sparse=False,
+			length=comp * ens * msize, final_length=comp * ens)
+
+		# Methods of this class can be called either for mode-space or for x-space psi
+		# In either case, the buffers for remaining space will be unused,
+		# so we can safely use views
+		max_size = max(xsize, msize)
+
+		main_buffer = self._env.allocate((comp, ens, max_size), scalar_t)
+
+		self._sbuffer_cex = getView(main_buffer, (comp, ens) + xshape)
+		self._sbuffer_cem = getView(main_buffer, (comp, ens) + mshape)
+
+		self._sbuffer_c = self._env.allocate((comp,), scalar_t)
+		self._sbuffer_ce = self._env.allocate((comp, ens), scalar_t)
+
+		# Warning: used as a result of _sreduce_cex_to_cx(),
+		# which is sparse and therefore view-safe
+		self._sbuffer_cx = getView(main_buffer, (comp, 1) + xshape)
+		self._sbuffer_cm = getView(main_buffer, (comp, 1) + mshape)
+
+	def _gpu__prepare_specific(self):
+		kernel_template = """
+			%for space in ('m', 'x'):
+			EXPORTED_FUNC void ${space}density(int gsize, GLOBAL_MEM SCALAR *res,
+				GLOBAL_MEM COMPLEX *state, GLOBAL_MEM SCALAR *modifiers, int coeff)
+			{
+				LIMITED_BY(gsize);
+				int id;
+				SCALAR modifier;
+
+				%if p.modify_density:
+				modifier = modifiers[GLOBAL_INDEX % (gsize / ${p.ensembles})];
+				%if space == 'm': ## using modifiers array as a mask only
+				modifier = (modifier == 0 ? 0 : 0.5);
+				%endif
+				%else:
+				modifier = 0;
+				%endif
+
+				%for comp in xrange(p.components):
+				id = GLOBAL_INDEX + gsize * ${comp};
+				res[id] = (squared_abs(state[id]) - modifier) / coeff;
+				%endfor
+			}
+			%endfor
+
+			EXPORTED_FUNC void multiplyTiledSS(int gsize,
+				GLOBAL_MEM SCALAR *data, GLOBAL_MEM SCALAR *coeffs, int ensembles)
+			{
+				LIMITED_BY(gsize);
+
+				SCALAR coeff_val = coeffs[GLOBAL_INDEX % (gsize / ensembles)];
+				SCALAR data_val;
+
+				%for comp in xrange(p.components):
+				data_val = data[GLOBAL_INDEX + gsize * ${comp}];
+				data[GLOBAL_INDEX + gsize * ${comp}] = data_val * coeff_val;
+				%endfor
+			}
+		"""
+
+		self._program = self.compileProgram(kernel_template)
+
+		self._kernel_xdensity = self._program.xdensity
+		self._kernel_mdensity = self._program.mdensity
+		self._kernel_multiplyTiledSS = self._program.multiplyTiledSS
+
+	def _cpu__kernel_density(self, gsize, density, data, modifiers, coeff, in_mspace):
+		n = numpy.abs(data) ** 2
+
+		if self._p.modify_density:
+			if in_mspace:
+				modifiers = (modifiers > 0).astype(self._constants.scalar.dtype) * 0.5
+			modifiers = numpy.tile(modifiers,
+				(self._p.components, self._p.ensembles,) + (1,) * self._grid.dim)
+		else:
+			modifiers = numpy.zeros_like(n)
+
+		self._env.copyBuffer((n - modifiers) / coeff, dest=density)
+
+	def _cpu__kernel_xdensity(self, gsize, density, data, modifiers, coeff):
+		self._kernel_density(gsize, density, data, modifiers, coeff, False)
+
+	def _cpu__kernel_mdensity(self, gsize, density, data, modifiers, coeff):
+		self._kernel_density(gsize, density, data, modifiers, coeff, True)
+
+	def _cpu__kernel_multiplyTiledSS(self, gsize, data, coeffs, ensembles):
+		data *= numpy.tile(coeffs,
+			(self._p.components, ensembles,) + (1,) * self._grid.dim)
+
+	def getDensity(self, psi, coeff=1):
+		if psi.in_mspace:
+			self._kernel_mdensity(psi.size, self._sbuffer_cem, psi.data,
+				self._density_modifiers, numpy.int32(coeff))
+			return self._sbuffer_cem
+		else:
+			self._kernel_xdensity(psi.size, self._sbuffer_cex, psi.data,
+				self._density_modifiers, numpy.int32(coeff))
+			return self._sbuffer_cex
+
+	def getPopulation(self, psi, coeff=1):
+		density = self.getDensity(psi, coeff=coeff)
+		if not psi.in_mspace:
+			self._kernel_multiplyTiledSS(psi.size, density, self._dV,
+				numpy.int32(self._p.ensembles))
+		return density
+
+	def getAverageDensity(self, psi):
+		ensembles = psi.ensembles
+		components = psi.components
+		size = self._grid.msize if psi.in_mspace else self._grid.size
+
+		density = self.getDensity(psi, coeff=ensembles)
+		if psi.in_mspace:
+			self._sreduce_cem_to_cm(density, self._sbuffer_cm)
+			return self._sbuffer_cm
+		else:
+			self._sreduce_cex_to_cx(density, self._sbuffer_cx)
+			return self._sbuffer_cx
+
+	def getAveragePopulation(self, psi):
+		density = self.getAverageDensity(psi)
+		if not psi.in_mspace:
+			self._kernel_multiplyTiledSS(self._grid.size, density, self._dV, numpy.int32(1))
+		return density
+
+	def getN(self, psi):
+		"""Returns particle count for wavefunction"""
+		p = self.getPopulation(psi, coeff=self._p.ensembles)
+		if psi.in_mspace:
+			self._sreduce_cem_to_c(p, self._sbuffer_c)
+		else:
+			self._sreduce_cex_to_c(p, self._sbuffer_c)
+		Ns = self._env.fromDevice(self._sbuffer_c)
+		return Ns
+
+	def getNPerEnsemble(self, psi):
+		p = self.getPopulation(psi, coeff=self._p.ensembles)
+		if psi.in_mspace:
+			self._sreduce_cem_to_ce(p, self._sbuffer_ce)
+		else:
+			self._sreduce_cex_to_ce(p, self._sbuffer_ce)
+		Ns = self._env.fromDevice(self._sbuffer_ce)
+		return Ns
+
+
+class InteractionMeter(PairedCalculation):
+
+	def __init__(self, env, constants, grid, **kwds):
+		PairedCalculation.__init__(self, env)
+		self._constants = constants
+		self._grid = grid
+
+		self._potentials = grid.potentials_device
+		self._energy = grid.energy_device
+		self._dV = grid.dV_device
+
+		self._creduce_cex_to_c = createReduce(env, constants.complex.dtype)
+		self._creduce_ex_to_e = createReduce(env, constants.complex.dtype)
+		self._creduce_ex_to_1 = createReduce(env, constants.complex.dtype)
+
+		self._addParameters(components=2, ensembles=1, psi_type=REPR_CLASSICAL)
 		self.prepare(**kwds)
 
 	def _prepare(self):
@@ -38,70 +231,35 @@ class ParticleStatistics(PairedCalculation):
 		self._p.g_intra = self._constants.g_intra / self._constants.hbar
 		self._p.g_inter = self._constants.g_inter / self._constants.hbar
 
-		if self._p.psi_type == WIGNER:
+		if self._grid.dim == 2 and self._p.components >= 2:
+			self._so_energy = grid.so_energy_device
+
+		if self._p.psi_type == REPR_WIGNER:
 			self._density_modifiers = self._env.toDevice(self._grid.density_modifiers)
 		else:
 			self._density_modifiers = self._env.toDevice(
 				numpy.zeros(self._grid.shape).astype(self._constants.scalar.dtype))
 
-		self._sreduce_ensembles.prepare(
-			sparse=True,
-			batch=self._p.components,
-			final_length=self._grid.size,
-			length=self._p.ensembles * self._grid.size)
+		scalar_t = self._constants.scalar.dtype
+		complex_t = self._constants.complex.dtype
+		comp = self._p.components
+		ens = self._p.ensembles
+		xsize = self._grid.size
+		msize = self._grid.msize
+		xshape = self._grid.shape
+		mshape = self._grid.mshape
 
-		self._sreduce_all.prepare(
-			sparse=False, final_length=self._p.components,
-			length=self._p.components * self._p.ensembles * self._grid.size)
+		self._creduce_cex_to_c.prepare(sparse=False, length=comp * ens * xsize, final_length=comp)
+		self._creduce_ex_to_1.prepare(sparse=False, length=ens * xsize, final_length=1)
+		self._creduce_ex_to_e.prepare(sparse=False,	length=ens * xsize, final_length=ens)
 
-		self._sreduce_single_to_comps.prepare(
-			sparse=False, final_length=self._p.components,
-			length=self._p.components * self._grid.size)
+		self._cbuffer_cex = self._env.allocate((comp, ens) + xshape, complex_t)
+		self._cbuffer_cem = self._env.allocate((comp, ens) + mshape, complex_t)
+		self._cbuffer_ex = getView(self._cbuffer_cex, (1, ens) + xshape)
 
-		self._creduce_all.prepare(
-			sparse=False, final_length=1,
-			length=self._p.ensembles * self._grid.size)
-
-		self._creduce_grid.prepare(
-			sparse=False,
-			final_length=self._p.ensembles,
-			length=self._p.ensembles * self._grid.size
-		)
-
-		self._sreduce_comp_grid.prepare(
-			sparse=False,
-			final_length=self._p.components * self._p.ensembles,
-			length=self._p.components * self._p.ensembles * self._grid.size
-		)
-
-		self._c_mspace_buffer = self._env.allocate(
-			(self._p.components, self._p.ensembles) + self._grid.mshape,
-			self._constants.complex.dtype)
-		self._c_xspace_buffer = self._env.allocate(
-			(self._p.components, self._p.ensembles) + self._grid.shape,
-			self._constants.complex.dtype)
-		self._c_xspace_buffer_1comp = self._env.allocate(
-			(1, self._p.ensembles) + self._grid.shape,
-			self._constants.complex.dtype)
-
-		self._s_xspace_buffer = self._env.allocate(
-			(self._p.components, self._p.ensembles) + self._grid.shape,
-			self._constants.scalar.dtype)
-		self._s_xspace_buffer_single = self._env.allocate(
-			(self._p.components, 1) + self._grid.shape,
-			self._constants.scalar.dtype)
-		self._s_comp_buffer = self._env.allocate(
-			(self._p.components,),
-			self._constants.scalar.dtype)
-		self._c_1_buffer = self._env.allocate(
-			(1,),
-			self._constants.complex.dtype)
-		self._c_ensembles_buffer = self._env.allocate(
-			(self._p.ensembles,), self._constants.complex.dtype
-		)
-		self._s_comp_ensembles_buffer = self._env.allocate(
-			(self._p.components, self._p.ensembles), self._constants.scalar.dtype
-		)
+		self._cbuffer_1 = self._env.allocate((1,), complex_t)
+		self._cbuffer_e = self._env.allocate((ens,), complex_t)
+		self._cbuffer_c = self._env.allocate((comp,), complex_t)
 
 	def _gpu__prepare_specific(self):
 		kernel_template = """
@@ -115,22 +273,8 @@ class ParticleStatistics(PairedCalculation):
 				res[GLOBAL_INDEX] = complex_mul(val0, conj(val1));
 			}
 
-			EXPORTED_FUNC void density(int gsize, GLOBAL_MEM SCALAR *res,
-				GLOBAL_MEM COMPLEX *state, GLOBAL_MEM SCALAR *modifiers, int coeff)
-			{
-				LIMITED_BY(gsize);
-				int id;
-				SCALAR modifier = modifiers[GLOBAL_INDEX % (gsize / ${p.ensembles})];
-
-				%for comp in xrange(p.components):
-				id = GLOBAL_INDEX + gsize * ${comp};
-				res[id] = (squared_abs(state[id]) - modifier) / coeff;
-				%endfor
-			}
-
-			EXPORTED_FUNC void invariant(int gsize, GLOBAL_MEM SCALAR *res,
-				GLOBAL_MEM COMPLEX *xdata, GLOBAL_MEM COMPLEX *mdata,
-				GLOBAL_MEM SCALAR *potentials, int coeff)
+			EXPORTED_FUNC void invariant(int gsize, GLOBAL_MEM COMPLEX *res_mdata,
+				GLOBAL_MEM COMPLEX *xdata, GLOBAL_MEM SCALAR *potentials, int coeff)
 			{
 				LIMITED_BY(gsize);
 
@@ -140,7 +284,9 @@ class ParticleStatistics(PairedCalculation):
 
 				%for comp in xrange(p.components):
 				int id${comp} = GLOBAL_INDEX + gsize * ${comp};
-				SCALAR n${comp} = squared_abs(xdata[id${comp}]);
+				COMPLEX xdata${comp} = xdata[id${comp}];
+				COMPLEX mdata${comp} = res_mdata[id${comp}];
+				SCALAR n${comp} = squared_abs(xdata${comp});
 				%endfor
 
 				%for comp in xrange(p.components):
@@ -149,23 +295,24 @@ class ParticleStatistics(PairedCalculation):
 					nonlinear${comp} += (SCALAR)${p.g[comp, comp_other]} * n${comp_other} / coeff;
 					%endfor
 				nonlinear${comp} *= n${comp};
-				COMPLEX differential${comp} = complex_mul(
-					conj(xdata[id${comp}]), mdata[id${comp}]);
+				COMPLEX differential${comp} = complex_mul(conj(xdata${comp}), mdata${comp});
 
 				// integral over imaginary part is zero
-				res[id${comp}] = nonlinear${comp} + differential${comp}.x;
+				res_mdata[id${comp}] = complex_ctr(nonlinear${comp}, 0) + differential${comp};
 				%endfor
 			}
 
-			EXPORTED_FUNC void invariantSO(int gsize, GLOBAL_MEM SCALAR *res,
-				GLOBAL_MEM COMPLEX *xdata, GLOBAL_MEM COMPLEX *mdata,
-				GLOBAL_MEM SCALAR *potentials, int coeff)
+			%if p.components >= 2:
+			EXPORTED_FUNC void invariantSO(int gsize, GLOBAL_MEM COMPLEX *res_mdata,
+				GLOBAL_MEM COMPLEX *xdata, GLOBAL_MEM SCALAR *potentials, int coeff)
 			{
 				LIMITED_BY(gsize);
 
 				%for comp in xrange(p.components):
 				int id${comp} = GLOBAL_INDEX + gsize * ${comp};
-				SCALAR n${comp} = squared_abs(xdata[id${comp}]);
+				COMPLEX xdata${comp} = xdata[id${comp}];
+				COMPLEX mdata${comp} = res_mdata[id${comp}];
+				SCALAR n${comp} = squared_abs(xdata${comp});
 				%endfor
 
 				SCALAR potential = potentials[GLOBAL_INDEX % (gsize / ${p.ensembles})];
@@ -177,11 +324,9 @@ class ParticleStatistics(PairedCalculation):
 
 				%for comp in xrange(p.components):
 				nonlinear${comp} *= n${comp};
-				COMPLEX differential${comp} = complex_mul(
-					conj(xdata[id${comp}]), mdata[id${comp}]);
+				COMPLEX differential${comp} = complex_mul(conj(xdata${comp}), mdata${comp});
 
-				// integral over imaginary part is zero
-				res[id${comp}] = nonlinear${comp} + differential${comp}.x;
+				res_mdata[id${comp}] = complex_ctr(nonlinear${comp}, 0) + differential${comp};
 				%endfor
 			}
 
@@ -202,20 +347,7 @@ class ParticleStatistics(PairedCalculation):
 				mdata[GLOBAL_INDEX + ${g.msize}] = complex_mul(data0, energy10) +
 					complex_mul(data1, energy11);
 			}
-
-			EXPORTED_FUNC void multiplyTiledSS(int gsize,
-				GLOBAL_MEM SCALAR *data, GLOBAL_MEM SCALAR *coeffs, int ensembles)
-			{
-				LIMITED_BY(gsize);
-
-				SCALAR coeff_val = coeffs[GLOBAL_INDEX % (gsize / ensembles)];
-				SCALAR data_val;
-
-				%for comp in xrange(p.components):
-				data_val = data[GLOBAL_INDEX + gsize * ${comp}];
-				data[GLOBAL_INDEX + gsize * ${comp}] = data_val * coeff_val;
-				%endfor
-			}
+			%endif
 
 			EXPORTED_FUNC void multiplyTiledCS(int gsize,
 				GLOBAL_MEM COMPLEX *data, GLOBAL_MEM SCALAR *coeffs, int components)
@@ -238,46 +370,37 @@ class ParticleStatistics(PairedCalculation):
 
 		self._kernel_interaction = self._program.interaction
 		self._kernel_invariant = self._program.invariant
-		self._kernel_invariantSO = self._program.invariantSO
-		self._kernel_multiplySOEnergy = self._program.multiplySOEnergy
-		self._kernel_density = self._program.density
-		self._kernel_multiplyTiledSS = self._program.multiplyTiledSS
 		self._kernel_multiplyTiledCS = self._program.multiplyTiledCS
+
+		if self._p.components >= 2:
+			self._kernel_invariantSO = self._program.invariantSO
+			self._kernel_multiplySOEnergy = self._program.multiplySOEnergy
 
 	def _cpu__kernel_interaction(self, gsize, res, data):
 		self._env.copyBuffer(data[0] * data[1].conj(), dest=res)
-
-	def _cpu__kernel_density(self, gsize, density, data, modifiers, coeff):
-		modifiers = numpy.tile(modifiers,
-			(self._p.components, self._p.ensembles,) + (1,) * self._grid.dim)
-		self._env.copyBuffer((numpy.abs(data) ** 2 - modifiers) / coeff, dest=density)
-
-	def _cpu__kernel_multiplyTiledSS(self, gsize, data, coeffs, ensembles):
-		data *= numpy.tile(coeffs,
-			(self._p.components, ensembles,) + (1,) * self._grid.dim)
 
 	def _cpu__kernel_multiplyTiledCS(self, gsize, data, coeffs, components):
 		data *= numpy.tile(coeffs,
 			(components, self._p.ensembles,) + (1,) * self._grid.dim)
 
-	def _cpu__kernel_invariant(self, gsize, res, xdata, mdata, potentials, coeff):
+	def _cpu__kernel_invariant(self, gsize, res_mdata, xdata, potentials, coeff):
 
 		tile = (self._p.ensembles,) + (1,) * self._grid.dim
 		g = self._p.g
 		n = numpy.abs(xdata) ** 2
 		components = self._p.components
 
-		self._env.copyBuffer(numpy.zeros_like(res), dest=res)
+		res_mdata *= xdata.conj()
+
 		if self._p.need_potentials:
 			for comp in xrange(components):
-				res[comp] += numpy.tile(potentials, tile) * n[comp]
+				res_mdata[comp] += numpy.tile(potentials, tile) * n[comp]
 
 		for comp in xrange(components):
 			for comp_other in xrange(components):
-				res[comp] += n[comp] * (g[comp, comp_other] * n[comp_other] / coeff)
-			res[comp] += (xdata[comp].conj() * mdata[comp]).real
+				res_mdata[comp] += n[comp] * (g[comp, comp_other] * n[comp_other] / coeff)
 
-	def _cpu__kernel_invariantSO(self, gsize, res, xdata, mdata, potentials, coeff):
+	def _cpu__kernel_invariantSO(self, gsize, res_mdata, xdata, potentials, coeff):
 
 		tile = (self._p.ensembles,) + (1,) * self._grid.dim
 		g_intra = self._p.g_intra
@@ -285,15 +408,12 @@ class ParticleStatistics(PairedCalculation):
 		n = numpy.abs(xdata) ** 2
 		components = self._p.components
 
-		self._env.copyBuffer(numpy.zeros_like(res), dest=res)
+		res_mdata *= xdata.conj()
 		for comp in xrange(components):
-			res[comp] += numpy.tile(potentials, tile) * n[comp]
+			res_mdata[comp] += numpy.tile(potentials, tile) * n[comp]
 
-		res[0] += n[0] * (g_intra * n[0] + g_inter * n[1]) / coeff
-		res[1] += n[1] * (g_inter * n[0] + g_intra * n[1]) / coeff
-
-		for comp in xrange(components):
-			res[comp] += (xdata[comp].conj() * mdata[comp]).real
+		res_mdata[0] += n[0] * (g_intra * n[0] + g_inter * n[1]) / coeff
+		res_mdata[1] += n[1] * (g_inter * n[0] + g_intra * n[1]) / coeff
 
 	def _cpu__kernel_multiplySOEnergy(self, msize, mdata, energy):
 		mdata_copy = mdata.copy()
@@ -301,113 +421,56 @@ class ParticleStatistics(PairedCalculation):
 		mdata[1, 0] = mdata_copy[0, 0] * energy[1, 0] + mdata_copy[1, 0] * energy[1, 1]
 
 	def getInteraction(self, psi):
-		self._kernel_interaction(psi.size, self._c_xspace_buffer_1comp, psi.data)
-		self._kernel_multiplyTiledCS(psi.size, self._c_xspace_buffer_1comp,
+		self._kernel_interaction(psi.size, self._cbuffer_ex, psi.data)
+		self._kernel_multiplyTiledCS(psi.size, self._cbuffer_ex,
 			self._dV, numpy.int32(1))
-		return self._c_xspace_buffer_1comp
+		return self._cbuffer_ex
 
 	def getVisibility(self, psi):
 		assert self._p.components == 2
-		N = self.getN(psi)
+		N = psi.density_meter.getN()
 		i = self.getInteraction(psi)
-		self._creduce_all(i, self._c_1_buffer)
-		interaction = self._env.fromDevice(self._c_1_buffer)
+		self._creduce_ex_to_1(i, self._cbuffer_1)
+		interaction = self._env.fromDevice(self._cbuffer_1)
 		interaction = numpy.abs(interaction[0]) / self._p.ensembles
 
 		return 2.0 * interaction / N.sum()
 
-	def getDensity(self, psi, coeff=1):
-		self._kernel_density(psi.size, self._s_xspace_buffer, psi.data,
-			self._density_modifiers, numpy.int32(coeff))
-		return self._s_xspace_buffer
-
-	def getPopulation(self, psi):
-		density = self.getDensity(psi)
-		if not psi.in_mspace:
-			self._kernel_multiplyTiledSS(psi.size, density, self._dV,
-				numpy.int32(self._p.ensembles))
-		return density
-
-	def getAverageDensity(self, psi):
-		# Using psi.size and .shape instead of grid here, to make it work
-		# for both x- and mode-space.
-		ensembles = psi.ensembles
-		components = psi.components
-		size = self._grid.msize if psi.in_mspace else self._grid.size
-
-		density = self.getDensity(psi, coeff=ensembles)
-		self._sreduce_ensembles(density, self._s_xspace_buffer_single)
-
-		return self._s_xspace_buffer_single
-
-	def getAveragePopulation(self, psi):
-		density = self.getAverageDensity(psi)
-		if not psi.in_mspace:
-			self._kernel_multiplyTiledSS(self._grid.size, density, self._dV, numpy.int32(1))
-		return density
-
-	def _getInvariant(self, psi, coeff, N):
+	def _getInvariant(self, psi, coeff, N, so=False):
 
 		# TODO: work out the correct formula for Wigner function's E/mu
-		if psi.type != CLASSICAL:
+		if psi.type != REPR_CLASSICAL:
 			raise NotImplementedError()
 
 		# If N is not known beforehand, we have to calculate it first
 		if N is None:
-			N = self.getN(psi).sum()
+			N = psi.density_meter.getN().sum()
 
 		batch = self._p.ensembles * self._p.components
 		xsize = self._grid.size * self._p.ensembles
 		msize = self._grid.msize * self._p.ensembles
+		cast = self._constants.scalar.cast
 
 		# FIXME: not a good way to provide transformation
-		psi._plan.execute(psi.data, self._c_mspace_buffer, batch=batch)
-		self._kernel_multiplyTiledCS(msize, self._c_mspace_buffer, self._energy,
+		psi._plan.execute(psi.data, self._cbuffer_cem, batch=batch)
+		if so:
+			self._kernel_multiplySOEnergy(msize, self._cbuffer_cem, self._so_energy)
+		else:
+			self._kernel_multiplyTiledCS(msize, self._cbuffer_cem, self._energy,
+				numpy.int32(self._p.components))
+		psi._plan.execute(self._cbuffer_cem, self._cbuffer_cex,
+			batch=batch, inverse=True)
+
+		inv_func = self._kernel_invariantSO if so else self._kernel_invariant
+		inv_func(xsize, self._cbuffer_cex, psi.data, self._potentials, numpy.int32(coeff))
+		self._kernel_multiplyTiledCS(xsize, self._cbuffer_cex, self._dV,
 			numpy.int32(self._p.components))
-		psi._plan.execute(self._c_mspace_buffer, self._c_xspace_buffer,
-			batch=batch, inverse=True)
-		cast = self._constants.scalar.cast
 
-		self._kernel_invariant(xsize, self._s_xspace_buffer,
-			psi.data, self._c_xspace_buffer,
-			self._potentials, numpy.int32(coeff))
-		self._kernel_multiplyTiledSS(xsize, self._s_xspace_buffer, self._dV,
-			numpy.int32(self._p.ensembles))
+		self._creduce_cex_to_c(self._cbuffer_cex, self._cbuffer_c)
 
-		self._sreduce_all(self._s_xspace_buffer, self._s_comp_buffer)
-		comps = self._env.fromDevice(self._s_comp_buffer)
-
-		return comps / self._p.ensembles / N * self._constants.hbar
-
-	def _getSOInvariant(self, psi, coeff, N):
-
-		# TODO: work out the correct formula for Wigner function's E/mu
-		if psi.type != CLASSICAL:
-			raise NotImplementedError()
-
-		# If N is not known beforehand, we have to calculate it first
-		if N is None:
-			N = self.getN(psi).sum()
-
-		batch = self._p.ensembles * self._p.components
-		xsize = self._grid.size * self._p.ensembles
-		msize = self._grid.msize * self._p.ensembles
-
-		# FIXME: not a good way to provide transformation
-		psi._plan.execute(psi.data, self._c_mspace_buffer, batch=batch)
-		self._kernel_multiplySOEnergy(msize, self._c_mspace_buffer, self._so_energy)
-		psi._plan.execute(self._c_mspace_buffer, self._c_xspace_buffer,
-			batch=batch, inverse=True)
-		cast = self._constants.scalar.cast
-
-		self._kernel_invariantSO(xsize, self._s_xspace_buffer,
-			psi.data, self._c_xspace_buffer,
-			self._potentials, numpy.int32(coeff))
-		self._kernel_multiplyTiledSS(xsize, self._s_xspace_buffer, self._dV,
-			numpy.int32(self._p.ensembles))
-
-		self._sreduce_all(self._s_xspace_buffer, self._s_comp_buffer)
-		comps = self._env.fromDevice(self._s_comp_buffer)
+		# We were doing operations on complex temporary array to save memory.
+		# Now when we back on CPU we can safely discard imaginary part.
+		comps = self._env.fromDevice(self._cbuffer_c).real
 
 		return comps / self._p.ensembles / N * self._constants.hbar
 
@@ -418,9 +481,9 @@ class ParticleStatistics(PairedCalculation):
 		"""
 		assert self._p.components == 2
 
-		self._kernel_interaction(psi.size, self._c_xspace_buffer, psi.data)
-		self._creduce_grid(self._c_xspace_buffer, self._c_ensembles_buffer)
-		i = self._env.fromDevice(self._c_ensembles_buffer) # Complex numbers {S_xj + iS_yj, j = 1..N}
+		self._kernel_interaction(psi.size, self._cbuffer_ex, psi.data)
+		self._creduce_ex_to_e(self._cbuffer_ex, self._cbuffer_e)
+		i = self._env.fromDevice(self._cbuffer_e) # Complex numbers {S_xj + iS_yj, j = 1..N}
 
 		phi = numpy.angle(i) # normalizing
 
@@ -444,37 +507,27 @@ class ParticleStatistics(PairedCalculation):
 		return phi_centered.std()
 
 	def getPzNoise(self, psi):
-		n = self.getDensity(psi)
-		self._kernel_multiplyTiledSS(self._grid.size * self._p.ensembles,
-			n, self._dV, numpy.int32(self._p.ensembles))
-		self._sreduce_comp_grid(n, self._s_comp_ensembles_buffer)
-		n = self._env.fromDevice(self._s_comp_ensembles_buffer)
+		# FIXME: check that this formula is correct
+		# (may need some additional terms like <N^2>)
+		n = psi.density_meter.getNPerEnsemble()
 		Pz = (n[0] - n[1]) / (n[0] + n[1])
-
 		return Pz.std()
-
-	def getN(self, psi):
-		"""Returns particle count for wavefunction"""
-		p = self.getAveragePopulation(psi)
-		self._sreduce_single_to_comps(p, self._s_comp_buffer)
-		comps = self._env.fromDevice(self._s_comp_buffer)
-		return comps
 
 	def getEnergy(self, psi, N=None):
 		"""Returns average energy per particle"""
-		return self._getInvariant(psi, 2, N)
+		return self._getInvariant(psi, 2, N, so=False)
 
 	def getMu(self, psi, N=None):
 		"""Returns average chemical potential per particle"""
-		return self._getInvariant(psi, 1, N)
+		return self._getInvariant(psi, 1, N, so=False)
 
 	def getSOEnergy(self, psi, N=None):
 		"""Returns average energy per particle"""
-		return self._getSOInvariant(psi, 2, N)
+		return self._getSOInvariant(psi, 2, N, so=True)
 
 	def getSOMu(self, psi, N=None):
 		"""Returns average chemical potential per particle"""
-		return self._getSOInvariant(psi, 1, N)
+		return self._getSOInvariant(psi, 1, N, so=True)
 
 
 class DensityProfile(PairedCalculation):
@@ -483,14 +536,11 @@ class DensityProfile(PairedCalculation):
 		PairedCalculation.__init__(self, env)
 		self._constants = constants
 		self._grid = grid
-		self._stats = ParticleStatistics(env, constants, grid)
-		self._addParameters(components=2, ensembles=1, psi_type=CLASSICAL)
+		self._addParameters(components=2, ensembles=1, psi_type=REPR_CLASSICAL)
 		self._reduce = createReduce(env, constants.scalar.dtype)
 		self.prepare()
 
 	def _prepare(self):
-		self._stats.prepare(components=self._p.components,
-			ensembles=self._p.ensembles, psi_type=self._p.psi_type)
 		self._reduce.prepare(length=self._p.components * self._grid.size,
 			final_length=self._grid.shape[0] * self._p.components)
 		self._z_buffer = self._env.allocate(
@@ -498,7 +548,7 @@ class DensityProfile(PairedCalculation):
 
 	def getXY(self, psi):
 		# TODO: use reduction on device if it starts to take too much time
-		p = self._env.fromDevice(self._stats.getAveragePopulation(psi))
+		p = self._env.fromDevice(psi.density_meter.getAveragePopulation())
 		nx = self._grid.shape[2]
 		ny = self._grid.shape[1]
 
@@ -512,7 +562,7 @@ class DensityProfile(PairedCalculation):
 
 	def getYZ(self, psi):
 		# TODO: use reduction on device if it starts to take too much time
-		p = self._env.fromDevice(self._stats.getAveragePopulation(psi))
+		p = self._env.fromDevice(psi.density_meter.getAveragePopulation())
 		ny = self._grid.shape[1]
 		nz = self._grid.shape[0]
 
@@ -526,20 +576,20 @@ class DensityProfile(PairedCalculation):
 
 	def getXYSlice(self, psi, z_index=None):
 		# TODO: use reduction on device if it starts to take too much time
-		p = self._env.fromDevice(self._stats.getAverageDensity(psi))
+		p = self._env.fromDevice(psi.density_meter.getAverageDensity())
 		if z_index is None:
 			z_index = self._grid.shape[0] / 2
 		return p[:,0,z_index,:,:]
 
 	def getYZSlice(self, psi, x_index=None):
 		# TODO: use reduction on device if it starts to take too much time
-		p = self._env.fromDevice(self._stats.getAverageDensity(psi))
+		p = self._env.fromDevice(psi.density_meter.getAverageDensity())
 		if x_index is None:
 			x_index = self._grid.shape[2] / 2
 		return p[:,0,:,:,x_index]
 
 	def getZ(self, psi):
-		p = self._stats.getAveragePopulation(psi)
+		p = psi.density_meter.getAveragePopulation()
 		self._reduce(p, self._z_buffer)
 		res = self._env.fromDevice(self._z_buffer)
 		return res / numpy.tile(self._grid.dz, (self._p.components, 1))
@@ -553,36 +603,36 @@ class Uncertainty(PairedCalculation):
 		self._grid = grid
 		self._stats = ParticleStatistics(env, constants, grid)
 
-		self._sreduce_ensembles = createReduce(env, constants.scalar.dtype)
-		self._creduce_ensembles = createReduce(env, constants.complex.dtype)
+		self._sreduce_cex_to_ce = createReduce(env, constants.scalar.dtype)
+		self._creduce_ex_to_e = createReduce(env, constants.complex.dtype)
 
-		self._addParameters(components=2, ensembles=1, psi_type=CLASSICAL)
+		self._addParameters(components=2, ensembles=1, psi_type=REPR_CLASSICAL)
 
 	def _prepare(self):
 		self._stats.prepare(components=self._p.components,
 			ensembles=self._p.ensembles, psi_type=self._p.psi_type)
-		self._sreduce_ensembles.prepare(
+		self._sreduce_cex_to_ce.prepare(
 			sparse=False,
 			length=self._p.components * self._p.ensembles * self._grid.size,
 			final_length=self._p.components * self._p.ensembles)
 
-		self._creduce_ensembles.prepare(
+		self._creduce_ex_to_e.prepare(
 			sparse=False,
 			length=self._p.ensembles * self._grid.size,
 			final_length=self._p.ensembles)
 
-		self._sbuffer_ensembles = self._env.allocate(
+		self._sbuffer_ce = self._env.allocate(
 			(self._p.components, self._p.ensembles),
 			self._constants.scalar.dtype)
 
-		self._cbuffer_ensembles = self._env.allocate(
+		self._cbuffer_e = self._env.allocate(
 			(self._p.ensembles,),
 			self._constants.complex.dtype)
 
 	def getNstddev(self, psi):
 		n = self._stats.getPopulation(psi)
-		self._sreduce_ensembles(n, self._sbuffer_ensembles)
-		n = self._env.fromDevice(self._sbuffer_ensembles)
+		self._sreduce_cex_to_ce(n, self._sbuffer_ce)
+		n = self._env.fromDevice(self._sbuffer_ce)
 
 		return numpy.std(n, axis=1)
 
@@ -591,12 +641,12 @@ class Uncertainty(PairedCalculation):
 		Returns per-ensemble populations and interaction
 		"""
 		i = self._stats.getInteraction(psi)
-		self._creduce_ensembles(i, self._cbuffer_ensembles)
+		self._creduce_ex_to_e(i, self._cbuffer_e)
 		n = self._stats.getPopulation(psi)
-		self._sreduce_ensembles(n, self._sbuffer_ensembles)
+		self._sreduce_cex_to_ce(n, self._sbuffer_ce)
 
-		i = self._env.fromDevice(self._cbuffer_ensembles)
-		n = self._env.fromDevice(self._sbuffer_ensembles)
+		i = self._env.fromDevice(self._cbuffer_e)
+		n = self._env.fromDevice(self._sbuffer_ce)
 		return i, n
 
 
