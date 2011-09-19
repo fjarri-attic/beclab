@@ -1,7 +1,7 @@
 import numpy
 from beclab import *
-from beclab.meters import DensityProfile, ParticleStatistics
-from beclab.constants import getProjectorMask
+from beclab.meters import DensityProfile
+from beclab.constants import buildProjectorMask
 import itertools
 import time
 
@@ -84,9 +84,9 @@ def runTest(env, comp, grid_type, dim, gs_type, use_cutoff):
 		e_cut=(e_cut if use_cutoff else None),
 		**constants_kwds)
 	if grid_type == 'uniform':
-		grid = UniformGrid.forN(constants, total_N, shape)
+		grid = UniformGrid.forN(env, constants, total_N, shape)
 	elif grid_type == 'harmonic':
-		grid = HarmonicGrid(constants, shape)
+		grid = HarmonicGrid(env, constants, shape)
 
 	# Prepare 'apparatus'
 
@@ -105,7 +105,6 @@ def runTest(env, comp, grid_type, dim, gs_type, use_cutoff):
 			gs = RK5HarmonicGroundState(*args, **params)
 
 	prj = DensityProfile(*args)
-	stats = ParticleStatistics(*args, components=2)
 
 	# Create ground state
 	t1 = time.time()
@@ -114,18 +113,18 @@ def runTest(env, comp, grid_type, dim, gs_type, use_cutoff):
 	t_gs = t2 - t1
 
 	# check that 2-component stats object works properly
-	N_xspace1 = stats.getN(psi)
+	N_xspace1 = psi.density_meter.getN()
 	psi.toMSpace()
-	N_mspace = stats.getN(psi)
+	N_mspace = psi.density_meter.getN()
 	mode_data = numpy.abs(env.fromDevice(psi.data)) # remember mode data
 	psi.toXSpace()
 
 	# population in x-space after double transformation (should not change)
-	N_xspace2 = stats.getN(psi)
+	N_xspace2 = psi.density_meter.getN()
 
 	# calculate energy and chemical potential (per particle)
-	E = stats.getEnergy(psi) / constants.hbar / constants.wz
-	mu = stats.getMu(psi) / constants.hbar / constants.wz
+	E = psi.interaction_meter.getEnergy() / constants.hbar / constants.wz
+	mu = psi.interaction_meter.getMu() / constants.hbar / constants.wz
 	mu_tf = numpy.array(
 		[constants.muTF(N, dim=grid.dim) for N in target_N]
 	).sum() / constants.hbar / constants.wz
@@ -145,16 +144,24 @@ def runTest(env, comp, grid_type, dim, gs_type, use_cutoff):
 	assert norm(N_mspace - N_xspace2) / target_norm < 0.02
 
 	assert E.shape == (2,)
-	if comp == '1comp': assert E[1] == 0
 	assert mu.shape == (2,)
-	if comp == '1comp': assert mu[1] == 0
+
+	if comp == '1comp':
+		assert E[1] == 0
+	else:
+		assert E[1] != 0
+
+	if comp == '1comp':
+		assert mu[1] == 0
+	else:
+		assert mu[1] != 0
 
 	# There should be some difference between analytical mu and numerical one,
 	# so it is more of a sanity check
 	assert abs(mu.sum() - mu_tf) / mu_tf < 0.35
 
 	# Check that GS is really restricted by mask
-	mask = numpy.tile(getProjectorMask(constants, grid),
+	mask = numpy.tile(buildProjectorMask(constants, grid),
 		(psi.components, 1) + (1,) * grid.dim)
 	masked_mode_data = mode_data * (1.0 - mask)
 	assert masked_mode_data.max() < 1e-6 * mode_data.max()
