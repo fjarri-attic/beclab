@@ -1,6 +1,6 @@
 import numpy
 from beclab import *
-from beclab.meters import DensityProfile
+from beclab.meters import ProjectionMeter, IntegralMeter
 from beclab.constants import buildProjectorMask
 import itertools
 import time
@@ -104,27 +104,28 @@ def runTest(env, comp, grid_type, dim, gs_type, use_cutoff):
 		elif grid_type == 'harmonic':
 			gs = RK5HarmonicGroundState(*args, **params)
 
-	prj = DensityProfile(*args)
-
 	# Create ground state
 	t1 = time.time()
 	psi = gs.create(target_N)
 	t2 = time.time()
 	t_gs = t2 - t1
 
+	prj = ProjectionMeter.forPsi(psi)
+	obs = IntegralMeter.forPsi(psi)
+
 	# check that 2-component stats object works properly
-	N_xspace1 = psi.density_meter.getN()
+	N_xspace1 = psi.density_meter.getNTotal()
 	psi.toMSpace()
-	N_mspace = psi.density_meter.getN()
+	N_mspace = psi.density_meter.getNTotal()
 	mode_data = numpy.abs(env.fromDevice(psi.data)) # remember mode data
 	psi.toXSpace()
 
 	# population in x-space after double transformation (should not change)
-	N_xspace2 = psi.density_meter.getN()
+	N_xspace2 = psi.density_meter.getNTotal()
 
 	# calculate energy and chemical potential (per particle)
-	E = psi.interaction_meter.getEnergy() / constants.hbar / constants.wz
-	mu = psi.interaction_meter.getMu() / constants.hbar / constants.wz
+	E = obs.getEPerParticle(psi) / constants.hbar / constants.wz
+	mu = obs.getMuPerParticle(psi) / constants.hbar / constants.wz
 	mu_tf = numpy.array(
 		[constants.muTF(N, dim=grid.dim) for N in target_N]
 	).sum() / constants.hbar / constants.wz

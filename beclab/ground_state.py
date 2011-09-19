@@ -8,6 +8,7 @@ import numpy
 from .helpers import *
 from .wavefunction import WavefunctionSet
 from .constants import *
+from .meters import IntegralMeter
 
 
 # GS initial conditions
@@ -170,7 +171,7 @@ class TFGroundState(PairedCalculation):
 		# calculated in x-space, and kinetic + potential operator is less significant.
 		#psi.toMSpace()
 		N_target = numpy.array(N)
-		N_real = psi.density_meter.getN()
+		N_real = psi.density_meter.getNTotal()
 
 		coeffs = []
 		for target, real in zip(N_target, N_real):
@@ -202,6 +203,7 @@ class ImaginaryTimeGroundState(PairedCalculation):
 		self._constants = constants
 		self._grid = grid
 		self._tf_gs = TFGroundState(env, constants, grid)
+		self._obs = IntegralMeter(env, constants, grid)
 		self._addParameters(components=1, fix_total_N=False, E_modifier=0, gs_init=GS_INIT_TF)
 
 	def _prepare(self):
@@ -244,10 +246,7 @@ class ImaginaryTimeGroundState(PairedCalculation):
 		pass
 
 	def _total_E(self, psi, N):
-		return psi.interaction_meter.getEnergy(N=N).sum()
-
-	def _total_mu(self, psi, N):
-		return psi.interaction_meter.getMu(N=N).sum()
+		return self._obs.getEPerParticle(psi, N=N).sum()
 
 	def _create(self, psi, N):
 
@@ -269,7 +268,7 @@ class ImaginaryTimeGroundState(PairedCalculation):
 		else:
 			raise ValueError("Wrong value of parameter 'gs_init':", self._p.gs_init)
 
-		new_N = psi.density_meter.getN()
+		new_N = psi.density_meter.getNTotal()
 		coeffs = [numpy.sqrt(N[c] / new_N[c]) for c in xrange(self._p.components)]
 		self._renormalize(psi, coeffs)
 
@@ -278,9 +277,8 @@ class ImaginaryTimeGroundState(PairedCalculation):
 		precision = self._p.relative_precision
 		dt_used = 0
 
-		total_N = lambda psi: psi.density_meter.getN().sum()
+		total_N = lambda psi: psi.density_meter.getNTotal().sum()
 		total_E = self._total_E
-		total_mu = self._total_mu
 
 		E = 0.0
 		dE = self._p.E_modifier
@@ -304,7 +302,7 @@ class ImaginaryTimeGroundState(PairedCalculation):
 
 			# renormalization
 			self._toMeasurementSpace(psi)
-			new_N = psi.density_meter.getN()
+			new_N = psi.density_meter.getNTotal()
 			if self._p.fix_total_N:
 				coeff = numpy.sqrt(N_target / new_N.sum())
 				coeffs = [coeff] * self._p.components

@@ -3,7 +3,7 @@ import math
 
 from .helpers import *
 from .constants import REPR_CLASSICAL, REPR_WIGNER
-from .meters import DensityProfile, Uncertainty, getXiSquared
+from .meters import ProjectionMeter, UncertaintyMeter, getXiSquared
 from .evolution import TerminateEvolution
 from .pulse import Pulse
 from .wavefunction import WavefunctionSet

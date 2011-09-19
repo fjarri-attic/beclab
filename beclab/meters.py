@@ -150,7 +150,9 @@ class DensityMeter(PairedCalculation):
 		data *= numpy.tile(coeffs,
 			(self._p.components, ensembles,) + (1,) * self._grid.dim)
 
-	def getDensity(self, psi, coeff=1):
+	def getNDensity(self, psi, coeff=1):
+		"""Returns population density for every point on a lattice"""
+
 		if psi.in_mspace:
 			self._kernel_mdensity(psi.size, self._sbuffer_cem, psi.data,
 				self._density_modifiers, numpy.int32(coeff))
@@ -160,19 +162,23 @@ class DensityMeter(PairedCalculation):
 				self._density_modifiers, numpy.int32(coeff))
 			return self._sbuffer_cex
 
-	def getPopulation(self, psi, coeff=1):
-		density = self.getDensity(psi, coeff=coeff)
+	def getN(self, psi, coeff=1):
+		"""Returns population for every point on a lattice"""
+
+		density = self.getNDensity(psi, coeff=coeff)
 		if not psi.in_mspace:
 			self._kernel_multiplyTiledSS(psi.size, density, self._dV,
 				numpy.int32(self._p.ensembles))
 		return density
 
-	def getAverageDensity(self, psi):
+	def getNDensityAverage(self, psi):
+		"""Returns population density averaged over ensembles"""
+
 		ensembles = psi.ensembles
 		components = psi.components
 		size = self._grid.msize if psi.in_mspace else self._grid.size
 
-		density = self.getDensity(psi, coeff=ensembles)
+		density = self.getNDensity(psi, coeff=ensembles)
 		if psi.in_mspace:
 			self._sreduce_cem_to_cm(density, self._sbuffer_cm)
 			return self._sbuffer_cm
@@ -180,15 +186,18 @@ class DensityMeter(PairedCalculation):
 			self._sreduce_cex_to_cx(density, self._sbuffer_cx)
 			return self._sbuffer_cx
 
-	def getAveragePopulation(self, psi):
-		density = self.getAverageDensity(psi)
+	def getNAverage(self, psi):
+		"""Returns population averaged over ensembles"""
+
+		density = self.getNDensityAverage(psi)
 		if not psi.in_mspace:
 			self._kernel_multiplyTiledSS(self._grid.size, density, self._dV, numpy.int32(1))
 		return density
 
-	def getN(self, psi):
-		"""Returns particle count for wavefunction"""
-		p = self.getPopulation(psi, coeff=self._p.ensembles)
+	def getNTotal(self, psi):
+		"""Returns total population for each component"""
+
+		p = self.getN(psi, coeff=self._p.ensembles)
 		if psi.in_mspace:
 			self._sreduce_cem_to_c(p, self._sbuffer_c)
 		else:
@@ -197,13 +206,14 @@ class DensityMeter(PairedCalculation):
 		return Ns
 
 	def getNPerEnsemble(self, psi):
-		p = self.getPopulation(psi, coeff=self._p.ensembles)
+		"""Returns total population for each component in each ensemble"""
+
+		p = self.getN(psi, coeff=self._p.ensembles)
 		if psi.in_mspace:
 			self._sreduce_cem_to_ce(p, self._sbuffer_ce)
 		else:
 			self._sreduce_cex_to_ce(p, self._sbuffer_ce)
-		Ns = self._env.fromDevice(self._sbuffer_ce)
-		return Ns
+		return self._sbuffer_ce
 
 
 class InteractionMeter(PairedCalculation):
@@ -420,31 +430,11 @@ class InteractionMeter(PairedCalculation):
 		mdata[0, 0] = mdata_copy[0, 0] * energy[0, 0] + mdata_copy[1, 0] * energy[0, 1]
 		mdata[1, 0] = mdata_copy[0, 0] * energy[1, 0] + mdata_copy[1, 0] * energy[1, 1]
 
-	def getInteraction(self, psi):
-		self._kernel_interaction(psi.size, self._cbuffer_ex, psi.data)
-		self._kernel_multiplyTiledCS(psi.size, self._cbuffer_ex,
-			self._dV, numpy.int32(1))
-		return self._cbuffer_ex
-
-	def getVisibility(self, psi):
-		assert self._p.components == 2
-		N = psi.density_meter.getN()
-		i = self.getInteraction(psi)
-		self._creduce_ex_to_1(i, self._cbuffer_1)
-		interaction = self._env.fromDevice(self._cbuffer_1)
-		interaction = numpy.abs(interaction[0]) / self._p.ensembles
-
-		return 2.0 * interaction / N.sum()
-
-	def _getInvariant(self, psi, coeff, N, so=False):
+	def _getInvariant(self, psi, coeff, so=False):
 
 		# TODO: work out the correct formula for Wigner function's E/mu
 		if psi.type != REPR_CLASSICAL:
 			raise NotImplementedError()
-
-		# If N is not known beforehand, we have to calculate it first
-		if N is None:
-			N = psi.density_meter.getN().sum()
 
 		batch = self._p.ensembles * self._p.components
 		xsize = self._grid.size * self._p.ensembles
@@ -472,7 +462,153 @@ class InteractionMeter(PairedCalculation):
 		# Now when we back on CPU we can safely discard imaginary part.
 		comps = self._env.fromDevice(self._cbuffer_c).real
 
-		return comps / self._p.ensembles / N * self._constants.hbar
+		return comps / self._p.ensembles * self._constants.hbar
+
+	def getI(self, psi):
+		"""Returns I = (Psi1^*) * Psi2 for each point of a lattice"""
+
+		self._kernel_interaction(psi.size, self._cbuffer_ex, psi.data)
+		self._kernel_multiplyTiledCS(psi.size, self._cbuffer_ex,
+			self._dV, numpy.int32(1))
+		return self._cbuffer_ex
+
+	def getIPerEnsemble(self, psi):
+		i = self.getI(psi)
+		self._creduce_ex_to_e(p, self._cbuffer_e)
+		return self._cbuffer_e
+
+	def getITotal(self, psi):
+		i = self.getI(psi)
+		self._creduce_ex_to_1(i, self._cbuffer_1)
+		return self._env.fromDevice(self._cbuffer_1)[0]
+
+	def getETotal(self, psi):
+		"""Returns total energy"""
+		return self._getInvariant(psi, 2, so=False)
+
+	def getMuTotal(self, psi):
+		"""Returns total chemical potential"""
+		return self._getInvariant(psi, 1, so=False)
+
+	def getETotal_SO(self, psi):
+		"""Returns total energy in SO case"""
+		return self._getSOInvariant(psi, 2, so=True)
+
+	def getMuTotal_SO(self, psi):
+		"""Returns total chemical potential in SO case"""
+		return self._getSOInvariant(psi, 1, so=True)
+
+
+class IntegralMeter:
+
+	def __init__(self, env, constants, grid):
+		pass
+
+	def prepare(**kwds):
+		pass
+
+	@classmethod
+	def forPsi(cls, psi):
+		return cls(psi._env, psi._constants, psi._grid)
+
+	def getVisibility(self, psi):
+		assert psi.components == 2
+		N = psi.density_meter.getNTotal()
+		I = psi.interaction_meter.getITotal()
+		return 2.0 * numpy.abs(I) / N.sum() / psi.ensembles
+
+	def getEPerParticle(self, psi, N=None):
+		if N is None:
+			N = psi.density_meter.getNTotal().sum()
+		return psi.interaction_meter.getETotal() / N
+
+	def getMuPerParticle(self, psi, N=None):
+		if N is None:
+			N = psi.density_meter.getNTotal().sum()
+		return psi.interaction_meter.getMuTotal() / N
+
+
+class ProjectionMeter(PairedCalculation):
+
+	def __init__(self, env, constants, grid, **kwds):
+		PairedCalculation.__init__(self, env)
+		self._constants = constants
+		self._grid = grid
+		self._addParameters(components=2, ensembles=1, psi_type=REPR_CLASSICAL)
+		self._reduce = createReduce(env, constants.scalar.dtype)
+		self.prepare(**kwds)
+
+	@classmethod
+	def forPsi(cls, psi):
+		return cls(psi._env, psi._constants, psi._grid,
+			components=psi.components, ensembles=psi.ensembles, psi_type=psi.type)
+
+	def _prepare(self):
+		self._reduce.prepare(length=self._p.components * self._grid.size,
+			final_length=self._grid.shape[0] * self._p.components)
+		self._z_buffer = self._env.allocate(
+			(self._p.components, self._grid.shape[0]), self._constants.scalar.dtype)
+
+	def getXY(self, psi):
+		# TODO: use reduction on device if it starts to take too much time
+		p = self._env.fromDevice(psi.density_meter.getNAverage())
+		nx = self._grid.shape[2]
+		ny = self._grid.shape[1]
+
+		# sum over ensembles (since it is only 1 of them, just removes this dimension)
+		# and over z-axis
+		xy = p.sum(1).sum(1)
+		dy = self._grid.dy.reshape(self._grid.shape[1], 1)
+		xy /= numpy.tile(dy, (self._p.components, 1, nx))
+		xy /= numpy.tile(self._grid.dx, (self._p.components, ny, 1))
+		return xy
+
+	def getYZ(self, psi):
+		# TODO: use reduction on device if it starts to take too much time
+		p = self._env.fromDevice(psi.density_meter.getNAverage())
+		ny = self._grid.shape[1]
+		nz = self._grid.shape[0]
+
+		# sum over ensembles (since it is only 1 of them, just removes this dimension)
+		# and over x-axis
+		yz = p.sum(1).sum(3)
+		dz = self._grid.dz.reshape(self._grid.shape[0], 1)
+		yz /= numpy.tile(dz, (self._p.components, 1, ny))
+		yz /= numpy.tile(self._grid.dy, (self._p.components, nz, 1))
+		return yz
+
+	def getXYSlice(self, psi, z_index=None):
+		# TODO: use reduction on device if it starts to take too much time
+		p = self._env.fromDevice(psi.density_meter.getNDensityAverage())
+		if z_index is None:
+			z_index = self._grid.shape[0] / 2
+		return p[:,0,z_index,:,:]
+
+	def getYZSlice(self, psi, x_index=None):
+		# TODO: use reduction on device if it starts to take too much time
+		p = self._env.fromDevice(psi.density_meter.getNDensityAverage())
+		if x_index is None:
+			x_index = self._grid.shape[2] / 2
+		return p[:,0,:,:,x_index]
+
+	def getZ(self, psi):
+		p = psi.density_meter.getNAverage()
+		self._reduce(p, self._z_buffer)
+		res = self._env.fromDevice(self._z_buffer)
+		return res / numpy.tile(self._grid.dz, (self._p.components, 1))
+
+
+class UncertaintyMeter:
+
+	def __init__(self, env, constants, grid):
+		self._env = env
+
+	def prepare(**kwds):
+		pass
+
+	@classmethod
+	def forPsi(cls, psi):
+		return cls(psi._env, psi._constants, psi._grid,)
 
 	def getPhaseNoise(self, psi):
 		"""
@@ -481,9 +617,8 @@ class InteractionMeter(PairedCalculation):
 		"""
 		assert self._p.components == 2
 
-		self._kernel_interaction(psi.size, self._cbuffer_ex, psi.data)
-		self._creduce_ex_to_e(self._cbuffer_ex, self._cbuffer_e)
-		i = self._env.fromDevice(self._cbuffer_e) # Complex numbers {S_xj + iS_yj, j = 1..N}
+		# Complex numbers {S_xj + iS_yj, j = 1..N}
+		i = self._env.fromDevice(psi.interaction_meter.getIPerEnsemble())
 
 		phi = numpy.angle(i) # normalizing
 
@@ -509,144 +644,21 @@ class InteractionMeter(PairedCalculation):
 	def getPzNoise(self, psi):
 		# FIXME: check that this formula is correct
 		# (may need some additional terms like <N^2>)
-		n = psi.density_meter.getNPerEnsemble()
+		n = self._env.fromDevice(psi.density_meter.getNPerEnsemble())
 		Pz = (n[0] - n[1]) / (n[0] + n[1])
 		return Pz.std()
 
-	def getEnergy(self, psi, N=None):
-		"""Returns average energy per particle"""
-		return self._getInvariant(psi, 2, N, so=False)
-
-	def getMu(self, psi, N=None):
-		"""Returns average chemical potential per particle"""
-		return self._getInvariant(psi, 1, N, so=False)
-
-	def getSOEnergy(self, psi, N=None):
-		"""Returns average energy per particle"""
-		return self._getSOInvariant(psi, 2, N, so=True)
-
-	def getSOMu(self, psi, N=None):
-		"""Returns average chemical potential per particle"""
-		return self._getSOInvariant(psi, 1, N, so=True)
-
-
-class DensityProfile(PairedCalculation):
-
-	def __init__(self, env, constants, grid):
-		PairedCalculation.__init__(self, env)
-		self._constants = constants
-		self._grid = grid
-		self._addParameters(components=2, ensembles=1, psi_type=REPR_CLASSICAL)
-		self._reduce = createReduce(env, constants.scalar.dtype)
-		self.prepare()
-
-	def _prepare(self):
-		self._reduce.prepare(length=self._p.components * self._grid.size,
-			final_length=self._grid.shape[0] * self._p.components)
-		self._z_buffer = self._env.allocate(
-			(self._p.components, self._grid.shape[0]), self._constants.scalar.dtype)
-
-	def getXY(self, psi):
-		# TODO: use reduction on device if it starts to take too much time
-		p = self._env.fromDevice(psi.density_meter.getAveragePopulation())
-		nx = self._grid.shape[2]
-		ny = self._grid.shape[1]
-
-		# sum over ensembles (since it is only 1 of them, just removes this dimension)
-		# and over z-axis
-		xy = p.sum(1).sum(1)
-		dy = self._grid.dy.reshape(self._grid.shape[1], 1)
-		xy /= numpy.tile(dy, (self._p.components, 1, nx))
-		xy /= numpy.tile(self._grid.dx, (self._p.components, ny, 1))
-		return xy
-
-	def getYZ(self, psi):
-		# TODO: use reduction on device if it starts to take too much time
-		p = self._env.fromDevice(psi.density_meter.getAveragePopulation())
-		ny = self._grid.shape[1]
-		nz = self._grid.shape[0]
-
-		# sum over ensembles (since it is only 1 of them, just removes this dimension)
-		# and over x-axis
-		yz = p.sum(1).sum(3)
-		dz = self._grid.dz.reshape(self._grid.shape[0], 1)
-		yz /= numpy.tile(dz, (self._p.components, 1, ny))
-		yz /= numpy.tile(self._grid.dy, (self._p.components, nz, 1))
-		return yz
-
-	def getXYSlice(self, psi, z_index=None):
-		# TODO: use reduction on device if it starts to take too much time
-		p = self._env.fromDevice(psi.density_meter.getAverageDensity())
-		if z_index is None:
-			z_index = self._grid.shape[0] / 2
-		return p[:,0,z_index,:,:]
-
-	def getYZSlice(self, psi, x_index=None):
-		# TODO: use reduction on device if it starts to take too much time
-		p = self._env.fromDevice(psi.density_meter.getAverageDensity())
-		if x_index is None:
-			x_index = self._grid.shape[2] / 2
-		return p[:,0,:,:,x_index]
-
-	def getZ(self, psi):
-		p = psi.density_meter.getAveragePopulation()
-		self._reduce(p, self._z_buffer)
-		res = self._env.fromDevice(self._z_buffer)
-		return res / numpy.tile(self._grid.dz, (self._p.components, 1))
-
-
-class Uncertainty(PairedCalculation):
-
-	def __init__(self, env, constants, grid):
-		PairedCalculation.__init__(self, env)
-		self._constants = constants
-		self._grid = grid
-		self._stats = ParticleStatistics(env, constants, grid)
-
-		self._sreduce_cex_to_ce = createReduce(env, constants.scalar.dtype)
-		self._creduce_ex_to_e = createReduce(env, constants.complex.dtype)
-
-		self._addParameters(components=2, ensembles=1, psi_type=REPR_CLASSICAL)
-
-	def _prepare(self):
-		self._stats.prepare(components=self._p.components,
-			ensembles=self._p.ensembles, psi_type=self._p.psi_type)
-		self._sreduce_cex_to_ce.prepare(
-			sparse=False,
-			length=self._p.components * self._p.ensembles * self._grid.size,
-			final_length=self._p.components * self._p.ensembles)
-
-		self._creduce_ex_to_e.prepare(
-			sparse=False,
-			length=self._p.ensembles * self._grid.size,
-			final_length=self._p.ensembles)
-
-		self._sbuffer_ce = self._env.allocate(
-			(self._p.components, self._p.ensembles),
-			self._constants.scalar.dtype)
-
-		self._cbuffer_e = self._env.allocate(
-			(self._p.ensembles,),
-			self._constants.complex.dtype)
-
 	def getNstddev(self, psi):
-		n = self._stats.getPopulation(psi)
-		self._sreduce_cex_to_ce(n, self._sbuffer_ce)
-		n = self._env.fromDevice(self._sbuffer_ce)
-
+		# FIXME: probably need to add modifier here (M^2 / 2)
+		n = self._env.fromDevice(psi.density_meter.getNPerEnsemble())
 		return numpy.std(n, axis=1)
 
 	def getEnsembleSums(self, psi):
 		"""
 		Returns per-ensemble populations and interaction
 		"""
-		i = self._stats.getInteraction(psi)
-		self._creduce_ex_to_e(i, self._cbuffer_e)
-		n = self._stats.getPopulation(psi)
-		self._sreduce_cex_to_ce(n, self._sbuffer_ce)
-
-		i = self._env.fromDevice(self._cbuffer_e)
-		n = self._env.fromDevice(self._sbuffer_ce)
+		i = self._env.fromDevice(psi.interaction_meter.getIPerEnsemble())
+		n = self._env.fromDevice(psi.density_meter.getNPerEnsemble())
 		return i, n
 
 
