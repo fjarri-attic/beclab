@@ -14,7 +14,7 @@ env = envs.cuda()
 constants = Constants(double=env.supportsDouble(),
 	a11=100, a12=50, a22=100,
 	gamma111=0, gamma12=0, gamma22=0)
-grid = UniformGrid.forN(constants, N, (64, 8, 8))
+grid = UniformGrid.forN(env, constants, N, (64, 8, 8))
 
 gs = SplitStepGroundState(env, constants, grid, dt=1e-5)
 evolution = SplitStepEvolution(env, constants, grid, dt=1e-5)
