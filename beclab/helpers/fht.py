@@ -196,9 +196,6 @@ class FHT1D(PairedCalculation):
 		cast = numpy.int32
 		if inverse:
 			assert data.shape[-1:] == (self.N,)
-
-#			print batch, result.shape, data.shape, self._P.shape
-#			print self.N, self._xshape[0]
 			self._dot(result, data, self._P,
 				batch, self.N, self._xshape[0], 1, scale=self._inv_scale)
 		else:
@@ -206,9 +203,6 @@ class FHT1D(PairedCalculation):
 			self._allocateXi(batch)
 			self._kernel_multiplyTiledCS(batch * self._xshape[0], self._Xi, data,
 				self._weights_x, cast(batch))
-
-#			print batch, result.shape, self._Xi.shape, self._P_tr.shape
-#			print self._xshape[0], self.N, self.order
 			self._dot(result, self._Xi, self._P_tr,
 				batch, self._xshape[0], self.N, 1, scale=self._fwd_scale)
 
