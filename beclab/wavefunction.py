@@ -6,6 +6,22 @@ import numpy
 
 from .helpers import *
 from .constants import *
+from .meters import DensityMeter, InteractionMeter
+
+
+class _MeterWrapper:
+
+	def __init__(self, meter, psi):
+		self._meter = meter
+		self._psi = psi
+
+	def prepare(self, **kwds):
+		self._meter.prepare(**kwds)
+
+	def __getattr__(self, name):
+		def func(*args, **kwds):
+			return getattr(self._meter, name)(self._psi, *args, **kwds)
+		return func
 
 
 class WavefunctionSet(PairedCalculation):
@@ -15,7 +31,7 @@ class WavefunctionSet(PairedCalculation):
 		self._constants = constants
 		self._grid = grid
 
-		self.type = CLASSICAL
+		self.type = REPR_CLASSICAL
 		self.in_mspace = False
 		self.time = 0
 
@@ -23,6 +39,9 @@ class WavefunctionSet(PairedCalculation):
 			self._plan = createFFTPlan(env, constants, grid)
 		elif isinstance(grid, HarmonicGrid):
 			self._plan = createFHTPlan(env, constants, grid, 1)
+
+		self.density_meter = _MeterWrapper(DensityMeter(env, constants, grid), self)
+		self.interaction_meter = _MeterWrapper(InteractionMeter(env, constants, grid), self)
 
 		self._random = createRandom(env, constants.double)
 
@@ -52,6 +71,11 @@ class WavefunctionSet(PairedCalculation):
 
 			self._mdata = self._env.allocate(self._mshape, dtype)
 			self.data = self._data = self._env.allocate(self._shape, dtype)
+
+		self.density_meter.prepare(components=self._p.components, ensembles=self._p.ensembles,
+			psi_type=self.type)
+		self.interaction_meter.prepare(components=self._p.components, ensembles=self._p.ensembles,
+			psi_type=self.type)
 
 	def _gpu__prepare_specific(self):
 		kernel_template = """
@@ -188,7 +212,7 @@ class WavefunctionSet(PairedCalculation):
 
 	def toWigner(self, ensembles):
 
-		assert self.type == CLASSICAL
+		assert self.type == REPR_CLASSICAL
 
 		self.createEnsembles(ensembles)
 
@@ -196,7 +220,7 @@ class WavefunctionSet(PairedCalculation):
 		# Scaling assumes that in modespace wavefunction normalized on atom number
 		randoms = self._env.allocate(self.shape, self._constants.complex.dtype)
 		self._random.random_normal(randoms, scale=numpy.sqrt(0.5))
-		projector_mask = self._env.toDevice(getProjectorMask(self._constants, self._grid))
+		projector_mask = self._grid.projector_mask_device
 		self._addVacuumParticles(randoms, projector_mask)
 
 		self.type = WIGNER
