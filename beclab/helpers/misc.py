@@ -148,3 +148,55 @@ def tile2D(x, y):
 	yy = numpy.tile(y, nx).reshape(nx, ny).transpose()
 
 	return xx, yy
+
+def reshape(arr, *shape):
+	# TODO: add more error-checking, perhaps
+	if isinstance(shape[0], tuple) or isinstance(shape[0], list):
+		shape = tuple(shape[0])
+	size = reduce(lambda x, y: x * y, shape, 1)
+	if size != arr.size:
+	   raise ValueError("total size of new array must be unchanged")
+
+	from pycuda.gpuarray import GPUArray
+	return GPUArray(
+			shape=shape,
+			dtype=arr.dtype,
+			allocator=arr.allocator,
+			base=arr,
+			gpudata=int(arr.gpudata))
+
+def ravel(arr):
+	return reshape(arr, arr.size)
+
+def view(arr, dtype=None):
+	if dtype is None:
+		dtype = arr.dtype
+
+	old_itemsize = arr.dtype.itemsize
+	itemsize = numpy.dtype(dtype).itemsize
+
+	if arr.shape[-1] * old_itemsize % itemsize != 0:
+		raise ValueError("new type not compatible with array")
+
+	shape = arr.shape[:-1] + (arr.shape[-1] * old_itemsize // itemsize,)
+
+	from pycuda.gpuarray import GPUArray
+	return GPUArray(
+			shape=shape,
+			dtype=dtype,
+			allocator=arr.allocator,
+			base=arr,
+			gpudata=int(arr.gpudata))
+
+def getView(arr, shape, offset=0, dtype=None):
+	new_size = reduce(lambda x, y: x * y, shape)
+
+	# workaround for numpy bug
+	if dtype is None:
+		dtype = arr.dtype
+
+	# FIXME: temporary solution to avoid unnecessary import of pycuda
+	if isinstance(arr, numpy.ndarray):
+		return arr.ravel()[offset:].view(dtype)[:new_size].reshape(shape)
+	else:
+		return reshape(view(ravel(arr)[offset:], dtype)[:new_size], shape)
