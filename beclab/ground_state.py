@@ -7,8 +7,13 @@ import numpy
 
 from .helpers import *
 from .wavefunction import WavefunctionSet
-from .meters import ParticleStatistics
 from .constants import *
+
+
+# GS initial conditions
+GS_INIT_TF = 0
+GS_INIT_UNIFORM = 1
+GS_INIT_RANDOM = 2
 
 
 class Projector(PairedCalculation):
@@ -18,7 +23,7 @@ class Projector(PairedCalculation):
 		self._constants = constants
 		self._grid = grid
 
-		mask = getProjectorMask(constants, grid)
+		mask = grid.projector_mask
 		if int(mask.sum()) == mask.size:
 			self.is_identity = True
 		else:
@@ -70,8 +75,7 @@ class TFGroundState(PairedCalculation):
 		PairedCalculation.__init__(self, env)
 		self._constants = constants
 		self._grid = grid
-		self._potentials = env.toDevice(getPotentials(constants, grid))
-		self._stats = ParticleStatistics(env, constants, grid)
+		self._potentials = grid.potentials_device
 		self._projector = Projector(env, constants, grid)
 
 		if isinstance(grid, HarmonicGrid):
@@ -82,7 +86,6 @@ class TFGroundState(PairedCalculation):
 
 	def _prepare(self):
 		self._projector.prepare(components=self._p.components, ensembles=1)
-		self._stats.prepare(components=self._p.components)
 		self._p.g = numpy.array([
 			self._constants.g[c, c] / self._constants.hbar for c in xrange(self._p.components)
 		])
@@ -167,7 +170,7 @@ class TFGroundState(PairedCalculation):
 		# calculated in x-space, and kinetic + potential operator is less significant.
 		#psi.toMSpace()
 		N_target = numpy.array(N)
-		N_real = self._stats.getN(psi)
+		N_real = psi.density_meter.getN()
 
 		coeffs = []
 		for target, real in zip(N_target, N_real):
@@ -199,13 +202,10 @@ class ImaginaryTimeGroundState(PairedCalculation):
 		self._constants = constants
 		self._grid = grid
 		self._tf_gs = TFGroundState(env, constants, grid)
-		self._statistics = ParticleStatistics(env, constants, grid)
-		self._addParameters(components=1, fix_total_N=False, E_modifier=0,
-			random_init=False)
+		self._addParameters(components=1, fix_total_N=False, E_modifier=0, gs_init=GS_INIT_TF)
 
 	def _prepare(self):
 		self._tf_gs.prepare(components=self._p.components)
-		self._statistics.prepare(components=self._p.components)
 
 	def _gpu__prepare_specific(self):
 		kernel_template = """
@@ -244,37 +244,41 @@ class ImaginaryTimeGroundState(PairedCalculation):
 		pass
 
 	def _total_E(self, psi, N):
-		return self._statistics.getEnergy(psi, N=N).sum()
+		return psi.interaction_meter.getEnergy(N=N).sum()
 
 	def _total_mu(self, psi, N):
-		return self._statistics.getMu(psi, N=N).sum()
+		return psi.interaction_meter.getMu(N=N).sum()
 
 	def _create(self, psi, N):
 
-		# it would be nice to use two-component TF state here,
-		# but the formula is quite complex, and it is much easier
-		# just to start from something approximately correct
-		#self._tf_gs.fillWithTF(psi, N)
+		if self._p.gs_init == GS_INIT_TF:
+			# it would be nice to use two-component TF state here,
+			# but the formula is quite complex, and it is much easier
+			# just to start from something approximately correct
+			self._tf_gs.fillWithTF(psi, N)
 
-		# starting with plain distribution, because it allows to keep
-		# starting conditions the same for any number of atoms
-		# (necessary for SO calculations, which are very sensitive)
-		if self._p.random_init:
-			psi.fillWithRandoms(1)
-		else:
+		elif self._p.gs_init == GS_INIT_UNIFORM:
+			# starting with plain distribution, because it allows to keep
+			# starting conditions the same for any number of atoms
+			# (necessary for SO calculations, which are very sensitive)
 			psi.fillWithValue(1)
 
-		new_N = self._statistics.getN(psi)
+		elif self._p.gs_init == GS_INIT_RANDOM:
+			psi.fillWithRandoms(1)
+
+		else:
+			raise ValueError("Wrong value of parameter 'gs_init':", self._p.gs_init)
+
+		new_N = psi.density_meter.getN()
 		coeffs = [numpy.sqrt(N[c] / new_N[c]) for c in xrange(self._p.components)]
 		self._renormalize(psi, coeffs)
 
 		N_target = numpy.array(N).sum()
 
-		stats = self._statistics
 		precision = self._p.relative_precision
 		dt_used = 0
 
-		total_N = lambda psi: stats.getN(psi).sum()
+		total_N = lambda psi: psi.density_meter.getN().sum()
 		total_E = self._total_E
 		total_mu = self._total_mu
 
@@ -300,7 +304,7 @@ class ImaginaryTimeGroundState(PairedCalculation):
 
 			# renormalization
 			self._toMeasurementSpace(psi)
-			new_N = stats.getN(psi)
+			new_N = psi.density_meter.getN()
 			if self._p.fix_total_N:
 				coeff = numpy.sqrt(N_target / new_N.sum())
 				coeffs = [coeff] * self._p.components
@@ -348,7 +352,7 @@ class SplitStepGroundState(ImaginaryTimeGroundState):
 	def __init__(self, env, constants, grid, **kwds):
 		assert isinstance(grid, UniformGrid)
 		ImaginaryTimeGroundState.__init__(self, env, constants, grid)
-		self._potentials = env.toDevice(getPotentials(constants, grid))
+		self._potentials = grid.potentials_device
 		self._addParameters(dt=1e-5, itmax=3, precision=1e-6)
 		self._projector = Projector(env, constants, grid)
 		self.prepare(**kwds)
@@ -717,8 +721,8 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 		ImaginaryTimeGroundState.__init__(self, env, constants, grid)
 
 		self._plan = createFFTPlan(env, constants, grid)
-		self._potentials = env.toDevice(getPotentials(constants, grid))
-		self._energy = env.toDevice(grid.energy)
+		self._potentials = grid.potentials_device
+		self._energy = grid.energy_device
 
 		self._propagator = RK5Propagation(env, constants, grid, mspace=False)
 		self._projector = Projector(env, constants, grid)
@@ -850,7 +854,7 @@ class RK5HarmonicGroundState(ImaginaryTimeGroundState):
 		assert isinstance(grid, HarmonicGrid)
 		ImaginaryTimeGroundState.__init__(self, env, constants, grid)
 
-		self._energy = env.toDevice(grid.energy)
+		self._energy = grid.energy_device
 		self._plan3 = createFHTPlan(env, constants, grid, 3)
 
 		self._projector = Projector(env, constants, grid)
