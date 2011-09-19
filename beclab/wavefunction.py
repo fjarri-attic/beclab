@@ -129,7 +129,7 @@ class WavefunctionSet(PairedCalculation):
 				%endfor
 			}
 
-			EXPORTED_FUNC void renormalize(int gsize, GLOBAL_MEM COMPLEX *data
+			EXPORTED_FUNC void multiply(int gsize, GLOBAL_MEM COMPLEX *data
 				%for comp in xrange(p.components):
 				, SCALAR c${comp}
 				%endfor
@@ -151,7 +151,7 @@ class WavefunctionSet(PairedCalculation):
 		self._kernel_fillWithValue = self.__program.fillWithValue
 		self._kernel_fillEnsembles = self.__program.fillEnsembles
 		self._kernel_addVacuumParticles = self.__program.addVacuumParticles
-		self._kernel_renormalize = self.__program.renormalize
+		self._kernel_multiply = self.__program.multiply
 
 	def _cpu__kernel_addVacuumParticles(self, gsize, modespace_data, randoms, mask):
 		tile = (self.components, self.ensembles,) + (1,) * self._grid.dim
@@ -169,7 +169,7 @@ class WavefunctionSet(PairedCalculation):
 		for comp in xrange(self._p.components):
 			result[comp].flat[:] = numpy.tile(data[comp], tile).flat
 
-	def _cpu__kernel_renormalize(self, gsize, data, *coeffs):
+	def _cpu__kernel_multiply(self, gsize, data, *coeffs):
 		for c in xrange(self._p.components):
 			data[c] *= coeffs[c]
 
@@ -259,7 +259,7 @@ class WavefunctionSet(PairedCalculation):
 		gpu_data = self._env.toDevice(randoms.astype(self._constants.complex.dtype))
 		self._env.copyBuffer(gpu_data, dest=self.data)
 
-	def renormalize(self, coeffs):
+	def multiplyBy(self, coeffs):
 		cast = self._constants.scalar.cast
 		coeffs = tuple(cast(x) for x in coeffs)
-		self._kernel_renormalize(self.size, self.data, *coeffs)
+		self._kernel_multiply(self.size, self.data, *coeffs)

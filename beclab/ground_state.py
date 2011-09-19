@@ -209,36 +209,6 @@ class ImaginaryTimeGroundState(PairedCalculation):
 	def _prepare(self):
 		self._tf_gs.prepare(components=self._p.components)
 
-	def _gpu__prepare_specific(self):
-		kernel_template = """
-			EXPORTED_FUNC void multiplyConstantCS(int gsize, GLOBAL_MEM COMPLEX *data,
-				SCALAR c0, SCALAR c1)
-			{
-				LIMITED_BY(gsize);
-				COMPLEX val;
-
-				%for component in xrange(p.components):
-				val = data[GLOBAL_INDEX + gsize * ${component}];
-				data[GLOBAL_INDEX + gsize * ${component}] =
-					complex_mul_scalar(val, c${component});
-				%endfor
-			}
-		"""
-
-		self.__program = self.compileProgram(kernel_template)
-		self._kernel_multiplyConstantCS = self.__program.multiplyConstantCS
-
-	def _cpu__kernel_multiplyConstantCS(self, gsize, data, c0, c1):
-		coeffs = (c0, c1)
-		for c in xrange(self._p.components):
-			data[c] *= coeffs[c]
-
-	def _renormalize(self, psi, coeffs):
-		cast = self._constants.scalar.cast
-		c0 = coeffs[0]
-		c1 = coeffs[1] if self._p.components > 1 else 0
-		self._kernel_multiplyConstantCS(psi.size, psi.data, cast(c0), cast(c1))
-
 	def _toEvolutionSpace(self, psi):
 		pass
 
@@ -270,7 +240,7 @@ class ImaginaryTimeGroundState(PairedCalculation):
 
 		new_N = psi.density_meter.getNTotal()
 		coeffs = [numpy.sqrt(N[c] / new_N[c]) for c in xrange(self._p.components)]
-		self._renormalize(psi, coeffs)
+		psi.multiplyBy(coeffs)
 
 		N_target = numpy.array(N).sum()
 
@@ -308,7 +278,7 @@ class ImaginaryTimeGroundState(PairedCalculation):
 				coeffs = [coeff] * self._p.components
 			else:
 				coeffs = [numpy.sqrt(N[c] / new_N[c]) for c in xrange(self._p.components)]
-			self._renormalize(psi, coeffs)
+			psi.multiplyBy(coeffs)
 			E = new_E
 			new_E = total_E(psi, N_target)
 			self._toEvolutionSpace(psi)
