@@ -2,8 +2,8 @@ import numpy
 import math
 
 from .helpers import *
-from .constants import CLASSICAL, WIGNER
-from .meters import ParticleStatistics, DensityProfile, Uncertainty, getXiSquared
+from .constants import REPR_CLASSICAL, REPR_WIGNER
+from .meters import DensityProfile, Uncertainty, getXiSquared
 from .evolution import TerminateEvolution
 from .pulse import Pulse
 from .wavefunction import WavefunctionSet
@@ -21,14 +21,14 @@ class ParticleNumberCollector(PairedCalculation):
 		self.N = []
 
 		self._psi = WavefunctionSet(env, constants, grid)
-		self._addParameters(components=2, ensembles=1, psi_type=CLASSICAL)
+		self._addParameters(components=2, ensembles=1, psi_type=REPR_CLASSICAL)
 
 	def _prepare(self):
 		self.stats.prepare(components=self._p.components, ensembles=self._p.ensembles,
 			psi_type=self._p.psi_type)
 		self._psi.prepare(components=self._p.components, ensembles=self._p.ensembles)
 
-	def __call__(self, t, psi):
+	def __call__(self, t, dt, psi):
 		psi.copyTo(self._psi)
 
 		if self._pulse is not None:
@@ -53,8 +53,8 @@ class ParticleNumberCondition(ParticleNumberCollector):
 		self._previous_ratio = None
 		self._ratio = ratio
 
-	def __call__(self, t, psi):
-		ParticleNumberCollector.__call__(self, t, psi)
+	def __call__(self, t, dt, psi):
+		ParticleNumberCollector.__call__(self, t, dt, psi)
 
 		ratio = self.N[-1][0] / (self.N[-1][0] + self.N[-1][1])
 
@@ -75,13 +75,13 @@ class PhaseNoiseCollector(PairedCalculation):
 		self.phnoise = []
 		self._verbose = verbose
 
-		self._addParameters(components=2, ensembles=1, psi_type=CLASSICAL)
+		self._addParameters(components=2, ensembles=1, psi_type=REPR_CLASSICAL)
 
 	def _prepare(self):
 		self._stats.prepare(components=self._p.components, ensembles=self._p.ensembles,
 			psi_type=self._p.psi_type)
 
-	def __call__(self, t, psi):
+	def __call__(self, t, dt, psi):
 		phnoise = self._stats.getPhaseNoise(psi)
 
 		if self._verbose:
@@ -103,13 +103,13 @@ class PzNoiseCollector(PairedCalculation):
 		self.pznoise = []
 		self._verbose = verbose
 
-		self._addParameters(components=2, ensembles=1, psi_type=CLASSICAL)
+		self._addParameters(components=2, ensembles=1, psi_type=REPR_CLASSICAL)
 
 	def _prepare(self):
 		self._stats.prepare(components=self._p.components, ensembles=self._p.ensembles,
 			psi_type=self._p.psi_type)
 
-	def __call__(self, t, psi):
+	def __call__(self, t, dt, psi):
 		pznoise = self._stats.getPzNoise(psi)
 
 		if self._verbose:
@@ -132,13 +132,13 @@ class VisibilityCollector(PairedCalculation):
 		self.times = []
 		self.visibility = []
 
-		self._addParameters(components=2, ensembles=1, psi_type=CLASSICAL)
+		self._addParameters(components=2, ensembles=1, psi_type=REPR_CLASSICAL)
 
 	def _prepare(self):
 		self.stats.prepare(components=self._p.components,
 			ensembles=self._p.ensembles, psi_type=self._p.psi_type)
 
-	def __call__(self, t, psi):
+	def __call__(self, t, dt, psi):
 		v = self.stats.getVisibility(psi)
 
 		if self.verbose:
@@ -166,14 +166,14 @@ class SurfaceProjectionCollector(PairedCalculation):
 		self.xy = []
 		self.yz = []
 
-		self._addParameters(components=2, ensembles=1, psi_type=CLASSICAL)
+		self._addParameters(components=2, ensembles=1, psi_type=REPR_CLASSICAL)
 
 	def _prepare(self):
 		self._projection.prepare(components=self._p.components,
 			ensembles=self._p.ensembles, psi_type=self._p.psi_type)
 		self._psi.prepare(components=self._p.components, ensembles=self._p.ensembles)
 
-	def __call__(self, t, psi):
+	def __call__(self, t, dt, psi):
 		psi.copyTo(self._psi)
 
 		if self._pulse is not None:
@@ -205,14 +205,14 @@ class AxialProjectionCollector(PairedCalculation):
 		self.snapshots = []
 		self._psi = WavefunctionSet(env, constants, grid)
 
-		self._addParameters(components=2, ensembles=1, psi_type=CLASSICAL)
+		self._addParameters(components=2, ensembles=1, psi_type=REPR_CLASSICAL)
 
 	def _prepare(self):
 		self._projection.prepare(components=self._p.components,
 			ensembles=self._p.ensembles, psi_type=self._p.psi_type)
 		self._psi.prepare(components=self._p.components, ensembles=self._p.ensembles)
 
-	def __call__(self, t, psi):
+	def __call__(self, t, dt, psi):
 
 		psi.copyTo(self._psi)
 
@@ -240,13 +240,13 @@ class UncertaintyCollector(PairedCalculation):
 		self.N_stddev = []
 		self.XiSquared = []
 
-		self._addParameters(components=2, ensembles=1, psi_type=CLASSICAL)
+		self._addParameters(components=2, ensembles=1, psi_type=REPR_CLASSICAL)
 
 	def _prepare(self):
 		self._unc.prepare(components=self._p.components,
 			ensembles=self._p.ensembles, psi_type=self._p.psi_type)
 
-	def __call__(self, t, psi):
+	def __call__(self, t, dt, psi):
 		self.times.append(t)
 		self.N_stddev.append(self._unc.getNstddev(psi))
 		i, n = self._unc.getEnsembleSums(psi)
@@ -270,7 +270,7 @@ class SpinCloudCollector:
 		self._unc.prepare(components=kwds['components'],
 			ensembles=kwds['ensembles'], psi_type=kwds['psi_type'])
 
-	def __call__(self, t, psi):
+	def __call__(self, t, dt, psi):
 		self.times.append(t)
 		i, n = self._unc.getEnsembleSums(psi)
 		phi, yps = getSpins(i, n[0], n[1])
@@ -298,7 +298,7 @@ class AnalyticNoiseCollector:
 		self._stats.prepare(components=kwds['components'],
 			ensembles=kwds['ensembles'], psi_type=kwds['psi_type'])
 
-	def __call__(self, t, psi):
+	def __call__(self, t, dt, psi):
 		n = self._env.fromDevice(self._stats.getAverageDensity(psi))
 		dV = self._grid.dV
 

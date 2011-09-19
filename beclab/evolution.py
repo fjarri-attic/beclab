@@ -28,13 +28,13 @@ class Evolution(PairedCalculation):
 	def _collectMetrics(self, t):
 		pass
 
-	def _runCallbacks(self, psi, callbacks):
+	def _runCallbacks(self, psi, callbacks, dt):
 		if callbacks is None:
 			return
 
 		self._toMeasurementSpace(psi)
 		for callback in callbacks:
-			callback(psi.time, psi)
+			callback(psi.time, dt, psi)
 		self._toEvolutionSpace(psi)
 
 	def run(self, psi, time, callbacks=None, callback_dt=0, starting_phase=0):
@@ -46,7 +46,7 @@ class Evolution(PairedCalculation):
 
 		self._phi = starting_phase
 		self.prepare(ensembles=psi.ensembles, components=psi.components,
-			noise=(psi.type == WIGNER))
+			psi_type=psi.type)
 
 		starting_time = psi.time
 		callback_t = 0
@@ -55,7 +55,8 @@ class Evolution(PairedCalculation):
 		self._toEvolutionSpace(psi)
 
 		try:
-			self._runCallbacks(psi, callbacks)
+			dt_used = 0
+			self._runCallbacks(psi, callbacks, dt_used)
 
 			# 1e-10 modifier allow us to avoid cases when passed time
 			# is very close to time (due to floating point errors)
@@ -70,14 +71,14 @@ class Evolution(PairedCalculation):
 				callback_t += dt_used
 				time_till_finish -= dt_used
 
-				if dt_used == max_dt:
-					self._runCallbacks(psi, callbacks)
+				if callback_dt == 0 or dt_used == max_dt:
+					self._runCallbacks(psi, callbacks, dt_used)
 					callback_t = 0
 
 			# if some time passed after the last execution of callbacks,
 			# run them again
 			if callback_t != 0:
-				self._runCallbacks(psi, callbacks)
+				self._runCallbacks(psi, callbacks, dt_used)
 
 			self._toMeasurementSpace(psi)
 
@@ -275,12 +276,13 @@ class SplitStepEvolution(Evolution):
 
 		self._kdt = 0
 
-		self._potentials = env.toDevice(getPotentials(constants, grid))
+		self._potentials = grid.potentials_device
+		self._kvectors = grid.energy_device
 
 		self._projector = Projector(env, constants, grid)
 
 		self._addParameters(f_rabi=0, f_detuning=0, dt=1e-5, noise=False,
-			ensembles=1, itmax=3, components=2)
+			ensembles=1, itmax=3, components=2, psi_type=REPR_CLASSICAL)
 		self.prepare(**kwds)
 
 	def _prepare(self):
@@ -293,8 +295,6 @@ class SplitStepEvolution(Evolution):
 		self._p.w_detuning = 2 * numpy.pi * self._p.f_detuning
 		self._p.w_rabi = 2 * numpy.pi * self._p.f_rabi
 
-		self._kvectors = self._env.toDevice(self._grid.energy)
-
 		self._p.grid_size = self._grid.size
 		self._p.comp_size = self._grid.size * self._p.ensembles
 
@@ -302,7 +302,7 @@ class SplitStepEvolution(Evolution):
 
 		self._p.losses_drift = copy.deepcopy(self._constants.losses_drift)
 
-		if self._p.noise:
+		if self._p.psi_type == REPR_WIGNER:
 			self._noise_prop.prepare(components=self._p.components, ensembles=self._p.ensembles)
 
 	def _gpu__prepare_specific(self):
@@ -564,7 +564,7 @@ class SplitStepEvolution(Evolution):
 		psi.toXSpace()
 		self._xpropagate(psi, t, self._phi, dt)
 
-		if self._p.noise:
+		if self._p.psi_type == REPR_WIGNER:
 			self._noise_prop.propagateNoise(psi, dt)
 
 		self._midstep = True
@@ -585,8 +585,8 @@ class RK5IPEvolution(Evolution):
 		self._grid = grid
 
 		self._plan = createFFTPlan(env, constants, grid)
-		self._potentials = env.toDevice(getPotentials(constants, grid))
-		self._energy = env.toDevice(grid.energy)
+		self._potentials = grid.potentials_device
+		self._energy = grid.energy_device
 
 		self._projector = Projector(env, constants, grid)
 
@@ -796,7 +796,7 @@ class RK5HarmonicEvolution(Evolution):
 		self._constants = constants
 		self._grid = grid
 
-		self._energy = env.toDevice(grid.energy)
+		self._energy = grid.energy_device
 		self._plan3 = createFHTPlan(env, constants, grid, 3)
 
 		self._projector = Projector(env, constants, grid)
