@@ -26,6 +26,11 @@ class _MeterWrapper:
 
 class WavefunctionSet(PairedCalculation):
 
+	__meters__ = {
+		'density_meter': DensityMeter,
+		'interaction_meter': InteractionMeter,
+	}
+
 	def __init__(self, env, constants, grid, **kwds):
 		PairedCalculation.__init__(self, env)
 		self._constants = constants
@@ -40,15 +45,22 @@ class WavefunctionSet(PairedCalculation):
 		elif isinstance(grid, HarmonicGrid):
 			self._plan = createFHTPlan(env, constants, grid, 1)
 
-		self.density_meter = _MeterWrapper(DensityMeter(env, constants, grid), self)
-		self.interaction_meter = _MeterWrapper(InteractionMeter(env, constants, grid), self)
-
 		self._random = createRandom(env, constants.double)
 
 		self._addParameters(components=2, ensembles=1)
 		self.prepare(**kwds)
 
 		self._kernel_fillWithZeros(self.size, self.data)
+
+	def __getattr__(self, name):
+		if name not in self.__meters__:
+			raise AttributeError(name)
+
+		# Creating meters on first access
+		cls = self.__meters__[name]
+		meter = cls(self._env, self._constants, self._grid,
+			components=self._p.components, ensembles=self._p.ensembles, psi_type=self.type)
+		setattr(self, name, _MeterWrapper(meter, self))
 
 	def _prepare(self):
 		dtype = self._constants.complex.dtype
@@ -72,10 +84,10 @@ class WavefunctionSet(PairedCalculation):
 			self._mdata = self._env.allocate(self._mshape, dtype)
 			self.data = self._data = self._env.allocate(self._shape, dtype)
 
-		self.density_meter.prepare(components=self._p.components, ensembles=self._p.ensembles,
-			psi_type=self.type)
-		self.interaction_meter.prepare(components=self._p.components, ensembles=self._p.ensembles,
-			psi_type=self.type)
+		for name in self.__meters__:
+			if hasattr(self, name):
+				getattr(self, name).prepare(components=self._p.components,
+					ensembles=self._p.ensembles, psi_type=self.type)
 
 	def _gpu__prepare_specific(self):
 		kernel_template = """
