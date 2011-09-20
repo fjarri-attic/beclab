@@ -204,7 +204,7 @@ class ImaginaryTimeGroundState(PairedCalculation):
 		self._grid = grid
 		self._tf_gs = TFGroundState(env, constants, grid)
 		self._obs = IntegralMeter(env, constants, grid)
-		self._addParameters(components=1, fix_total_N=False, E_modifier=0, gs_init=GS_INIT_TF)
+		self._addParameters(components=1)
 
 	def _prepare(self):
 		self._tf_gs.prepare(components=self._p.components)
@@ -218,21 +218,22 @@ class ImaginaryTimeGroundState(PairedCalculation):
 	def _total_E(self, psi, N):
 		return self._obs.getEPerParticle(psi, N=N).sum()
 
-	def _create(self, psi, N):
+	def _create(self, psi, N, fix_total_N=False, E_modifier=0, gs_init=GS_INIT_TF,
+			relative_precision=1e-0):
 
-		if self._p.gs_init == GS_INIT_TF:
+		if gs_init == GS_INIT_TF:
 			# it would be nice to use two-component TF state here,
 			# but the formula is quite complex, and it is much easier
 			# just to start from something approximately correct
 			self._tf_gs.fillWithTF(psi, N)
 
-		elif self._p.gs_init == GS_INIT_UNIFORM:
+		elif gs_init == GS_INIT_UNIFORM:
 			# starting with plain distribution, because it allows to keep
 			# starting conditions the same for any number of atoms
 			# (necessary for SO calculations, which are very sensitive)
 			psi.fillWithValue(1)
 
-		elif self._p.gs_init == GS_INIT_RANDOM:
+		elif gs_init == GS_INIT_RANDOM:
 			psi.fillWithRandoms(1)
 
 		else:
@@ -244,14 +245,12 @@ class ImaginaryTimeGroundState(PairedCalculation):
 
 		N_target = numpy.array(N).sum()
 
-		precision = self._p.relative_precision
 		dt_used = 0
 
 		total_N = lambda psi: psi.density_meter.getNTotal().sum()
 		total_E = self._total_E
 
 		E = 0.0
-		dE = self._p.E_modifier
 
 		new_E = total_E(psi, N_target)
 
@@ -265,7 +264,7 @@ class ImaginaryTimeGroundState(PairedCalculation):
 		# FIXME: E can be negative (not sure if this is a good thing,
 		# but this can happen if chem. potential should be added to it;
 		# anyway, we just need to find the state where energy does not change)
-		while abs((E - new_E) / (new_E + dE)) > precision * dt_used:
+		while abs((E - new_E) / (new_E + E_modifier)) > relative_precision * dt_used:
 
 			# propagation
 			dt_used = self._propagate(psi)
@@ -273,7 +272,7 @@ class ImaginaryTimeGroundState(PairedCalculation):
 			# renormalization
 			self._toMeasurementSpace(psi)
 			new_N = psi.density_meter.getNTotal()
-			if self._p.fix_total_N:
+			if fix_total_N:
 				coeff = numpy.sqrt(N_target / new_N.sum())
 				coeffs = [coeff] * self._p.components
 			else:
@@ -296,18 +295,18 @@ class ImaginaryTimeGroundState(PairedCalculation):
 
 		if len(N) == 1:
 			psi = WavefunctionSet(self._env, self._constants, self._grid, components=1)
-			self.prepare(components=1, **kwds)
-			self._create(psi, N)
+			self.prepare(components=1)
+			self._create(psi, N, **kwds)
 		elif len(N) == 2 and N[1] == 0:
 			psi1 = WavefunctionSet(self._env, self._constants, self._grid, components=1)
-			self.prepare(components=1, **kwds)
-			self._create(psi1, (N[0],))
+			self.prepare(components=1)
+			self._create(psi1, (N[0],), **kwds)
 			psi = WavefunctionSet(self._env, self._constants, self._grid, components=2)
 			psi.fillComponent(0, psi1, 0)
 		else:
 			psi = WavefunctionSet(self._env, self._constants, self._grid, components=2)
-			self.prepare(components=2, **kwds)
-			self._create(psi, N)
+			self.prepare(components=2)
+			self._create(psi, N, **kwds)
 
 		return psi
 
@@ -321,20 +320,43 @@ class SplitStepGroundState(ImaginaryTimeGroundState):
 		assert isinstance(grid, UniformGrid)
 		ImaginaryTimeGroundState.__init__(self, env, constants, grid)
 		self._potentials = grid.potentials_device
-		self._addParameters(dt=1e-5, itmax=3, precision=1e-6)
+		self._addParameters(dt=1e-5, itmax=3)
 		self._projector = Projector(env, constants, grid)
 		self.prepare(**kwds)
 
 	def _prepare(self):
 		self._projector.prepare(components=self._p.components, ensembles=1)
-		self._p.relative_precision = self._p.precision / self._p.dt
 		self._p.g = self._constants.g / self._constants.hbar
 		energy = self._grid.energy
-		self._mode_prop = self._env.toDevice(numpy.exp(energy * (-self._p.dt / 2)))
+		if self._constants.so_coupling:
+			self._mode_prop = self._env.toDevice(
+				buildEnergyExp(energy, dt=self._p.dt / 2, imaginary_time=True))
+		else:
+			self._mode_prop = self._env.toDevice(numpy.exp(energy * (-self._p.dt / 2)))
 
 	def _gpu__prepare_specific(self, **kwds):
 		kernel_template = """
 			// Propagates psi function in mode space
+			%if c.so_coupling:
+			EXPORTED_FUNC void mpropagate(int gsize, GLOBAL_MEM COMPLEX *data,
+				GLOBAL_MEM COMPLEX *mode_prop)
+			{
+				LIMITED_BY(gsize);
+
+				COMPLEX mode_prop00 = mode_prop[GLOBAL_INDEX];
+				COMPLEX mode_prop01 = mode_prop[GLOBAL_INDEX + ${g.msize}];
+				COMPLEX mode_prop10 = mode_prop[GLOBAL_INDEX + ${g.msize * 2}];
+				COMPLEX mode_prop11 = mode_prop[GLOBAL_INDEX + ${g.msize * 3}];
+
+				COMPLEX data0 = data[GLOBAL_INDEX];
+				COMPLEX data1 = data[GLOBAL_INDEX + ${g.msize}];
+
+				data[GLOBAL_INDEX] = complex_mul(data0, mode_prop00) +
+					complex_mul(data1, mode_prop01);
+				data[GLOBAL_INDEX + ${g.msize}] = complex_mul(data0, mode_prop10) +
+					complex_mul(data1, mode_prop11);
+			}
+			%else:
 			EXPORTED_FUNC void mpropagate(int gsize, GLOBAL_MEM COMPLEX *data,
 				GLOBAL_MEM SCALAR *mode_prop)
 			{
@@ -347,6 +369,7 @@ class SplitStepGroundState(ImaginaryTimeGroundState):
 				data[GLOBAL_INDEX + gsize * ${comp}] = complex_mul_scalar(val, prop);
 				%endfor
 			}
+			%endif
 
 			// Propagates state in x-space for steady state calculation
 			EXPORTED_FUNC void xpropagate(int gsize, GLOBAL_MEM COMPLEX *data,
@@ -395,8 +418,13 @@ class SplitStepGroundState(ImaginaryTimeGroundState):
 		self._kernel_xpropagate = self.__program.xpropagate
 
 	def _cpu__kernel_mpropagate(self, gsize, data, mode_prop):
-		for c in xrange(self._p.components):
-			data[c, 0] *= mode_prop
+		if self._constants.so_coupling:
+			data_copy = data.copy()
+			data[0] = mode_prop[0, 0] * data_copy[0] + mode_prop[0, 1] * data_copy[1]
+			data[1] = mode_prop[1, 0] * data_copy[0] + mode_prop[1, 1] * data_copy[1]
+		else:
+			for c in xrange(self._p.components):
+				data[c, 0] *= mode_prop
 
 	def _cpu__kernel_xpropagate(self, gsize, data, potentials):
 		data_copy = data.copy()
@@ -431,6 +459,10 @@ class SplitStepGroundState(ImaginaryTimeGroundState):
 		self._kernel_mpropagate(psi.size, psi.data, self._mode_prop)
 		self._projector(psi.data)
 		return self._p.dt
+
+	def create(self, N, precision=1e-6, **kwds):
+		kwds['relative_precision'] = precision / self._p.dt
+		return ImaginaryTimeGroundState.create(self, N, **kwds)
 
 
 class RK5Propagation(PairedCalculation):
@@ -695,8 +727,7 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 		self._propagator = RK5Propagation(env, constants, grid, mspace=False)
 		self._projector = Projector(env, constants, grid)
 
-		self._addParameters(relative_precision=1e-0, atol_coeff=1e-3,
-			eps=1e-6, dt_guess=1e-7, Nscale=10000)
+		self._addParameters(atol_coeff=1e-3, eps=1e-6, dt_guess=1e-7, Nscale=10000)
 		self.prepare(**kwds)
 
 	def _prepare(self):
@@ -812,7 +843,7 @@ class RK5IPGroundState(ImaginaryTimeGroundState):
 		self._toIP(data, -dt, project)
 
 	def create(self, N, **kwds):
-		kwds['Nscale'] = max(N)
+		self.prepare(Nscale=max(N))
 		return ImaginaryTimeGroundState.create(self, N, **kwds)
 
 
@@ -828,8 +859,7 @@ class RK5HarmonicGroundState(ImaginaryTimeGroundState):
 		self._projector = Projector(env, constants, grid)
 		self._propagator = RK5Propagation(env, constants, grid, mspace=True)
 
-		self._addParameters(kwds, relative_precision=1e-0,
-			atol_coeff=1e-3, eps=1e-6, dt_guess=1e-7, Nscale=10000)
+		self._addParameters(kwds, atol_coeff=1e-3, eps=1e-6, dt_guess=1e-7, Nscale=10000)
 
 	def _prepare(self):
 		self._projector.prepare(components=self._p.components, ensembles=1)
@@ -931,3 +961,7 @@ class RK5HarmonicGroundState(ImaginaryTimeGroundState):
 
 	def _toEvolutionSpace(self, psi):
 		psi.toMSpace()
+
+	def create(self, N, **kwds):
+		self.prepare(Nscale=max(N))
+		return ImaginaryTimeGroundState.create(self, N, **kwds)
