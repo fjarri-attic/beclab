@@ -200,3 +200,30 @@ def getView(arr, shape, offset=0, dtype=None):
 		return arr.ravel()[offset:].view(dtype)[:new_size].reshape(shape)
 	else:
 		return reshape(view(ravel(arr)[offset:], dtype)[:new_size], shape)
+
+def elementwiseMatrixExp(a):
+	assert a.shape[:2] == (2, 2)
+
+	delta = numpy.sqrt((a[0, 0] - a[1, 1]) ** 2 + 4 * a[0, 1] * a[1, 0])
+	sinh_d = numpy.sinh(delta / 2)
+	cosh_d = numpy.cosh(delta / 2)
+	t = numpy.exp((a[0, 0] + a[1, 1]) / 2)
+
+	m11 = t * (delta * cosh_d + (a[0, 0] - a[1, 1]) * sinh_d)
+	m12 = 2 * a[0, 1] * t * sinh_d
+	m21 = 2 * a[1, 0] * t * sinh_d
+	m22 = t * (delta * cosh_d + (a[1, 1] - a[0, 0]) * sinh_d)
+
+	res = numpy.array([[m11, m12], [m21, m22]])
+
+	# Some elements of delta may equal to 0; in this case
+	# we have to process these positions taking the limit of delta -> 0
+	res_limit = t * numpy.array([
+		[1 + (a[0, 0] - a[1, 1]) / 2, a[0, 1]],
+		[a[1, 0], 1 - (a[0, 0] - a[1, 1]) / 2]
+	])
+
+	func = lambda r, r_limit, d: r / d if d != 0 else r_limit
+	vfunc = numpy.vectorize(func)
+
+	return vfunc(res, res_limit, delta)
