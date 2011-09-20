@@ -94,11 +94,13 @@ def runTest(env, comp, grid_type, dim, gs_type, use_cutoff):
 
 	if gs_type == "TF":
 		gs = TFGroundState(*args)
+		gs_kwds = {}
 	elif gs_type == "split-step":
-		gs = SplitStepGroundState(*args, precision=ss_precision, dt=ss_dt)
+		gs = SplitStepGroundState(*args, dt=ss_dt)
+		gs_kwds = dict(precision=ss_precision)
 	elif gs_type == "rk5":
-		params = dict(eps=rk5_rtol, Nscale=total_N, atol_coeff=rk5_atol_coeff,
-			relative_precision=rk5_rprecision)
+		params = dict(eps=rk5_rtol, atol_coeff=rk5_atol_coeff)
+		gs_kwds = dict(relative_precision=rk5_rprecision)
 		if grid_type == 'uniform':
 			gs = RK5IPGroundState(*args, **params)
 		elif grid_type == 'harmonic':
@@ -106,7 +108,7 @@ def runTest(env, comp, grid_type, dim, gs_type, use_cutoff):
 
 	# Create ground state
 	t1 = time.time()
-	psi = gs.create(target_N)
+	psi = gs.create(target_N, **gs_kwds)
 	t2 = time.time()
 	t_gs = t2 - t1
 
