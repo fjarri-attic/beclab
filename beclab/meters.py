@@ -238,12 +238,6 @@ class InteractionMeter(PairedCalculation):
 		self._p.g = self._constants.g / self._constants.hbar
 		self._p.need_potentials = isinstance(self._grid, UniformGrid)
 
-		self._p.g_intra = self._constants.g_intra / self._constants.hbar
-		self._p.g_inter = self._constants.g_inter / self._constants.hbar
-
-		if self._grid.dim == 2 and self._p.components >= 2:
-			self._so_energy = grid.so_energy_device
-
 		if self._p.psi_type == REPR_WIGNER:
 			self._density_modifiers = self._env.toDevice(self._grid.density_modifiers)
 		else:
@@ -312,34 +306,7 @@ class InteractionMeter(PairedCalculation):
 				%endfor
 			}
 
-			%if p.components >= 2:
-			EXPORTED_FUNC void invariantSO(int gsize, GLOBAL_MEM COMPLEX *res_mdata,
-				GLOBAL_MEM COMPLEX *xdata, GLOBAL_MEM SCALAR *potentials, int coeff)
-			{
-				LIMITED_BY(gsize);
-
-				%for comp in xrange(p.components):
-				int id${comp} = GLOBAL_INDEX + gsize * ${comp};
-				COMPLEX xdata${comp} = xdata[id${comp}];
-				COMPLEX mdata${comp} = res_mdata[id${comp}];
-				SCALAR n${comp} = squared_abs(xdata${comp});
-				%endfor
-
-				SCALAR potential = potentials[GLOBAL_INDEX % (gsize / ${p.ensembles})];
-
-				SCALAR nonlinear0 = potential +
-					((SCALAR)${p.g_intra} * n0 + (SCALAR)${p.g_inter} * n1) / coeff;
-				SCALAR nonlinear1 = potential +
-					((SCALAR)${p.g_inter} * n0 + (SCALAR)${p.g_intra} * n1) / coeff;
-
-				%for comp in xrange(p.components):
-				nonlinear${comp} *= n${comp};
-				COMPLEX differential${comp} = complex_mul(conj(xdata${comp}), mdata${comp});
-
-				res_mdata[id${comp}] = complex_ctr(nonlinear${comp}, 0) + differential${comp};
-				%endfor
-			}
-
+			%if c.so_coupling:
 			EXPORTED_FUNC void multiplySOEnergy(int gsize,
 				GLOBAL_MEM COMPLEX *mdata, GLOBAL_MEM COMPLEX *energy)
 			{
@@ -382,8 +349,7 @@ class InteractionMeter(PairedCalculation):
 		self._kernel_invariant = self._program.invariant
 		self._kernel_multiplyTiledCS = self._program.multiplyTiledCS
 
-		if self._p.components >= 2:
-			self._kernel_invariantSO = self._program.invariantSO
+		if self._constants.so_coupling >= 2:
 			self._kernel_multiplySOEnergy = self._program.multiplySOEnergy
 
 	def _cpu__kernel_interaction(self, gsize, res, data):
@@ -410,31 +376,18 @@ class InteractionMeter(PairedCalculation):
 			for comp_other in xrange(components):
 				res_mdata[comp] += n[comp] * (g[comp, comp_other] * n[comp_other] / coeff)
 
-	def _cpu__kernel_invariantSO(self, gsize, res_mdata, xdata, potentials, coeff):
-
-		tile = (self._p.ensembles,) + (1,) * self._grid.dim
-		g_intra = self._p.g_intra
-		g_inter = self._p.g_inter
-		n = numpy.abs(xdata) ** 2
-		components = self._p.components
-
-		res_mdata *= xdata.conj()
-		for comp in xrange(components):
-			res_mdata[comp] += numpy.tile(potentials, tile) * n[comp]
-
-		res_mdata[0] += n[0] * (g_intra * n[0] + g_inter * n[1]) / coeff
-		res_mdata[1] += n[1] * (g_inter * n[0] + g_intra * n[1]) / coeff
-
 	def _cpu__kernel_multiplySOEnergy(self, msize, mdata, energy):
 		mdata_copy = mdata.copy()
 		mdata[0, 0] = mdata_copy[0, 0] * energy[0, 0] + mdata_copy[1, 0] * energy[0, 1]
 		mdata[1, 0] = mdata_copy[0, 0] * energy[1, 0] + mdata_copy[1, 0] * energy[1, 1]
 
-	def _getInvariant(self, psi, coeff, so=False):
+	def _getInvariant(self, psi, coeff):
 
 		# TODO: work out the correct formula for Wigner function's E/mu
 		if psi.type != REPR_CLASSICAL:
 			raise NotImplementedError()
+
+		so = self._constants.so_coupling
 
 		batch = self._p.ensembles * self._p.components
 		xsize = self._grid.size * self._p.ensembles
@@ -444,7 +397,7 @@ class InteractionMeter(PairedCalculation):
 		# FIXME: not a good way to provide transformation
 		psi._plan.execute(psi.data, self._cbuffer_cem, batch=batch)
 		if so:
-			self._kernel_multiplySOEnergy(msize, self._cbuffer_cem, self._so_energy)
+			self._kernel_multiplySOEnergy(msize, self._cbuffer_cem, self._energy)
 		else:
 			self._kernel_multiplyTiledCS(msize, self._cbuffer_cem, self._energy,
 				numpy.int32(self._p.components))
@@ -484,19 +437,11 @@ class InteractionMeter(PairedCalculation):
 
 	def getETotal(self, psi):
 		"""Returns total energy"""
-		return self._getInvariant(psi, 2, so=False)
+		return self._getInvariant(psi, 2)
 
 	def getMuTotal(self, psi):
 		"""Returns total chemical potential"""
-		return self._getInvariant(psi, 1, so=False)
-
-	def getETotal_SO(self, psi):
-		"""Returns total energy in SO case"""
-		return self._getSOInvariant(psi, 2, so=True)
-
-	def getMuTotal_SO(self, psi):
-		"""Returns total chemical potential in SO case"""
-		return self._getSOInvariant(psi, 1, so=True)
+		return self._getInvariant(psi, 1)
 
 
 class IntegralMeter:

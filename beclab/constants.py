@@ -28,11 +28,8 @@ _DEFAULTS = {
 	'a22': 95.68,
 	'a12': 98.13,
 
-	# FIXME: temporary constants for SO-coupling
-	# (at least, need to fill it with some real values)
-	'g_intra': 1,
-	'g_inter': 1,
-	'lambda_R': 1,
+	# Spin-orbit coupling
+	'lambda_R': 0,
 
 	# mass of one particle (rubidium-87)
 	'm': 1.443160648e-25,
@@ -176,42 +173,24 @@ def buildPotentials(constants, grid):
 
 	return potentials.astype(constants.scalar.dtype)
 
-def buildSOEnergy(constants, grid, coeff=1):
-	kx, ky = grid.kx_full, grid.ky_full
-	k2 = kx ** 2 + ky ** 2
-	diff2 = constants.hbar * k2 / 2 / constants.m
-	int1 = constants.lambda_R / constants.hbar * (ky + 1j * kx)
-	int2 = constants.lambda_R / constants.hbar * (ky - 1j * kx)
-	return (numpy.array([
-		[diff2, int1], [int2, diff2]
-	]) * coeff).astype(constants.complex.dtype)
+def buildSOEnergy(constants, grid):
+	if grid.dim == 1:
+		return NotImplementedError()
+	if grid.dim == 2:
+		kx, ky = grid.kx_full, grid.ky_full
+		k2 = kx ** 2 + ky ** 2
+		diff2 = constants.hbar * k2 / 2 / constants.m
+		int1 = constants.lambda_R / constants.hbar * (ky + 1j * kx)
+		int2 = constants.lambda_R / constants.hbar * (ky - 1j * kx)
+		return numpy.array([
+			[diff2, int1], [int2, diff2]
+		]).astype(constants.complex.dtype)
+	else:
+		raise NotImplementedError()
 
-def buildSOEnergyExp(constants, grid, dt=1, imaginary_time=False):
-
-	e = getSOEnergy(constants, grid, coeff=-1j * dt * (-1j if imaginary_time else 1))
-
-	delta = numpy.sqrt((e[0, 0] - e[1, 1]) ** 2 + 4 * e[0, 1] * e[1, 0])
-	sinh_d = numpy.sinh(delta / 2)
-	cosh_d = numpy.cosh(delta / 2)
-	t = numpy.exp((e[0, 0] + e[1, 1]) / 2)
-
-	m11 = t * (delta * cosh_d + (e[0, 0] - e[1, 1]) * sinh_d)
-	m12 = 2 * e[0, 1] * t * sinh_d
-	m21 = 2 * e[1, 0] * t * sinh_d
-	m22 = t * (delta * cosh_d + (e[1, 1] - e[0, 0]) * sinh_d)
-
-	res = numpy.array([[m11, m12], [m21, m22]])
-
-	# delta[0, 0] == 0, so we need to process this point separately
-	# taking the limit of delta -> 0
-	delta[0, 0] = 1
-	res /= delta
-	res[:,:,0,0] = t[0, 0] * numpy.array([
-		[1 + (e[0, 0, 0, 0] - e[1, 1, 0, 0]) / 2, e[0, 1, 0, 0]],
-		[e[1, 0, 0, 0], 1 - (e[0, 0, 0, 0] - e[1, 1, 0, 0]) / 2]
-	])
-
-	return res.astype(constants.complex.dtype)
+def buildEnergyExp(energy, dt=1, imaginary_time=False):
+	e = energy * (-1j * dt * (-1j if imaginary_time else 1))
+	return elementwiseMatrixExp(e)
 
 def buildProjectorMask(constants, grid):
 	"""
@@ -291,21 +270,20 @@ class GridBase:
 
 class UniformGrid(GridBase):
 
-	__data_arrays__ = {
-		'energy': buildPlaneWaveEnergy,
-		'density_modifiers': buildPlaneWaveDensityModifiers,
-		'potentials': buildPotentials,
-		'dV': buildIntegrationCoefficients,
-		'so_energy': buildSOEnergy,
-		'projector_mask': buildProjectorMask,
-	}
-
 	def __init__(self, env, constants, shape, box_size):
 
 		GridBase.__init__(self, env, constants)
 
 		assert (isinstance(shape, int) and isinstance(size, float)) or \
 			(len(shape) == len(box_size))
+
+		self.__data_arrays__ = {
+			'energy': buildPlaneWaveEnergy if constants.lambda_R == 0 else buildSOEnergy,
+			'density_modifiers': buildPlaneWaveDensityModifiers,
+			'potentials': buildPotentials,
+			'dV': buildIntegrationCoefficients,
+			'projector_mask': buildProjectorMask,
+		}
 
 		if isinstance(shape, int):
 			shape = (shape,)
@@ -532,6 +510,8 @@ class Constants:
 		for key in kwds.keys():
 			assert key in _DEFAULTS
 		self.__dict__.update(kwds)
+
+		self.so_coupling = (self.lambda_R != 0)
 
 		self.wx = 2.0 * numpy.pi * self.fx
 		self.wy = 2.0 * numpy.pi * self.fy
