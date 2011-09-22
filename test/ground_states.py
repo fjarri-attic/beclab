@@ -67,7 +67,7 @@ def runTest(env, comp, grid_type, dim, gs_type, use_cutoff):
 	}[(dim, grid_type)]
 
 	# absolute error tolerance divided by atom number for RK5 propagation
-	rk5_atol_coeff = 1e-3
+	rk5_atol_coeff = 2e-3
 
 	target_N = {
 		'1comp': (total_N, 0),
