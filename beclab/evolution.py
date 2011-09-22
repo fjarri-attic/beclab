@@ -594,7 +594,8 @@ class RK5IPEvolution(Evolution):
 		self._noise_prop = NoisePropagator(env, constants, grid)
 
 		self._addParameters(atol_coeff=1e-3, eps=1e-6, dt_guess=1e-7, Nscale=10000,
-			components=2, ensembles=1, f_detuning=0, f_rabi=0, noise=False)
+			components=2, ensembles=1, f_detuning=0, f_rabi=0,
+			psi_type=REPR_CLASSICAL)
 		self.prepare(**kwds)
 
 	def _prepare(self):
@@ -617,7 +618,7 @@ class RK5IPEvolution(Evolution):
 			self._constants.complex.dtype
 		)
 
-		if self._p.noise:
+		if self._p.psi_type == REPR_WIGNER:
 			self._noise_prop.prepare(components=self._p.components, ensembles=self._p.ensembles)
 
 		self._p.g = self._constants.g / self._constants.hbar
@@ -764,7 +765,7 @@ class RK5IPEvolution(Evolution):
 		self._t = t
 		dt_used = self._propagator.propagate(self._propFunc, self._finalizeFunc, psi,
 			max_dt=max_dt)
-		if self._p.noise:
+		if self._p.psi_type == REPR_WIGNER:
 			self._noise_prop.propagateNoise(psi, dt_used)
 			if not self._projector.is_identity:
 				batch = self._p.components * self._p.ensembles
@@ -805,7 +806,7 @@ class RK5HarmonicEvolution(Evolution):
 
 		self._addParameters(kwds, atol_coeff=1e-3, eps=1e-6,
 			dt_guess=1e-7, Nscale=10000, components=2, ensembles=1,
-			f_detuning=0, f_rabi=0, noise=False)
+			f_detuning=0, f_rabi=0, psi_type=REPR_CLASSICAL)
 
 	def _prepare(self):
 		self._projector.prepare(components=self._p.components, ensembles=self._p.ensembles)
@@ -830,7 +831,7 @@ class RK5HarmonicEvolution(Evolution):
 			tiny=numpy.sqrt(self._p.Nscale) * self._p.atol_coeff, components=self._p.components,
 			ensembles=self._p.ensembles)
 
-		if self._p.noise:
+		if self._p.psi_type == REPR_WIGNER:
 			self._noise_prop.prepare(components=self._p.components, ensembles=self._p.ensembles)
 
 	def _gpu__prepare_specific(self):
@@ -972,7 +973,7 @@ class RK5HarmonicEvolution(Evolution):
 		self._t = t
 		dt_used = self._propagator.propagate(self._propFunc, self._finalizeFunc, psi,
 			max_dt=max_dt)
-		if self._p.noise:
+		if self._p.psi_type == REPR_WIGNER:
 			psi.toXSpace()
 			self._noise_prop.propagateNoise(psi, dt_used)
 			psi.toMSpace()
