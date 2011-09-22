@@ -349,7 +349,7 @@ class InteractionMeter(PairedCalculation):
 		self._kernel_invariant = self._program.invariant
 		self._kernel_multiplyTiledCS = self._program.multiplyTiledCS
 
-		if self._constants.so_coupling >= 2:
+		if self._constants.so_coupling:
 			self._kernel_multiplySOEnergy = self._program.multiplySOEnergy
 
 	def _cpu__kernel_interaction(self, gsize, res, data):
@@ -404,8 +404,8 @@ class InteractionMeter(PairedCalculation):
 		psi._plan.execute(self._cbuffer_cem, self._cbuffer_cex,
 			batch=batch, inverse=True)
 
-		inv_func = self._kernel_invariantSO if so else self._kernel_invariant
-		inv_func(xsize, self._cbuffer_cex, psi.data, self._potentials, numpy.int32(coeff))
+		self._kernel_invariant(xsize, self._cbuffer_cex,
+			psi.data, self._potentials, numpy.int32(coeff))
 		self._kernel_multiplyTiledCS(xsize, self._cbuffer_cex, self._dV,
 			numpy.int32(self._p.components))
 
@@ -449,7 +449,7 @@ class IntegralMeter:
 	def __init__(self, env, constants, grid):
 		pass
 
-	def prepare(**kwds):
+	def prepare(self, **kwds):
 		pass
 
 	@classmethod
@@ -548,7 +548,7 @@ class UncertaintyMeter:
 	def __init__(self, env, constants, grid):
 		self._env = env
 
-	def prepare(**kwds):
+	def prepare(self, **kwds):
 		pass
 
 	@classmethod
