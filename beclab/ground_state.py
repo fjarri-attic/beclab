@@ -237,7 +237,7 @@ class ImaginaryTimeGroundState(PairedCalculation):
 			psi.fillWithRandoms(1)
 
 		else:
-			raise ValueError("Wrong value of parameter 'gs_init':", self._p.gs_init)
+			raise ValueError("Wrong value of parameter 'gs_init':", gs_init)
 
 		new_N = psi.density_meter.getNTotal()
 		coeffs = [numpy.sqrt(N[c] / new_N[c]) for c in xrange(self._p.components)]
