@@ -28,6 +28,12 @@ _DEFAULTS = {
 	'a22': 95.68,
 	'a12': 98.13,
 
+	# FIXME: basically the same as a**
+	# Will be removed when keyword parsing is implemented
+	'g11': None,
+	'g12': None,
+	'g22': None,
+
 	# Spin-orbit coupling
 	'lambda_R': 0,
 
@@ -524,11 +530,17 @@ class Constants:
 		self.wy = 2.0 * numpy.pi * self.fy
 		self.wz = 2.0 * numpy.pi * self.fz
 
-		g = lambda a: 4.0 * numpy.pi * (self.hbar ** 2) * a * self.r_bohr / self.m
-		self.g = numpy.array([
-			[g(self.a11), g(self.a12)],
-			[g(self.a12), g(self.a22)]
-		])
+		if self.g11 is None:
+			g = lambda a: 4.0 * numpy.pi * (self.hbar ** 2) * a * self.r_bohr / self.m
+			self.g = numpy.array([
+				[g(self.a11), g(self.a12)],
+				[g(self.a12), g(self.a22)]
+			])
+		else:
+			self.g = numpy.array([
+				[self.g11, self.g12],
+				[self.g12, self.g22]
+			])
 
 		# TODO: need to implement some mechanism of passing this information
 		# from Constants constructor (parsing names of keyword arguments?)
