@@ -3,13 +3,12 @@ import time
 import itertools
 
 from beclab import *
-from beclab.meters import ParticleStatistics
 from beclab.wavefunction import WavefunctionSet
 
 numpy.random.seed(123)
 
 def testWigner(gpu, grid_type, dim, prop_type, repr_type):
-	env = envs.cuda() if gpu else envs.cpu()
+	env = envs.cuda(device_num=1) if gpu else envs.cpu()
 	try:
 		return runTest(env, grid_type, dim, prop_type, repr_type)
 	finally:
@@ -61,9 +60,9 @@ def runTest(env, grid_type, dim, prop_type, repr_type):
 	constants = Constants(double=env.supportsDouble(), e_cut=12000, **constants_kwds)
 
 	if grid_type == 'uniform':
-		grid = UniformGrid.forN(constants, total_N, shape)
+		grid = UniformGrid.forN(env, constants, total_N, shape)
 	elif grid_type == 'harmonic':
-		grid = HarmonicGrid(constants, shape)
+		grid = HarmonicGrid(env, constants, shape)
 
 	if grid_type == 'uniform':
 		gs = SplitStepGroundState(env, constants, grid, dt=ss_dt)

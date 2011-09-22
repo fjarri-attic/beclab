@@ -3,7 +3,6 @@ import time
 import itertools
 
 from beclab import *
-from beclab.meters import ParticleStatistics
 
 
 def testAxialView(gpu, matrix_pulses, grid_type, dim, prop_type, use_cutoff):
@@ -52,9 +51,9 @@ def runTest(env, matrix_pulses, grid_type, dim, prop_type, use_cutoff):
 		**constants_kwds)
 
 	if grid_type == 'uniform':
-		grid = UniformGrid.forN(constants, total_N, shape)
+		grid = UniformGrid.forN(env, constants, total_N, shape)
 	elif grid_type == 'harmonic':
-		grid = HarmonicGrid(constants, shape)
+		grid = HarmonicGrid(env, constants, shape)
 
 	if grid_type == 'uniform':
 		gs = SplitStepGroundState(env, constants, grid, dt=ss_dt)
