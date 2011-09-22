@@ -3,7 +3,7 @@ import math
 
 from .helpers import *
 from .constants import REPR_CLASSICAL, REPR_WIGNER
-from .meters import ProjectionMeter, UncertaintyMeter, getXiSquared
+from .meters import ProjectionMeter, UncertaintyMeter, IntegralMeter, getXiSquared
 from .evolution import TerminateEvolution
 from .pulse import Pulse
 from .wavefunction import WavefunctionSet
@@ -13,7 +13,6 @@ class ParticleNumberCollector(PairedCalculation):
 
 	def __init__(self, env, constants, grid, verbose=False, pulse=None):
 		PairedCalculation.__init__(self, env)
-		self.stats = ParticleStatistics(env, constants, grid)
 		self.verbose = verbose
 		self._pulse = pulse
 
@@ -24,8 +23,6 @@ class ParticleNumberCollector(PairedCalculation):
 		self._addParameters(components=2, ensembles=1, psi_type=REPR_CLASSICAL)
 
 	def _prepare(self):
-		self.stats.prepare(components=self._p.components, ensembles=self._p.ensembles,
-			psi_type=self._p.psi_type)
 		self._psi.prepare(components=self._p.components, ensembles=self._p.ensembles)
 
 	def __call__(self, t, dt, psi):
@@ -34,7 +31,7 @@ class ParticleNumberCollector(PairedCalculation):
 		if self._pulse is not None:
 			self._pulse.apply(self._psi, theta=0.5 * numpy.pi)
 
-		N = self.stats.getN(self._psi)
+		N = self._psi.density_meter.getNTotal()
 		if self.verbose:
 			print "Particle counter: ", t, "s,", N, N.sum()
 
@@ -70,7 +67,7 @@ class PhaseNoiseCollector(PairedCalculation):
 
 	def __init__(self, env, constants, grid, verbose=False):
 		PairedCalculation.__init__(self, env)
-		self._stats = ParticleStatistics(env, constants, grid)
+		self._unc = UncertaintyMeter(env, constants, grid)
 		self.times = []
 		self.phnoise = []
 		self._verbose = verbose
@@ -78,11 +75,11 @@ class PhaseNoiseCollector(PairedCalculation):
 		self._addParameters(components=2, ensembles=1, psi_type=REPR_CLASSICAL)
 
 	def _prepare(self):
-		self._stats.prepare(components=self._p.components, ensembles=self._p.ensembles,
+		self._unc.prepare(components=self._p.components, ensembles=self._p.ensembles,
 			psi_type=self._p.psi_type)
 
 	def __call__(self, t, dt, psi):
-		phnoise = self._stats.getPhaseNoise(psi)
+		phnoise = self._unc.getPhaseNoise(psi)
 
 		if self._verbose:
 			print "Phase noise:", t, "s,", phnoise
@@ -98,7 +95,7 @@ class PzNoiseCollector(PairedCalculation):
 
 	def __init__(self, env, constants, grid, verbose=False):
 		PairedCalculation.__init__(self, env)
-		self._stats = ParticleStatistics(env, constants, grid)
+		self._unc = UncertaintyMeter(env, constants, grid)
 		self.times = []
 		self.pznoise = []
 		self._verbose = verbose
@@ -106,11 +103,11 @@ class PzNoiseCollector(PairedCalculation):
 		self._addParameters(components=2, ensembles=1, psi_type=REPR_CLASSICAL)
 
 	def _prepare(self):
-		self._stats.prepare(components=self._p.components, ensembles=self._p.ensembles,
+		self._unc.prepare(components=self._p.components, ensembles=self._p.ensembles,
 			psi_type=self._p.psi_type)
 
 	def __call__(self, t, dt, psi):
-		pznoise = self._stats.getPzNoise(psi)
+		pznoise = self._unc.getPzNoise(psi)
 
 		if self._verbose:
 			print "Pz noise:", t, "s,", pznoise
@@ -126,7 +123,7 @@ class VisibilityCollector(PairedCalculation):
 
 	def __init__(self, env, constants, grid, verbose=False):
 		PairedCalculation.__init__(self, env)
-		self.stats = ParticleStatistics(env, constants, grid)
+		self._int = IntegralMeter(env, constants, grid)
 		self.verbose = verbose
 
 		self.times = []
@@ -135,11 +132,11 @@ class VisibilityCollector(PairedCalculation):
 		self._addParameters(components=2, ensembles=1, psi_type=REPR_CLASSICAL)
 
 	def _prepare(self):
-		self.stats.prepare(components=self._p.components,
+		self._int.prepare(components=self._p.components,
 			ensembles=self._p.ensembles, psi_type=self._p.psi_type)
 
 	def __call__(self, t, dt, psi):
-		v = self.stats.getVisibility(psi)
+		v = self._int.getVisibility(psi)
 
 		if self.verbose:
 			print "Visibility: ", t, "s,", v
@@ -155,7 +152,7 @@ class SurfaceProjectionCollector(PairedCalculation):
 
 	def __init__(self, env, constants, grid, pulse=None):
 		PairedCalculation.__init__(self, env)
-		self._projection = DensityProfile(env, constants, grid)
+		self._projection = ProjectionMeter(env, constants, grid)
 		self._pulse = pulse
 		self._constants = constants
 		self._grid = grid
@@ -196,7 +193,7 @@ class AxialProjectionCollector(PairedCalculation):
 
 	def __init__(self, env, constants, grid, pulse=None):
 		PairedCalculation.__init__(self, env)
-		self._projection = DensityProfile(env, constants, grid)
+		self._projection = ProjectionMeter(env, constants, grid)
 		self._pulse = pulse
 		self._constants = constants
 		self._grid = grid
@@ -287,19 +284,14 @@ class AnalyticNoiseCollector:
 	"""
 
 	def __init__(self, env, constants, grid):
-		self._stats = ParticleStatistics(env, constants, grid)
 		self._env = env
 		self._constants = constants
 		self._grid = grid
 		self.times = []
 		self.noise = []
 
-	def prepare(self, **kwds):
-		self._stats.prepare(components=kwds['components'],
-			ensembles=kwds['ensembles'], psi_type=kwds['psi_type'])
-
 	def __call__(self, t, dt, psi):
-		n = self._env.fromDevice(self._stats.getAverageDensity(psi))
+		n = self._env.fromDevice(psi.density_meter.getNDensityAverage())
 		dV = self._grid.dV
 
 		comp1 = 0
