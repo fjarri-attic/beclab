@@ -8,7 +8,6 @@ from .helpers import *
 from .wavefunction import WavefunctionSet
 from .ground_state import ImaginaryTimeGroundState, RK5Propagation, Projector
 from .evolution import Evolution, TerminateEvolution
-from .meters import ParticleStatistics
 from .constants import *
 
 
@@ -16,7 +15,6 @@ class EnergyCondition(PairedCalculation):
 
 	def __init__(self, env, constants, grid, precision=0.5, E_modifier=0, N=None):
 		PairedCalculation.__init__(self, env)
-		self._stats = ParticleStatistics(env, constants, grid)
 		self._addParameters(components=2, ensembles=1, psi_type=REPR_CLASSICAL)
 		self._previous_E = 0
 		self._precision = precision
@@ -25,15 +23,11 @@ class EnergyCondition(PairedCalculation):
 		self.times = []
 		self.ediffs = []
 
-	def _prepare(self):
-		self._stats.prepare(components=self._p.components, ensembles=self._p.ensembles,
-			psi_type=self._p.psi_type)
-
 	def __call__(self, t, dt, psi):
 		if dt == 0:
 			return
 
-		E = self._stats.getSOEnergy(psi, N=self._N).sum()
+		E = psi.interaction_meter.getETotal().sum()
 		E_diff = abs((self._previous_E - E) / (E + self._E_modifier)) / dt
 
 		self.times.append(t)
@@ -55,27 +49,26 @@ class SOGroundStateEvo(Evolution):
 		self._constants = constants
 		self._grid = grid
 		self._projector = Projector(env, constants, grid)
-		self._stats = ParticleStatistics(env, constants, grid)
 		self._addParameters(components=2, ensembles=1, psi_type=REPR_CLASSICAL,
 			dt=1e-5, itmax=3)
 		self.prepare(**kwds)
 
 	def _prepare(self):
 		self._projector.prepare(components=self._p.components, ensembles=self._p.ensembles)
-		self._stats.prepare(components=self._p.components, ensembles=self._p.ensembles,
-			psi_type=self._p.psi_type)
 
-		self._p.g_intra = self._constants.g_intra / self._constants.hbar
-		self._p.g_inter = self._constants.g_inter / self._constants.hbar
-
-		self._potentials = self._env.toDevice(
-			getPotentials(self._constants, self._grid))
-		self._mode_prop = self._env.toDevice(getSOEnergyExp(
-			self._constants, self._grid, dt=self._p.dt / 2, imaginary_time=True))
+		self._potentials = self._grid.potentials_device
+		self._p.g = self._constants.g / self._constants.hbar
+		energy = self._grid.energy
+		if self._constants.so_coupling:
+			self._mode_prop = self._env.toDevice(
+				buildEnergyExp(energy, dt=self._p.dt / 2, imaginary_time=True))
+		else:
+			self._mode_prop = self._env.toDevice(numpy.exp(energy * (-self._p.dt / 2)))
 
 	def _gpu__prepare_specific(self, **kwds):
 		kernel_template = """
 			// Propagates psi function in mode space
+			%if c.so_coupling:
 			EXPORTED_FUNC void mpropagate(int gsize, GLOBAL_MEM COMPLEX *data,
 				GLOBAL_MEM COMPLEX *mode_prop)
 			{
@@ -94,6 +87,20 @@ class SOGroundStateEvo(Evolution):
 				data[GLOBAL_INDEX + ${g.msize}] = complex_mul(data0, mode_prop10) +
 					complex_mul(data1, mode_prop11);
 			}
+			%else:
+			EXPORTED_FUNC void mpropagate(int gsize, GLOBAL_MEM COMPLEX *data,
+				GLOBAL_MEM SCALAR *mode_prop)
+			{
+				LIMITED_BY(gsize);
+				SCALAR prop = mode_prop[GLOBAL_INDEX];
+				COMPLEX val;
+
+				%for comp in xrange(p.components):
+				val = data[GLOBAL_INDEX + gsize * ${comp}];
+				data[GLOBAL_INDEX + gsize * ${comp}] = complex_mul_scalar(val, prop);
+				%endfor
+			}
+			%endif
 
 			// Propagates state in x-space for steady state calculation
 			EXPORTED_FUNC void xpropagate(int gsize, GLOBAL_MEM COMPLEX *data,
@@ -109,13 +116,6 @@ class SOGroundStateEvo(Evolution):
 
 				SCALAR V = potentials[GLOBAL_INDEX];
 
-				<%
-					p.gg = [
-						[p.g_intra, p.g_inter],
-						[p.g_inter, p.g_intra]
-					]
-				%>
-
 				// iterate to midpoint solution
 				%for i in range(p.itmax):
 					// calculate midpoint log derivative and exponentiate
@@ -126,7 +126,7 @@ class SOGroundStateEvo(Evolution):
 					%for comp in xrange(p.components):
 					dval${comp} = exp((SCALAR)${p.dt / 2.0} * (-V
 						%for other_comp in xrange(p.components):
-						- (SCALAR)${p.gg[comp][other_comp]} * n${other_comp}
+						- (SCALAR)${p.g[comp, other_comp]} * n${other_comp}
 						%endfor
 					));
 
@@ -149,16 +149,17 @@ class SOGroundStateEvo(Evolution):
 		self._kernel_xpropagate = self.__program.xpropagate
 
 	def _cpu__kernel_mpropagate(self, gsize, data, mode_prop):
-		data_copy = data.copy()
-		data[0] = mode_prop[0, 0] * data_copy[0] + mode_prop[0, 1] * data_copy[1]
-		data[1] = mode_prop[1, 0] * data_copy[0] + mode_prop[1, 1] * data_copy[1]
+		if self._constants.so_coupling:
+			data_copy = data.copy()
+			data[0] = mode_prop[0, 0] * data_copy[0] + mode_prop[0, 1] * data_copy[1]
+			data[1] = mode_prop[1, 0] * data_copy[0] + mode_prop[1, 1] * data_copy[1]
+		else:
+			for c in xrange(self._p.components):
+				data[c, 0] *= mode_prop
 
 	def _cpu__kernel_xpropagate(self, gsize, data, potentials):
 		data_copy = data.copy()
-
-		g_intra = self._p.g_intra
-		g_inter = self._p.g_inter
-
+		g = self._p.g
 		dt = -self._p.dt / 2
 		tile = (self._p.components, 1,) + (1,) * self._grid.dim
 		p_tiled = numpy.tile(potentials, tile)
@@ -166,9 +167,9 @@ class SOGroundStateEvo(Evolution):
 		for i in xrange(self._p.itmax):
 			n = numpy.abs(data) ** 2
 			dp = p_tiled.copy()
-
-			dp[0] += n[0] * g_intra + n[1] * g_inter
-			dp[1] += n[0] * g_inter + n[1] * g_intra
+			for c in xrange(self._p.components):
+				for other_c in xrange(self._p.components):
+					dp[c] += n[other_c] * g[c, other_c]
 
 			d = numpy.exp(dp * dt)
 			data.flat[:] = (data_copy * d).flat
@@ -182,12 +183,12 @@ class SOGroundStateEvo(Evolution):
 		psi.toXSpace()
 
 	def _renormalize(self, psi, N):
-		new_N = self._stats.getN(psi)
+		new_N = psi.density_meter.getNTotal()
 
 		coeff = numpy.sqrt(N.sum() / new_N.sum())
 		coeffs = [coeff] * self._p.components
 
-		psi.renormalize(coeffs)
+		psi.multiplyBy(coeffs)
 
 	def propagate(self, psi, t, max_dt):
 		self._kernel_mpropagate(psi.size, psi.data, self._mode_prop)
@@ -199,13 +200,23 @@ class SOGroundStateEvo(Evolution):
 		self._renormalize(psi, self._N_target)
 		return self._p.dt
 
-	def create(self, N, time=None, precision=None, random_init=True, E_modifier=0):
+	def create(self, N, time=None, precision=None, random_init=True, E_modifier=0, psi=None):
 		assert time is not None or precision is not None
 
 		if isinstance(N, int):
 			N = (N,)
+		self._N_target = numpy.array(N)
 
-		psi = WavefunctionSet(self._env, self._constants, self._grid, components=2)
+		if psi is None:
+			psi = WavefunctionSet(self._env, self._constants, self._grid, components=2)
+
+			if random_init:
+				psi.fillWithRandoms(1)
+			else:
+				psi.fillWithValue(1)
+
+			self._renormalize(psi, self._N_target)
+
 		self.prepare(components=2)
 
 		if time is not None:
@@ -217,14 +228,6 @@ class SOGroundStateEvo(Evolution):
 					E_modifier=E_modifier)
 			]
 			time = 1e30
-
-		if random_init:
-			psi.fillWithRandoms(1)
-		else:
-			psi.fillWithValue(1)
-
-		self._N_target = numpy.array(N)
-		self._renormalize(psi, self._N_target)
 
 		if callbacks is not None:
 			self.energy_data = callbacks[0].getData()
