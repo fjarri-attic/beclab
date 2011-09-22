@@ -198,7 +198,10 @@ def buildProjectorMask(constants, grid):
 	than cutoff energy and 0.0 everywhere else.
 	"""
 
-	E = grid.energy
+	if isinstance(grid, UniformGrid):
+		E = buildPlaneWaveEnergy(constants, grid)
+	else:
+		E = buildHarmonicEnergy(constants, grid)
 
 	if constants.e_cut is not None:
 		mask_func = lambda x: 0.0 if x > constants.e_cut * constants.hbar else 1.0
@@ -458,6 +461,9 @@ class HarmonicGrid(GridBase):
 				self.dys[l] = _buildIntegrationCoefficients1D(self.ys[l])
 				self.dzs[l] = _buildIntegrationCoefficients1D(self.zs[l])
 
+				dx, dy, dz = tile3D(self.dxs[l], self.dys[l], self.dzs[l])
+				self.dVs[l] = dx * dy * dz
+
 			else:
 				self.zs[l], _ = getHarmonicGrid(mshape[0], l)
 				self.zs[l] *= self.lz
@@ -467,6 +473,7 @@ class HarmonicGrid(GridBase):
 				self.zs_full[l] = self.zs[l]
 
 				self.dzs[l] = _buildIntegrationCoefficients1D(self.zs[l])
+				self.dVs[l] = self.dzs[l]
 
 		# Create aliases for 1st order arrays,
 		# making it look like UniformGrid
