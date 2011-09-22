@@ -235,7 +235,7 @@ class WavefunctionSet(PairedCalculation):
 		projector_mask = self._grid.projector_mask_device
 		self._addVacuumParticles(randoms, projector_mask)
 
-		self.type = WIGNER
+		self.type = REPR_WIGNER
 
 	def copy(self):
 		res = WavefunctionSet(self._env, self._constants, self._grid,
