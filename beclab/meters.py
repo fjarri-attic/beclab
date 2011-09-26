@@ -208,7 +208,7 @@ class DensityMeter(PairedCalculation):
 	def getNPerEnsemble(self, psi):
 		"""Returns total population for each component in each ensemble"""
 
-		p = self.getN(psi, coeff=self._p.ensembles)
+		p = self.getN(psi)
 		if psi.in_mspace:
 			self._sreduce_cem_to_ce(p, self._sbuffer_ce)
 		else:
