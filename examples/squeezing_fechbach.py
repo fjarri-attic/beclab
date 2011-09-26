@@ -6,13 +6,13 @@ are necessary and there is not enough GPU memory to process them at once.
 
 import numpy
 from beclab import *
-from beclab.meters import Uncertainty, getXiSquared
+from beclab.meters import UncertaintyMeter, getXiSquared
 
 
 class AveragesCollector:
 
 	def __init__(self, env, constants, grid):
-		self._unc = Uncertainty(env, constants, grid)
+		self._unc = UncertaintyMeter(env, constants, grid)
 		self.times = []
 		self.n1 = []
 		self.n2 = []
@@ -22,7 +22,7 @@ class AveragesCollector:
 		self._unc.prepare(components=kwds['components'],
 			ensembles=kwds['ensembles'], psi_type=kwds['psi_type'])
 
-	def __call__(self, t, psi):
+	def __call__(self, t, dt, psi):
 		self.times.append(t)
 
 		i, n = self._unc.getEnsembleSums(psi)
@@ -52,7 +52,7 @@ def testUncertainties(a12, gamma12, losses):
 
 	env = envs.cuda()
 	constants = Constants(double=env.supportsDouble(), **parameters)
-	grid = UniformGrid.forN(constants, N, (64, 8, 8))
+	grid = UniformGrid.forN(env, constants, N, (64, 8, 8))
 
 	gs = SplitStepGroundState(env, constants, grid, dt=1e-5)
 	evolution = SplitStepEvolution(env, constants, grid, dt=1e-5)

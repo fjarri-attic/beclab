@@ -20,7 +20,7 @@ def test(ensembles=256, points=40, a12=97.9,
 	env = envs.cuda()
 	constants = Constants(double=env.supportsDouble(),
 		e_cut=e_cut, **parameters)
-	grid = HarmonicGrid(constants, (points,))
+	grid = HarmonicGrid(env, constants, (points,))
 
 	gs = RK5HarmonicGroundState(env, constants, grid, Nscale=N)
 	evolution = RK5HarmonicEvolution(env, constants, grid, eps=eps, Nscale=N)
@@ -62,7 +62,7 @@ def test(ensembles=256, points=40, a12=97.9,
 
 if __name__ == '__main__':
 
-	prefix = 'evolution_1d'
+	prefix = 'visibility_1d'
 
 	# showcase 1: visibility(t) & N1(t) for different lattice sizes (no diffusion, no initial noise)
 	results = [test(losses=False, wigner=False, points=points, a12=97.9)
