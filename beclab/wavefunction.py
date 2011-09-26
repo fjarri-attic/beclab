@@ -36,7 +36,6 @@ class WavefunctionSet(PairedCalculation):
 		self._constants = constants
 		self._grid = grid
 
-		self.type = REPR_CLASSICAL
 		self.in_mspace = False
 		self.time = 0
 
@@ -47,7 +46,7 @@ class WavefunctionSet(PairedCalculation):
 
 		self._random = createRandom(env, constants.double)
 
-		self._addParameters(components=2, ensembles=1)
+		self._addParameters(components=2, ensembles=1, psi_type=REPR_CLASSICAL)
 		self.prepare(**kwds)
 
 		self._kernel_fillWithZeros(self.size, self.data)
@@ -67,6 +66,7 @@ class WavefunctionSet(PairedCalculation):
 
 		self.ensembles = self._p.ensembles
 		self.components = self._p.components
+		self.type = self._p.psi_type
 
 		if isinstance(self._grid, UniformGrid):
 			self.shape = self._shape = self._mshape = \
@@ -216,17 +216,17 @@ class WavefunctionSet(PairedCalculation):
 		if was_in_xspace:
 			self.toXSpace()
 
-	def createEnsembles(self, ensembles):
+	def createEnsembles(self, ensembles, new_type=None):
 		assert self.ensembles == 1
 		data = self.data
-		self.prepare(ensembles=ensembles)
+		self.prepare(ensembles=ensembles, psi_type=(new_type if new_type is not None else self.type))
 		self._kernel_fillEnsembles(self.size, self.data, data)
 
 	def toWigner(self, ensembles):
 
 		assert self.type == REPR_CLASSICAL
 
-		self.createEnsembles(ensembles)
+		self.createEnsembles(ensembles, new_type=REPR_WIGNER)
 
 		# FIXME: in fact, we only need randoms in cells where projector mask == 1
 		# Scaling assumes that in modespace wavefunction normalized on atom number
@@ -234,8 +234,6 @@ class WavefunctionSet(PairedCalculation):
 		self._random.random_normal(randoms, scale=numpy.sqrt(0.5))
 		projector_mask = self._grid.projector_mask_device
 		self._addVacuumParticles(randoms, projector_mask)
-
-		self.type = REPR_WIGNER
 
 	def copy(self):
 		res = WavefunctionSet(self._env, self._constants, self._grid,
