@@ -24,10 +24,10 @@ def testSqueezing(name, **kwds):
 
 	env = envs.cuda()
 	constants = Constants(double=env.supportsDouble(), **parameters)
-	grid = UniformGrid.forN(constants, N, (16, 16, 16))
+	grid = UniformGrid.forN(env, constants, N, (16, 16, 16))
 
-	gs = RK5IPGroundState(env, constants, grid)
-	evolution = RK5IPEvolution(env, constants, grid)
+	gs = RK5IPGroundState(env, constants, grid, atol_coeff=1e-3, eps=1e-8, Nscale=N)
+	evolution = RK5IPEvolution(env, constants, grid, atol_coeff=1e-3, eps=1e-8, Nscale=N)
 	pulse = Pulse(env, constants, grid, f_rabi=350)
 
 	u = UncertaintyCollector(env, constants, grid)

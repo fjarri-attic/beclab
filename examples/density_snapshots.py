@@ -4,19 +4,19 @@ Create 2-component ground state and plot various plots of its density
 
 import numpy
 from beclab import *
-from beclab.meters import DensityProfile
+from beclab.meters import ProjectionMeter
 
 
 N = 20000
 
 env = envs.cuda()
 constants = Constants(double=env.supportsDouble())
-grid = UniformGrid.forN(constants, N, (128, 32, 16))
+grid = UniformGrid.forN(env, constants, N, (128, 32, 16))
 
-gs = SplitStepGroundState(env, constants, grid, dt=1e-5, precision=1e-8)
-prj = DensityProfile(env, constants, grid)
+gs = SplitStepGroundState(env, constants, grid, dt=1e-5)
 
-psi = gs.create((N / 2, N / 2))
+psi = gs.create((N / 2, N / 2), precision=1e-8)
+prj = ProjectionMeter.forPsi(psi)
 
 # Create various density profiles
 prefix = "density_snapshots"

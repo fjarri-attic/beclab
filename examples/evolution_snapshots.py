@@ -9,7 +9,7 @@ N = 150000
 
 env = envs.cuda()
 constants = Constants(double=env.supportsDouble())
-grid = UniformGrid.forN(constants, N, (128, 16, 16))
+grid = UniformGrid.forN(env, constants, N, (128, 16, 16))
 
 gs = SplitStepGroundState(env, constants, grid, dt=1e-5)
 evolution = RK5IPEvolution(env, constants, grid, eps=1e-4, atol_coeff=1e-1)

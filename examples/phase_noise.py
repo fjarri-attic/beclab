@@ -27,7 +27,7 @@ def test(classical_noise, wigner):
 		fx=97.0, fy=97.0 * 1.03, fz=11.69,
 		a12=97.99, a22=95.57,
 		gamma12=1.53e-20, gamma22=7.7e-20)
-	grid = UniformGrid.forN(constants, N, (64, 8, 8))
+	grid = UniformGrid.forN(env, constants, N, (64, 8, 8))
 
 	gs = SplitStepGroundState(env, constants, grid, dt=1e-5)
 	evolution = SplitStepEvolution(env, constants, grid, dt=1e-5)
