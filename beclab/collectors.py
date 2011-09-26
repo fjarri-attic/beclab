@@ -23,7 +23,8 @@ class ParticleNumberCollector(PairedCalculation):
 		self._addParameters(components=2, ensembles=1, psi_type=REPR_CLASSICAL)
 
 	def _prepare(self):
-		self._psi.prepare(components=self._p.components, ensembles=self._p.ensembles)
+		self._psi.prepare(components=self._p.components,
+			ensembles=self._p.ensembles, psi_type=self._p.psi_type)
 
 	def __call__(self, t, dt, psi):
 		psi.copyTo(self._psi)
@@ -232,7 +233,7 @@ class UncertaintyCollector(PairedCalculation):
 
 	def __init__(self, env, constants, grid):
 		PairedCalculation.__init__(self, env)
-		self._unc = Uncertainty(env, constants, grid)
+		self._unc = UncertaintyMeter(env, constants, grid)
 		self.times = []
 		self.N_stddev = []
 		self.XiSquared = []
@@ -289,6 +290,9 @@ class AnalyticNoiseCollector:
 		self._grid = grid
 		self.times = []
 		self.noise = []
+
+	def prepare(self, **kwds):
+		pass
 
 	def __call__(self, t, dt, psi):
 		n = self._env.fromDevice(psi.density_meter.getNDensityAverage())
