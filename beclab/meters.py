@@ -427,7 +427,7 @@ class InteractionMeter(PairedCalculation):
 
 	def getIPerEnsemble(self, psi):
 		i = self.getI(psi)
-		self._creduce_ex_to_e(p, self._cbuffer_e)
+		self._creduce_ex_to_e(i, self._cbuffer_e)
 		return self._cbuffer_e
 
 	def getITotal(self, psi):
@@ -560,7 +560,7 @@ class UncertaintyMeter:
 		Warning: this function considers spin distribution ellipse to be horizontal,
 		which is not always so.
 		"""
-		assert self._p.components == 2
+		assert psi.components == 2
 
 		# Complex numbers {S_xj + iS_yj, j = 1..N}
 		i = self._env.fromDevice(psi.interaction_meter.getIPerEnsemble())
