@@ -3,7 +3,6 @@ import time
 import itertools
 
 from beclab import *
-from beclab.meters import ParticleStatistics
 import gc
 
 
@@ -56,7 +55,7 @@ def runTest(env, grid_type, dim, prop_type, repr_type):
 	wigner = (repr_type == 'wigner')
 
 	constants = Constants(double=env.supportsDouble(), **constants_kwds)
-	grid = UniformGrid.forN(constants, total_N, shape)
+	grid = UniformGrid.forN(env, constants, total_N, shape)
 
 	gs = SplitStepGroundState(env, constants, grid, dt=ss_gs_dt)
 	pulse = Pulse(env, constants, grid, f_detuning=41, f_rabi=350)

@@ -3,12 +3,12 @@ import time
 import itertools
 
 from beclab import *
-from beclab.constants import getProjectorMask
+from beclab.constants import buildProjectorMask
 from beclab.helpers.misc import log2
 
 
 def testCutoff(*args):
-	env = envs.cuda()
+	env = envs.cuda(device_num=1)
 	try:
 		return runTest(env, *args)
 	finally:
@@ -68,14 +68,14 @@ def runTest(env, dim, grid_type, prop_type, use_cutoff, use_big_grid):
 			if use_big_grid:
 				shape = tuple([2 * x for x in shape])
 
-		grid = UniformGrid.forN(constants, total_N, shape)
+		grid = UniformGrid.forN(env, constants, total_N, shape)
 	elif grid_type == 'harmonic':
 		if use_cutoff:
 			shape = constants.harmonicModesForCutoff(len(shape))
 			if use_big_grid:
 				shape = tuple([x + 3 for x in shape])
 
-		grid = HarmonicGrid(constants, shape)
+		grid = HarmonicGrid(env, constants, shape)
 
 	if grid_type == 'uniform':
 		gs = SplitStepGroundState(env, constants, grid, dt=ss_dt)
@@ -112,7 +112,7 @@ def runTest(env, dim, grid_type, prop_type, use_cutoff, use_big_grid):
 	# check that the final state is still projected
 	psi.toMSpace()
 	mode_data = env.fromDevice(psi.data)
-	mask = numpy.tile(getProjectorMask(constants, grid),
+	mask = numpy.tile(buildProjectorMask(constants, grid),
 		(psi.components, 1) + (1,) * grid.dim)
 	masked_mode_data = mode_data * (1.0 - mask)
 	assert masked_mode_data.max() < 1e-6 * mode_data.max()

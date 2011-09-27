@@ -47,11 +47,11 @@ def testEvolution(env, use_profiler, test_name, use_collectors):
 		t = time.time()
 
 	if test_name == 'harmonic-rk':
-		grid = HarmonicGrid(constants, (50, 10, 10))
+		grid = HarmonicGrid(env, constants, (50, 10, 10))
 		gs = RK5HarmonicGroundState(env, constants, grid, Nscale=total_N, eps=1e-7, components=2)
 	elif test_name in ('uniform-ss', 'uniform-rk'):
-		grid = UniformGrid.forN(constants, total_N, (64, 8, 8))
-		gs = SplitStepGroundState(env, constants, grid, precision=1e-6, dt=1e-5, components=2)
+		grid = UniformGrid.forN(env, constants, total_N, (64, 8, 8))
+		gs = SplitStepGroundState(env, constants, grid, dt=1e-5, components=2)
 
 	if test_name == 'harmonic-rk':
 		evolution = RK5HarmonicEvolution(env, constants, grid,
