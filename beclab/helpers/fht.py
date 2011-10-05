@@ -20,7 +20,7 @@ def diff(x, y):
 def my_hermite(n):
 	"""Returns orthonormal Hermite polynomial"""
 	def func(x):
-		return H([0] * n + [1])(x) / (numpy.pi ** 0.25) / numpy.sqrt(float(2 ** n * factorial(n)))
+		return H([0] * n + [1])(x) / (numpy.pi ** 0.25) / numpy.sqrt(float(long(2 ** n) * factorial(n)))
 
 	return func
 
