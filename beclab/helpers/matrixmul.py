@@ -147,7 +147,7 @@ class GPUDot(PairedCalculation):
 		#assert b.size == (batch if self._batched_b else 1) * wa * wb
 		#assert res.size == batch * ha * wb
 		block_size = self.block_size
-		blocks_per_matrix = min_blocks(ha, block_size);
+		blocks_per_matrix = min_blocks(ha, block_size)
 
 		self.kernel._customCall(
 			(
