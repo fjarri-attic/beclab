@@ -177,7 +177,7 @@ def buildPotentials(constants, grid):
 			(constants.wy * y) ** 2 +
 			(constants.wz * z) ** 2) / (2.0 * constants.hbar)
 
-	return potentials.astype(constants.scalar.dtype)
+	return potentials.astype(constants.scalar.dtype).reshape((1,) + potentials.shape)
 
 def buildSOEnergy(constants, grid):
 	if grid.dim == 1:
