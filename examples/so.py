@@ -58,7 +58,7 @@ def runTest(g_ratio, g_strength, lambda_SO, grid_size=2048, area_size=6,
 
 	env = envs.cuda()
 	constants = Constants(double=env.supportsDouble(),
-		g_intra=so_constants.g_intra, g_inter=so_constants.g_inter,
+		a11=so_constants.g_intra, a22=so_constants.g_intra, a12=so_constants.g_inter,
 		lambda_R=so_constants.lambda_R, m=so_constants.m,
 		fx=so_constants.f_perp, fy=so_constants.f_perp)
 
