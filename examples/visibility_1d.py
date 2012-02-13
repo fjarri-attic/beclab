@@ -36,7 +36,7 @@ def test(ensembles=256, points=40, a12=97.9,
 	if equilibration_time > 0:
 		evolution.run(psi, equilibration_time)
 
-	pulse.apply(psi, math.pi / 2)
+	pulse.apply(psi, numpy.pi / 2)
 
 	evolution.run(psi, 0.05, callbacks=[v, p], callback_dt=0.001)
 	env.release()
