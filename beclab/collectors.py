@@ -3,7 +3,7 @@ import math
 
 from .helpers import *
 from .constants import REPR_CLASSICAL, REPR_WIGNER
-from .meters import ProjectionMeter, UncertaintyMeter, IntegralMeter, getXiSquared
+from .meters import ProjectionMeter, UncertaintyMeter, IntegralMeter, getXiSquared, getSpins
 from .evolution import TerminateEvolution
 from .pulse import Pulse
 from .wavefunction import WavefunctionSet
@@ -256,17 +256,20 @@ class UncertaintyCollector(PairedCalculation):
 			numpy.array(self.XiSquared)
 
 
-class SpinCloudCollector:
+class SpinCloudCollector(PairedCalculation):
 
 	def __init__(self, env, constants, grid):
-		self._unc = Uncertainty(env, constants, grid)
+		PairedCalculation.__init__(self, env)
+		self._unc = UncertaintyMeter(env, constants, grid)
 		self.times = []
 		self.phi = []
 		self.yps = []
 
-	def prepare(self, **kwds):
-		self._unc.prepare(components=kwds['components'],
-			ensembles=kwds['ensembles'], psi_type=kwds['psi_type'])
+		self._addParameters(components=2, ensembles=1, psi_type=REPR_CLASSICAL)
+
+	def _prepare(self):
+		self._unc.prepare(components=self._p.components, ensembles=self._p.ensembles,
+			psi_type=self._p.psi_type)
 
 	def __call__(self, t, dt, psi):
 		self.times.append(t)
