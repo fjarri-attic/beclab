@@ -276,19 +276,25 @@ class SplitStepEvolution(Evolution):
 
 		self._kdt = 0
 
-		self._potentials = grid.potentials_device
 		self._kvectors = grid.energy_device
 
 		self._projector = Projector(env, constants, grid)
 
 		self._addParameters(f_rabi=0, f_detuning=0, dt=1e-5, noise=False,
-			ensembles=1, itmax=3, components=2, psi_type=REPR_CLASSICAL)
+			ensembles=1, itmax=3, components=2, psi_type=REPR_CLASSICAL, potentials=None)
 		self.prepare(**kwds)
 
 	def _prepare(self):
 		# FIXME: matrix exponent in xpropagate() requires 2 components
 		# different number will require significant changes
 		assert self._p.components == 2
+
+		if self._p.potentials is None:
+			self._p.separate_potentials = False
+			self._potentials = self._grid.potentials_device
+		else:
+			self._p.separate_potentials = True
+			self._potentials = self._env.toDevice(self._p.potentials)
 
 		self._projector.prepare(components=self._p.components, ensembles=self._p.ensembles)
 
@@ -336,7 +342,16 @@ class SplitStepEvolution(Evolution):
 			{
 				LIMITED_BY(${p.comp_size});
 
+				%if p.separate_potentials:
+				%for comp in xrange(p.components):
+				SCALAR V${comp} = potentials[GLOBAL_INDEX % ${p.grid_size} + ${p.grid_size * comp}];
+				%endfor
+				%else:
 				SCALAR V = potentials[GLOBAL_INDEX % ${p.grid_size}];
+				%for comp in xrange(p.components):
+				SCALAR V${comp} = V;
+				%endfor
+				%endif
 
 				%for comp in xrange(p.components):
 				COMPLEX val${comp} = data[GLOBAL_INDEX + ${comp * p.comp_size}];
@@ -374,7 +389,7 @@ class SplitStepEvolution(Evolution):
 						0
 						%endif
 						,
-						-V
+						-V${comp}
 						%for comp_other in xrange(p.components):
 						-(SCALAR)${p.g[comp, comp_other]} * n${comp_other}
 						%endfor
@@ -464,8 +479,13 @@ class SplitStepEvolution(Evolution):
 		g = self._p.g
 
 		l = self._p.losses_drift
-		V = numpy.tile(self._potentials * 1j,
-			(self._p.ensembles,) + (1,) * self._grid.dim)
+
+		V = self._potentials * 1j
+		if not self._p.separate_potentials:
+			V = numpy.tile(V, (self._p.components,) + (1,) * self._grid.dim)
+		V = numpy.transpose(
+			numpy.tile(V, (self._p.ensembles,) + (1,) * (self._grid.dim + 1)),
+			axes=(1, 0) + tuple(range(2, 2 + self._grid.dim)))
 
 		m = numpy.empty((2, 2) + data.shape[1:], dtype=self._constants.complex.dtype)
 		N = numpy.empty_like(data)
@@ -474,7 +494,7 @@ class SplitStepEvolution(Evolution):
 			n = numpy.abs(data) ** 2
 
 			for comp in xrange(self._p.components):
-				N[comp].flat[:] = (-V).flat
+				N[comp].flat[:] = (-V[comp]).flat
 				for comp_other in xrange(self._p.components):
 					N[comp] -= 1j * n[comp_other] * g[comp, comp_other]
 
