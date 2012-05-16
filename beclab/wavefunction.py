@@ -84,6 +84,7 @@ class WavefunctionSet(PairedCalculation):
 			self._mdata = self._env.allocate(self._mshape, dtype)
 			self.data = self._data = self._env.allocate(self._shape, dtype)
 
+		self._p.shape = self.shape
 		for name in self.__meters__:
 			if hasattr(self, name):
 				getattr(self, name).prepare(components=self._p.components,
@@ -156,6 +157,38 @@ class WavefunctionSet(PairedCalculation):
 					complex_mul_scalar(val, c${comp});
 				%endfor
 			}
+
+			EXPORTED_FUNC void symmetrize(int gsize, GLOBAL_MEM COMPLEX *data, int sym)
+			{
+				LIMITED_BY(gsize);
+
+				<%
+					nz = p.shape[2]
+					def product(l):
+						res = 1
+						for i in l:
+							res *= i
+						return res
+				%>
+
+				int z, flipped_z, new_index;
+				COMPLEX val1, val2;
+
+				int ens = GLOBAL_INDEX / ${product(p.shape[2:])};
+				int ens_shift = ens * ${product(p.shape[2:])};
+
+				z = (GLOBAL_INDEX - ens_shift) / ${product(p.shape[3:])};
+				flipped_z = ${nz} - z - 1;
+				new_index = GLOBAL_INDEX - z * ${product(p.shape[3:])} +
+					flipped_z * ${product(p.shape[3:])};
+
+				%for comp in xrange(p.components):
+				val1 = data[GLOBAL_INDEX + gsize * ${comp}];
+				val2 = data[new_index + gsize * ${comp}];
+				data[GLOBAL_INDEX + gsize * ${comp}] =
+					complex_mul_scalar(val1 + complex_mul_scalar(val2, sym), 0.5);
+				%endfor
+			}
 		"""
 
 		self.__program = self.compileProgram(kernel_template)
@@ -164,6 +197,7 @@ class WavefunctionSet(PairedCalculation):
 		self._kernel_fillEnsembles = self.__program.fillEnsembles
 		self._kernel_addVacuumParticles = self.__program.addVacuumParticles
 		self._kernel_multiply = self.__program.multiply
+		self._kernel_symmetrize = self.__program.symmetrize
 
 	def _cpu__kernel_addVacuumParticles(self, gsize, modespace_data, randoms, mask):
 		tile = (self.components, self.ensembles,) + (1,) * self._grid.dim
@@ -185,6 +219,14 @@ class WavefunctionSet(PairedCalculation):
 		for c in xrange(self._p.components):
 			data[c] *= coeffs[c]
 
+	def _cpu__kernel_symmetrize(self, gsize, data, sym):
+		comp = self.components
+		ens = self.ensembles
+		shape = self.shape[2:]
+		data_flipped = numpy.fliplr(data.reshape(comp * ens, *shape)).reshape(*data.shape)
+		data += sym * data_flipped
+		data /= 2
+
 	def toMSpace(self):
 		assert not self.in_mspace
 		self._plan.execute(self._data, self._mdata,
@@ -192,6 +234,7 @@ class WavefunctionSet(PairedCalculation):
 		self.size = self._msize
 		self.shape = self._mshape
 		self.data = self._mdata
+		self._p.shape = self.shape
 		self.in_mspace = True
 
 	def toXSpace(self):
@@ -201,6 +244,7 @@ class WavefunctionSet(PairedCalculation):
 		self.size = self._size
 		self.shape = self._shape
 		self.data = self._data
+		self._p.shape = self.shape
 		self.in_mspace = False
 
 	def _addVacuumParticles(self, randoms, mask):
@@ -263,6 +307,11 @@ class WavefunctionSet(PairedCalculation):
 	def fillWithValue(self, val):
 		self._kernel_fillWithValue(self.size, self.data, self._constants.scalar.cast(val))
 
+	def fillWith(self, data):
+		assert data.shape == self.shape
+		data = self._env.toDevice(data.astype(self._constants.complex.dtype))
+		self._env.copyBuffer(data, dest=self.data)
+
 	def fillWithRandoms(self, val):
 		params = dict(size=self.shape, loc=val, scale=numpy.sqrt(val) / 5)
 		randoms = numpy.random.normal(**params) + 1j * numpy.random.normal(**params)
@@ -273,3 +322,7 @@ class WavefunctionSet(PairedCalculation):
 		cast = self._constants.scalar.cast
 		coeffs = tuple(cast(x) for x in coeffs)
 		self._kernel_multiply(self.size, self.data, *coeffs)
+
+	def makeSymmetrical(self, sym):
+		"""(Anti)symmetrizes along z direction only"""
+		self._kernel_symmetrize(self.size, self.data, numpy.int32(sym))
