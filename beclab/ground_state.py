@@ -16,6 +16,10 @@ GS_INIT_TF = 0
 GS_INIT_UNIFORM = 1
 GS_INIT_RANDOM = 2
 
+GS_ENFORCE_NONE = 0
+GS_ENFORCE_SYM = 1
+GS_ENFORCE_ASYM = 2
+
 
 class Projector(PairedCalculation):
 
@@ -219,7 +223,7 @@ class ImaginaryTimeGroundState(PairedCalculation):
 		return self._obs.getEPerParticle(psi, N=N).sum()
 
 	def _create(self, psi, N, fix_total_N=False, E_modifier=0, gs_init=GS_INIT_TF,
-			relative_precision=1e-0):
+			relative_precision=1e-0, enforce=GS_ENFORCE_NONE):
 
 		if gs_init == GS_INIT_TF:
 			# it would be nice to use two-component TF state here,
@@ -232,12 +236,22 @@ class ImaginaryTimeGroundState(PairedCalculation):
 			# starting conditions the same for any number of atoms
 			# (necessary for SO calculations, which are very sensitive)
 			psi.fillWithValue(1)
+			if enforce == GS_ENFORCE_ASYM:
+				data = numpy.ones(psi.data.shape, dtype=self._constants.complex.dtype)
+				data[:,:,:self._grid.shape[0]/2] = -1
+				psi.fillWith(data)
 
 		elif gs_init == GS_INIT_RANDOM:
 			psi.fillWithRandoms(1)
 
 		else:
 			raise ValueError("Wrong value of parameter 'gs_init':", gs_init)
+
+		def enforceFunc(psi):
+			if enforce == GS_ENFORCE_SYM or enforce == GS_ENFORCE_ASYM:
+				psi.makeSymmetrical(1 if enforce == GS_ENFORCE_SYM else -1)
+
+		enforceFunc(psi)
 
 		new_N = psi.density_meter.getNTotal()
 		coeffs = [numpy.sqrt(N[c] / new_N[c]) for c in xrange(self._p.components)]
@@ -268,6 +282,7 @@ class ImaginaryTimeGroundState(PairedCalculation):
 
 			# propagation
 			dt_used = self._propagate(psi)
+			enforceFunc(psi)
 
 			# renormalization
 			self._toMeasurementSpace(psi)
@@ -628,7 +643,7 @@ class RK5Propagation(PairedCalculation):
 		for c in xrange(self._p.components):
 			res[c].flat[:] = data[c].flat
 			for s in xrange(stage):
- 				res[c] += k[s, c] * b[s]
+				res[c] += k[s, c] * b[s]
 
 	def _cpu__kernel_sumResults(self, gsize, res, k, data):
 		cval = self._p.cval
