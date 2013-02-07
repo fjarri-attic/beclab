@@ -407,7 +407,7 @@ class XYData(Data):
 		self.yarray = yarray
 
 		fields = ['ymin', 'ymax', 'xname', 'yname', 'description',
-			'source', 'experimental', 'linestyle', 'color']
+			'source', 'experimental', 'linestyle', 'color', 'yerrors']
 		Data.__init__(self, 'xy', fields, **kwds)
 
 	@classmethod
@@ -547,8 +547,13 @@ class XYPlot:
 			if data.linestyle is not None:
 				kwds['linestyle'] = data.linestyle
 
-			self.subplot.plot(data.xarray, data.yarray,
-				('o' if data.experimental else '-'), **kwds)
+			if data.yerrors is None:
+				self.subplot.plot(data.xarray, data.yarray,
+					('o' if data.experimental else '-'), **kwds)
+			else:
+				#self.subplot.scatter(data.xarray, data.yarray, **kwds)
+				kwds['yerr'] = data.yerrors
+				self.subplot.errorbar(data.xarray, data.yarray, **kwds)
 
 		self.subplot.set_xlim(xmin=xmin, xmax=xmax)
 		self.subplot.set_ylim(ymin=ymin, ymax=ymax)
