@@ -311,9 +311,9 @@ class Data:
 			bool: lambda obj: obj
 		})
 
-		data = dict((name, getattr(self, name))
-			for name in dir(self) if not name.startswith('_') and
-				type(getattr(self, name)) in serializers)
+		data = {name:getattr(self, name)
+			for name in self.__dict__
+			if not name.startswith('_') and type(getattr(self, name)) in serializers}
 
 		if to_python_types:
 			return transform(data)
