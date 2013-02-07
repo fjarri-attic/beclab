@@ -272,6 +272,9 @@ class SpinCloudCollector(PairedCalculation):
 		self.times = []
 		self.phi = []
 		self.yps = []
+		self.Sx = []
+		self.Sy = []
+		self.Sz = []
 
 		self._addParameters(components=2, ensembles=1, psi_type=REPR_CLASSICAL)
 
@@ -282,12 +285,17 @@ class SpinCloudCollector(PairedCalculation):
 	def __call__(self, t, dt, psi):
 		self.times.append(t)
 		i, n = self._unc.getEnsembleSums(psi)
+		Si = [i.real, i.imag, 0.5 * (n[0] - n[1])]
+		self.Sx.append(Si[0])
+		self.Sy.append(Si[1])
+		self.Sz.append(Si[2])
 		phi, yps = getSpins(i, n[0], n[1])
 		self.phi.append(phi)
 		self.yps.append(yps)
 
 	def getData(self):
-		return [numpy.array(x) for x in (self.times, self.phi, self.yps)]
+		return [numpy.array(x) for x in (self.times, self.phi, self.yps,
+			self.Sx, self.Sy, self.Sz)]
 
 
 class AnalyticNoiseCollector:
