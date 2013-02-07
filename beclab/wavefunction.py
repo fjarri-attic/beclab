@@ -305,7 +305,8 @@ class WavefunctionSet(PairedCalculation):
 			length=comp_size)
 
 	def fillWithValue(self, val):
-		self._kernel_fillWithValue(self.size, self.data, self._constants.scalar.cast(val))
+		self._kernel_fillWithValue(self.size * self.components,
+			self.data, self._constants.scalar.cast(val))
 
 	def fillWith(self, data):
 		assert data.shape == self.shape
