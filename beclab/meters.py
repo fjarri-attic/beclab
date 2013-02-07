@@ -447,7 +447,7 @@ class InteractionMeter(PairedCalculation):
 class IntegralMeter:
 
 	def __init__(self, env, constants, grid):
-		pass
+		self._env = env
 
 	def prepare(self, **kwds):
 		pass
@@ -461,6 +461,12 @@ class IntegralMeter:
 		N = psi.density_meter.getNTotal()
 		I = psi.interaction_meter.getITotal()
 		return 2.0 * numpy.abs(I) / N.sum() / psi.ensembles
+
+	def getVisibilityPerEnsemble(self, psi):
+		assert psi.components == 2
+		Ns = self._env.fromDevice(psi.density_meter.getNPerEnsemble())
+		Is = self._env.fromDevice(psi.interaction_meter.getIPerEnsemble())
+		return 2.0 * numpy.abs(Is) / Ns.sum(0)
 
 	def getEPerParticle(self, psi, N=None):
 		if N is None:
