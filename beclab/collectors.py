@@ -18,6 +18,7 @@ class ParticleNumberCollector(PairedCalculation):
 
 		self.times = []
 		self.N = []
+		self.Nerr = []
 
 		self._psi = WavefunctionSet(env, constants, grid)
 		self._addParameters(components=2, ensembles=1, psi_type=REPR_CLASSICAL)
@@ -36,12 +37,16 @@ class ParticleNumberCollector(PairedCalculation):
 		if self.verbose:
 			print "Particle counter: ", t, "s,", N, N.sum()
 
+		Ns = self._env.fromDevice(self._psi.density_meter.getNPerEnsemble())
+		self.Nerr.append(Ns.std(1) / numpy.sqrt(float(Ns.shape[1])))
+
 		self.times.append(t)
 		self.N.append(N)
 
 	def getData(self):
 		N = numpy.array(self.N)
-		return numpy.array(self.times), N.transpose(), N.sum(1)
+		Nerr = numpy.array(self.Nerr)
+		return numpy.array(self.times), N.transpose(), N.sum(1), Nerr.transpose()
 
 
 class ParticleNumberCondition(ParticleNumberCollector):
@@ -129,6 +134,7 @@ class VisibilityCollector(PairedCalculation):
 
 		self.times = []
 		self.visibility = []
+		self.Verr = []
 
 		self._addParameters(components=2, ensembles=1, psi_type=REPR_CLASSICAL)
 
@@ -142,11 +148,13 @@ class VisibilityCollector(PairedCalculation):
 		if self.verbose:
 			print "Visibility: ", t, "s,", v
 
+		Vs = self._int.getVisibilityPerEnsemble(psi)
+		self.Verr.append(Vs.std() / numpy.sqrt(float(Vs.size)))
 		self.times.append(t)
 		self.visibility.append(v)
 
 	def getData(self):
-		return numpy.array(self.times), numpy.array(self.visibility)
+		return numpy.array(self.times), numpy.array(self.visibility), numpy.array(self.Verr)
 
 
 class SurfaceProjectionCollector(PairedCalculation):
