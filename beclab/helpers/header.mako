@@ -139,12 +139,12 @@ INTERNAL_FUNC ${complex} csqrt(${complex} a)
 
 ${prelude}
 
-%if cuda:
+%if cuda and not manual_extern_c:
 	extern "C" {
 %endif
 
 ${kernels}
 
-%if cuda:
+%if cuda and not manual_extern_c:
 	} // extern "C"
 %endif

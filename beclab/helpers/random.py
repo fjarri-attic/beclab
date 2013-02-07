@@ -34,8 +34,8 @@ class PyCUDARNG:
 				"md5_rng_float")
 
 	def __call__(self, result, stream=None):
-	    self._func.prepared_async_call(result._grid, result._block, stream,
-	            result.gpudata, numpy.random.randint(2**31-1), result.size)
+		self._func.prepared_async_call(result._grid, result._block, stream,
+				result.gpudata, numpy.random.randint(2**31-1), result.size)
 
 
 class CUDARandom:
@@ -89,6 +89,98 @@ class CUDARandom:
 		self._rand_func(result)
 		self._randomNormalKernel(result.size, result,
 			self._scalar_cast(loc), self._scalar_cast(scale / numpy.sqrt(2.0)))
+
+
+class CurandRandom:
+
+	def __init__(self, env, double):
+		self._env = env
+
+		kernel_template = """
+		#include <curand_kernel.h>
+
+		<%
+			curand_normal2 = "curand_normal2" + ("" if c_ctype == 'float2' else "_double")
+		%>
+
+		extern "C" {
+
+		__global__ void initialize(curandStateXORWOW *states, unsigned int *seeds)
+		{
+			const int idx = threadIdx.x + blockIdx.x * blockDim.x;
+			curand_init(seeds[idx], idx, 0, &states[idx]);
+		}
+
+		__global__ void sample(curandStateXORWOW *states,
+				${c_ctype} *randoms, ${s_ctype} scale, int size)
+		{
+			const int idx = threadIdx.x + blockIdx.x * blockDim.x;
+			const int num_gens = blockDim.x * gridDim.x;
+			int sample_idx = idx;
+			curandStateXORWOW state = states[idx];
+
+			while (sample_idx < size)
+			{
+				${c_ctype} rand_normal = ${curand_normal2}(&state);
+				rand_normal.x *= scale;
+				rand_normal.y *= scale;
+
+				randoms[sample_idx] = rand_normal;
+
+				sample_idx += num_gens;
+			}
+		}
+
+		}
+		"""
+
+		p = double_precision if double else single_precision
+		self._scalar_cast = p.scalar.cast
+		self._program = self._env.compile(kernel_template,
+			manual_extern_c=True, c_ctype=p.complex.name, s_ctype=p.scalar.name)
+		self._initialize = self._program.initialize
+		self._sample = self._program.sample
+
+		self.seed()
+
+	def seed(self, seed=None):
+		from pycuda.characterize import sizeof, has_stack
+		import pycuda.driver as cuda
+		import pycuda.gpuarray as gpuarray
+
+		rng = numpy.random.RandomState()
+		rng.seed(seed)
+
+		gen_block_size = min(
+			self._initialize.max_threads_per_block,
+			self._sample.max_threads_per_block)
+		gen_grid_size = self._env.device.get_attribute(cuda.device_attribute.MULTIPROCESSOR_COUNT)
+		gen_block = (gen_block_size, 1, 1)
+		gen_gsize = (gen_grid_size * gen_block_size, 1, 1)
+
+		num_gen = gen_block_size * gen_grid_size
+		assert num_gen <= 20000
+
+		seeds = gpuarray.to_gpu(rng.randint(0, 2**32 - 1, size=num_gen).astype(numpy.uint32))
+		state_type_size = sizeof("curandStateXORWOW", "#include <curand_kernel.h>")
+		self.states = gpuarray.GPUArray(num_gen * state_type_size, numpy.uint8)
+		self._initialize.customCall(gen_gsize, gen_block, self.states.gpudata, seeds.gpudata)
+		self._env.synchronize()
+		self.gsize = gen_gsize
+		self.lsize = gen_block
+
+	def get_state(self):
+		return self.states.get()
+
+	def set_state(self, states):
+		import pycuda.gpuarray as gpuarray
+		self._env.synchronize()
+		self.states = self._env.toDevice(states)
+
+	def random_normal(self, result, scale=1.0):
+		self._sample.customCall(self.gsize, self.lsize,
+			self.states, result,
+			self._scalar_cast(scale / numpy.sqrt(2.0)), numpy.int32(result.size))
 
 
 class NewCUDARandom:
@@ -173,7 +265,7 @@ class CPURandom:
 
 def createRandom(env, double):
 	if env.gpu and env.cuda:
-		return CUDARandom(env, double)
+		return CurandRandom(env, double)
 	elif env.gpu:
 		return FakeRandom(env, double)
 	else:

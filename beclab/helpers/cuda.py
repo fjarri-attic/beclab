@@ -24,6 +24,8 @@ class _KernelWrapper:
 		self._kernel = kernel
 		self._sync_calls = sync_calls
 
+		self.max_threads_per_block = kernel.max_threads_per_block
+
 		if self._kernel.num_regs > 0:
 			self._max_block_size = 2 ** log2(min(self._env.max_block_size,
 				self._env.max_registers / self._kernel.num_regs))
@@ -78,13 +80,14 @@ class _ProgramWrapper:
 		self._compile(source, double=double, prelude=prelude, **kwds)
 		self._sync_calls = sync_calls
 
-	def _compile(self, source, double=False, prelude="", **kwds):
+	def _compile(self, source, double=False, prelude="", manual_extern_c=False, **kwds):
 		"""
 		Adds helper functions and defines to given source, renders it,
 		compiles and saves OpenCL program object.
 		"""
 		kernel_src = Template(source).render(**kwds)
-		src = _header.render(cuda=True, double=double, kernels=kernel_src, prelude=prelude)
+		src = _header.render(cuda=True, double=double, kernels=kernel_src, prelude=prelude,
+			manual_extern_c=manual_extern_c)
 		try:
 			self._program = SourceModule(src, no_extern_c=True, options=['-use_fast_math'])
 		except:
