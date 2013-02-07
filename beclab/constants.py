@@ -17,6 +17,14 @@ _HBAR = 1.054571628e-34 # Planck constant
 REPR_CLASSICAL = 0
 REPR_WIGNER = 1
 
+# Kaufman et al., 2009, |1,+1>-|2,-1> interaction
+INTERACTION_11_2m1 = dict(
+	a_bg=97.7, # background scattering length, in Rbohr units
+	gamma=4.7e-3, # decay rate, G
+	delta=2e-3, # width of the resonance, G
+	B0=9.105, # resonance, G
+	m=1.443160648e-25 # mass of the atom, kg
+)
 
 _DEFAULTS = {
 	# scattering lengths for |1,-1> and |2,1>, in Bohr radii
@@ -675,6 +683,14 @@ class Constants:
 			return(get_modes(zsize), get_modes(ysize), get_modes(xsize))
 		elif dim == 1:
 			return (get_modes(box_size[0]),)
+
+
+def getFeshbachInteraction(B, a_bg=None, gamma=None, delta=None, B0=None, m=None):
+	a_bg *= _R_BOHR
+	denom = (B - B0) * (B - B0) + gamma ** 2 / 4
+	a12 = a_bg * (1 - delta * (B - B0) / denom)
+	gamma12 = 4 * numpy.pi * _HBAR * (a_bg / 2 * delta * gamma / denom) / m
+	return a12 / _R_BOHR, gamma12
 
 
 class SOConstants2D:
