@@ -597,8 +597,8 @@ class Constants:
 		self.noise_sources = len(l)
 
 	def getEffectiveArea(self):
-		l_rho = numpy.sqrt(self.hbar / (2.0 * self.m * self.wx))
-		return 4.0 * numpy.pi * (l_rho ** 2)
+		l_rho = numpy.sqrt(self.hbar / (self.m * self.wx))
+		return 2.0 * numpy.pi * (l_rho ** 2)
 
 	def muTF(self, N, dim=3, comp=0):
 		g = self.g[comp, comp]
