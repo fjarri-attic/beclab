@@ -60,8 +60,10 @@ class StrongEvolution(PairedCalculation):
 			#except TerminateEvolution:
 			#	final_time = psi.time
 
-			if not double_step:
-				if (step + 1) % (steps / samples) == 0:
+			if (step + 1) % ((steps / (2 if double_step else 1)) / samples) == 0:
+				if double_step:
+					print "Skipping callbacks at t =", psi.time
+				else:
 					self._runCallbacks(psi, callbacks, dt)
 
 		self._toMeasurementSpace(psi)
@@ -99,6 +101,7 @@ class StrongEvolution(PairedCalculation):
 		if hasattr(self, '_random'):
 			self._random.set_state(rng_state)
 		self._run_step(psi_double, interval, steps,
+			samples=samples,
 			starting_phase=starting_phase, double_step=True)
 
 		pd = self._env.fromDevice(psi_double.data)
