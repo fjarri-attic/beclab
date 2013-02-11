@@ -287,7 +287,7 @@ class GridBase:
 
 class UniformGrid(GridBase):
 
-	def __init__(self, env, constants, shape, box_size, potentials_func=buildPotentials):
+	def __init__(self, env, constants, shape, box_size):
 
 		GridBase.__init__(self, env, constants)
 
@@ -297,7 +297,7 @@ class UniformGrid(GridBase):
 		self.__data_arrays__ = {
 			'energy': buildPlaneWaveEnergy if constants.lambda_R == 0 else buildSOEnergy,
 			'density_modifiers': buildPlaneWaveDensityModifiers,
-			'potentials': potentials_func,
+			'potentials': buildPotentials,
 			'dV': buildIntegrationCoefficients,
 			'projector_mask': buildProjectorMask,
 		}
