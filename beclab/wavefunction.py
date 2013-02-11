@@ -291,7 +291,8 @@ class WavefunctionSet(PairedCalculation):
 
 	def copyTo(self, other):
 		assert other.in_mspace == self.in_mspace
-		other.prepare(components=self._p.components, ensembles=self._p.ensembles)
+		other.prepare(components=self._p.components, ensembles=self._p.ensembles,
+			psi_type=self._p.psi_type)
 		self._env.copyBuffer(self.data, dest=other.data)
 		other.type = self.type
 		other.time = self.time
