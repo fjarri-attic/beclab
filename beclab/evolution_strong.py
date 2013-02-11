@@ -210,7 +210,7 @@ class StrongRKEvolution(StrongEvolution):
 				LIMITED_BY(${p.comp_size});
 
 				SCALAR k = kvectors[GLOBAL_INDEX % ${p.grid_size}];
-				COMPLEX mode_coeff = cexp(0, -k);
+				COMPLEX mode_coeff = complex_ctr(0, -k);
 				COMPLEX val;
 
 				%for comp in xrange(p.components):
