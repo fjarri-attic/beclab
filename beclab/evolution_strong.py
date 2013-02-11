@@ -367,9 +367,10 @@ class StrongRKEvolution(StrongEvolution):
 
 		noise_scale = numpy.sqrt(1./noise_dt) * self._normalization
 
-		self._random.random_normal(self._randoms1, scale=noise_scale)
-		if double_step:
-			self._random.random_normal(self._randoms2, scale=noise_scale)
+		if psi.type == REPR_WIGNER:
+			self._random.random_normal(self._randoms1, scale=noise_scale)
+			if double_step:
+				self._random.random_normal(self._randoms2, scale=noise_scale)
 
 		r1 = self._randoms1
 		r2 = self._randoms2
