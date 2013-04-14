@@ -528,6 +528,20 @@ class ProjectionMeter(PairedCalculation):
 		yz /= numpy.tile(self._grid.dy, (self._p.components, nz, 1))
 		return yz
 
+	def getXZ(self, psi):
+		# TODO: use reduction on device if it starts to take too much time
+		p = self._env.fromDevice(psi.density_meter.getNAverage())
+		nx = self._grid.shape[2]
+		nz = self._grid.shape[0]
+
+		# sum over ensembles (since it is only 1 of them, just removes this dimension)
+		# and over x-axis
+		xz = p.sum(1).sum(2)
+		dz = self._grid.dz.reshape(self._grid.shape[0], 1)
+		xz /= numpy.tile(dz, (self._p.components, 1, nx))
+		xz /= numpy.tile(self._grid.dx, (self._p.components, nz, 1))
+		return xz
+
 	def getXYSlice(self, psi, z_index=None):
 		# TODO: use reduction on device if it starts to take too much time
 		p = self._env.fromDevice(psi.density_meter.getNDensityAverage())
@@ -541,6 +555,13 @@ class ProjectionMeter(PairedCalculation):
 		if x_index is None:
 			x_index = self._grid.shape[2] / 2
 		return p[:,0,:,:,x_index]
+
+	def getXZSlice(self, psi, y_index=None):
+		# TODO: use reduction on device if it starts to take too much time
+		p = self._env.fromDevice(psi.density_meter.getNDensityAverage())
+		if y_index is None:
+			y_index = self._grid.shape[1] / 2
+		return p[:,0,:,y_index,:]
 
 	def getZ(self, psi):
 		p = psi.density_meter.getNAverage()
