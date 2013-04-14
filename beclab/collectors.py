@@ -213,6 +213,8 @@ class AxialProjectionCollector(PairedCalculation):
 
 		self.times = []
 		self.snapshots = []
+		self.n1 = []
+		self.n2 = []
 		self._psi = WavefunctionSet(env, constants, grid)
 
 		self._addParameters(components=2, ensembles=1, psi_type=REPR_CLASSICAL)
@@ -234,10 +236,16 @@ class AxialProjectionCollector(PairedCalculation):
 		proj = self._projection.getZ(self._psi)
 
 		self.snapshots.append((proj[0] - proj[1]) / (proj[0] + proj[1]))
+		self.n1.append(proj[0])
+		self.n2.append(proj[1])
 
 	def getData(self):
 		return numpy.array(self.times), \
 			numpy.concatenate(self.snapshots).reshape(
+				len(self.times), self.snapshots[0].size).transpose(), \
+			numpy.concatenate(self.n1).reshape(
+				len(self.times), self.snapshots[0].size).transpose(), \
+			numpy.concatenate(self.n2).reshape(
 				len(self.times), self.snapshots[0].size).transpose()
 
 
