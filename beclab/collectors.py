@@ -241,6 +241,30 @@ class AxialProjectionCollector(PairedCalculation):
 				len(self.times), self.snapshots[0].size).transpose()
 
 
+class WavefunctionCollector(PairedCalculation):
+
+	def __init__(self, env, constants, grid, pulse=None):
+		PairedCalculation.__init__(self, env)
+		self._constants = constants
+		self._grid = grid
+
+		self.times = []
+		self.psis = []
+
+		self._addParameters(components=2, ensembles=1, psi_type=REPR_CLASSICAL)
+
+	def _prepare(self):
+		pass
+
+	def __call__(self, t, dt, psi):
+
+		self.times.append(t)
+		self.psis.append(psi.data.get())
+
+	def getData(self):
+		return numpy.array(self.times), self.psis
+
+
 class UncertaintyCollector(PairedCalculation):
 
 	def __init__(self, env, constants, grid):
