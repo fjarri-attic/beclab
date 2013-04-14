@@ -171,6 +171,7 @@ class SurfaceProjectionCollector(PairedCalculation):
 		self.times = []
 		self.xy = []
 		self.yz = []
+		self.xz = []
 
 		self._addParameters(components=2, ensembles=1, psi_type=REPR_CLASSICAL)
 
@@ -188,14 +189,17 @@ class SurfaceProjectionCollector(PairedCalculation):
 		self.times.append(t)
 		self.xy.append(self._projection.getXY(self._psi))
 		self.yz.append(self._projection.getYZ(self._psi))
+		self.xz.append(self._projection.getXZ(self._psi))
 
 	def getData(self):
 		shape = (len(self.times), self._p.components)
 		shape_xy = shape + (self._grid.shape[1:3])
 		shape_yz = shape + (self._grid.shape[:2])
+		shape_xz = shape + (self._grid.shape[1], self._grid.shape[3])
 		return numpy.array(self.times), \
 			numpy.transpose(numpy.concatenate(self.xy).reshape(*shape_xy), axes=(1, 0, 2, 3)), \
-			numpy.transpose(numpy.concatenate(self.yz).reshape(*shape_yz), axes=(1, 0, 2, 3))
+			numpy.transpose(numpy.concatenate(self.yz).reshape(*shape_yz), axes=(1, 0, 2, 3)), \
+			numpy.transpose(numpy.concatenate(self.xz).reshape(*shape_xz), axes=(1, 0, 2, 3))
 
 
 class AxialProjectionCollector(PairedCalculation):
