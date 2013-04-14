@@ -55,8 +55,10 @@ _DEFAULTS = {
 
 	# loss terms (according to M. Egorov, as of 28 Feb 2011; for 44k atoms)
 	'gamma111': 5.4e-42,
+	'gamma222': 0,
 	'gamma12': 1.52e-20,
 	'gamma22': 7.7e-20,
+	'gamma11': 0,
 
 	'e_cut': None,
 }
@@ -553,9 +555,11 @@ class Constants:
 		# TODO: need to implement some mechanism of passing this information
 		# from Constants constructor (parsing names of keyword arguments?)
 		l = {
+			(2, 0): self.gamma11 / 4,
 			(1, 1): self.gamma12 / 2,
 			(0, 2): self.gamma22 / 4,
-			(3, 0): self.gamma111 / 6
+			(3, 0): self.gamma111 / 6,
+			(0, 3): self.gamma222 / 6
 		}
 
 		if use_effective_area:
