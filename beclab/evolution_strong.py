@@ -39,10 +39,28 @@ class StrongEvolution(PairedCalculation):
 		self._toEvolutionSpace(psi)
 
 	def _run_step(self, psi, interval, steps,
-			callbacks=None, samples=1, starting_phase=0, double_step=False):
+			callbacks=None, samples=1, starting_phase=0, double_step=False,
+			dynamic_potential=None):
 
-		dt = self._constants.scalar.cast(interval) / (steps / (2 if double_step else 1))
+		if dynamic_potential is None:
+			p = buildPotentials(self._constants, self._grid)
+			p = numpy.tile(p, (self._p.components,) + (1,) * (len(p.shape) - 1))
+			dynamic_potential = dict(
+				steps=1,
+				v=[p, p])
+
+		dp_buffer1 = self._env.toDevice(dynamic_potential['v'][0])
+		dp_buffer2 = self._env.toDevice(dynamic_potential['v'][0])
+
+		prop_steps = steps / (2 if double_step else 1)
+
+		dt = self._constants.scalar.cast(interval) / prop_steps
 		noise_dt = dt / (2 if double_step else 1)
+
+		dp_step_length = prop_steps / dynamic_potential['steps']
+		dp_step_dt = dt * dp_step_length
+		dp_step = -1
+		dp_counter = dp_step_length - 1
 
 		if not double_step:
 			self._runCallbacks(psi, callbacks, dt)
@@ -51,25 +69,39 @@ class StrongEvolution(PairedCalculation):
 
 		self._toEvolutionSpace(psi)
 
-		for step in xrange(steps / (2 if double_step else 1)):
+		for step in xrange(prop_steps):
+
+			dp_counter += 1
+			if dp_counter == dp_step_length:
+				dp_counter = 0
+				dp_step += 1
+				new_buf = dp_buffer1
+				dp_buffer1 = dp_buffer2
+				dp_buffer_2 = new_buf
+				self._env.toDevice(dynamic_potential['v'][dp_step + 1], dest=dp_buffer2)
 
 			#try:
 			psi.time = starting_time + step * dt
-			self.propagate(psi, psi.time, dt, noise_dt, double_step=double_step)
+			self.propagate(psi, dp_buffer1, dp_buffer2,
+				self._constants.scalar.cast(dp_counter) / dp_step_length, dp_step_dt,
+				psi.time, dt, noise_dt, double_step=double_step)
+
 
 			#except TerminateEvolution:
 			#	final_time = psi.time
 
-			if (step + 1) % ((steps / (2 if double_step else 1)) / samples) == 0:
+			if (step + 1) % (prop_steps / samples) == 0:
 				if double_step:
 					print "Skipping callbacks at t =", psi.time
 				else:
+					print "Callbacks at t =", psi.time
 					self._runCallbacks(psi, callbacks, dt)
 
 		self._toMeasurementSpace(psi)
 
 
-	def run(self, psi, interval, steps, callbacks=None, samples=1, starting_phase=0):
+	def run(self, psi, interval, steps, callbacks=None, samples=1, starting_phase=0,
+			dynamic_potential=None):
 
 		assert steps % samples == 0
 		assert steps % 2 == 0
@@ -83,6 +115,10 @@ class StrongEvolution(PairedCalculation):
 		self.prepare(ensembles=psi.ensembles, components=psi.components,
 			psi_type=psi.type)
 
+		if dynamic_potential is not None:
+			assert (steps / 2) % dynamic_potential['steps'] == 0
+			assert dynamic_potential['v'][0].shape == (self._p.components,) + self._grid.shape
+
 		starting_time = psi.time
 
 		# copy the initial state before propagation
@@ -94,7 +130,8 @@ class StrongEvolution(PairedCalculation):
 			rng_state = self._random.get_state()
 		self._run_step(psi, interval, steps,
 			callbacks=callbacks, samples=samples,
-			starting_phase=starting_phase, double_step=False)
+			starting_phase=starting_phase, double_step=False,
+			dynamic_potential=dynamic_potential)
 
 		# propagate with the double step
 		print "--- Double step"
@@ -102,7 +139,8 @@ class StrongEvolution(PairedCalculation):
 			self._random.set_state(rng_state)
 		self._run_step(psi_double, interval, steps,
 			samples=samples,
-			starting_phase=starting_phase, double_step=True)
+			starting_phase=starting_phase, double_step=True,
+			dynamic_potential=dynamic_potential)
 
 		pd = self._env.fromDevice(psi_double.data)
 		p = self._env.fromDevice(psi.data)
@@ -152,9 +190,6 @@ class StrongRKEvolution(StrongEvolution):
 
 
 	def _prepare(self):
-		# FIXME: matrix exponent in xpropagate() requires 2 components
-		# different number will require significant changes
-		assert self._p.components == 2
 
 		if self._p.potentials is None:
 			self._p.separate_potentials = False
@@ -180,6 +215,15 @@ class StrongRKEvolution(StrongEvolution):
 		grid_shape = self._grid.shape
 		self._normalization = numpy.sqrt(1.0 / dV)
 		self._p.losses_diffusion = copy.deepcopy(self._constants.losses_diffusion)
+
+		self._p.losses_enabled = False
+		for comp in xrange(self._p.components):
+			for i, e in enumerate(self._p.losses_diffusion[comp]):
+				coeff, orders = e
+				if coeff != 0:
+					self._p.losses_enabled = True
+					break
+
 		self._randoms1 = self._env.allocate(
 			(self._constants.noise_sources, self._p.ensembles) + grid_shape,
 			dtype=self._constants.complex.dtype
@@ -226,26 +270,37 @@ class StrongRKEvolution(StrongEvolution):
 				GLOBAL_MEM COMPLEX *omega,
 				GLOBAL_MEM COMPLEX *psi,
 				GLOBAL_MEM COMPLEX *psik,
-				GLOBAL_MEM SCALAR *potentials,
+				GLOBAL_MEM SCALAR *potentials1, GLOBAL_MEM SCALAR *potentials2,
 				GLOBAL_MEM COMPLEX *noise1,
 				GLOBAL_MEM COMPLEX *noise2,
-				SCALAR ai,
-				SCALAR t, SCALAR dt, SCALAR phi, int double_step)
+				SCALAR ai, SCALAR ci,
+				SCALAR dp_ratio, SCALAR dp_dt,
+				SCALAR t_beginning, SCALAR dt, SCALAR phi, int double_step)
 			{
 				LIMITED_BY(${p.comp_size});
 
+				SCALAR t = t_beginning + dt * ci;
+
 				%if p.separate_potentials:
 				%for comp in xrange(p.components):
-				SCALAR V${comp} = potentials[GLOBAL_INDEX % ${p.grid_size} + ${p.grid_size * comp}];
+				SCALAR V1_${comp} = potentials1[GLOBAL_INDEX % ${p.grid_size} + ${p.grid_size * comp}];
+				SCALAR V2_${comp} = potentials2[GLOBAL_INDEX % ${p.grid_size} + ${p.grid_size * comp}];
 				%endfor
 				%else:
-				SCALAR V = potentials[GLOBAL_INDEX % ${p.grid_size}];
+				SCALAR _V1 = potentials1[GLOBAL_INDEX % ${p.grid_size}];
+				SCALAR _V2 = potentials2[GLOBAL_INDEX % ${p.grid_size}];
 				%for comp in xrange(p.components):
-				SCALAR V${comp} = V;
+				SCALAR V1_${comp} = _V1;
+				SCALAR V2_${comp} = _V2;
 				%endfor
 				%endif
 
-				%if p.psi_type == REPR_WIGNER:
+				// linear interpolation for the potential
+				%for comp in xrange(p.components):
+				SCALAR V${comp} = V1_${comp} + (V2_${comp} - V1_${comp}) * (dp_ratio + ci * dt / dp_dt);
+				%endfor
+
+				%if p.psi_type == 1 and p.losses_enabled:
 				COMPLEX noises[${c.noise_sources}];
 				if (double_step)
 				{
@@ -282,12 +337,15 @@ class StrongRKEvolution(StrongEvolution):
 					valk${comp} +
 					complex_mul(
 					complex_ctr(
+					0
 					%if len(p.losses_drift[comp]) > 0:
 					%for coeff, orders in p.losses_drift[comp]:
+					%if coeff > 0:
 					-(SCALAR)${coeff}
 						%for loss_comp, order in enumerate(orders):
 						${(' * ' + ' * '.join(['n' + str(loss_comp)] * order)) if order != 0 else ''}
 						%endfor
+					%endif
 					%endfor
 					%else:
 					0
@@ -299,7 +357,8 @@ class StrongRKEvolution(StrongEvolution):
 					%endfor
 					), val${comp});
 
-				%if p.psi_type == REPR_WIGNER:
+				%if p.psi_type == 1 and p.losses_enabled:
+				// losses
 				%for i, e in enumerate(p.losses_diffusion[comp]):
 				<%
 					coeff, orders = e
@@ -312,6 +371,7 @@ class StrongRKEvolution(StrongEvolution):
 					else:
 						product = 'complex_ctr(1, 0)'
 				%>
+				// ${comp} ${coeff} ${orders}
 				%if coeff != 0:
 				N${comp} = N${comp} + complex_mul(conj(complex_mul_scalar(
 					${product},
@@ -347,7 +407,6 @@ class StrongRKEvolution(StrongEvolution):
 					+ complex_mul_scalar(om${comp}, bi);
 				%endfor
 			}
-
 		"""
 
 		self.__program = self.compileProgram(kernels)
@@ -361,13 +420,14 @@ class StrongRKEvolution(StrongEvolution):
 	def _toEvolutionSpace(self, psi):
 		pass
 
-	def propagate(self, psi, t, dt, noise_dt, double_step=False):
+	def propagate(self, psi, dp_buffer1, dp_buffer2, dp_ratio, dp_dt,
+			t, dt, noise_dt, double_step=False):
 
 		cast = self._constants.scalar.cast
 
 		noise_scale = numpy.sqrt(1./noise_dt) * self._normalization
 
-		if psi.type == REPR_WIGNER:
+		if psi.type == REPR_WIGNER and self._p.losses_enabled:
 			self._random.random_normal(self._randoms1, scale=noise_scale)
 			if double_step:
 				self._random.random_normal(self._randoms2, scale=noise_scale)
@@ -385,8 +445,10 @@ class StrongRKEvolution(StrongEvolution):
 			psik.toXSpace()
 
 			self._kernel_xpropagate(psi.size, psio.data, psi.data, psik.data,
-				self._potentials, r1, r2,
-				cast(self.ai[s]),
+				dp_buffer1, dp_buffer2,
+				r1, r2,
+				cast(self.ai[s]), cast(self.ci[s]),
+				cast(dp_ratio), cast(dp_dt),
 				cast(t), cast(dt), cast(self._phi), numpy.int32(double_step))
 
 			psio.toMSpace()
@@ -394,5 +456,3 @@ class StrongRKEvolution(StrongEvolution):
 			psio.toXSpace()
 
 			self._kernel_resupdate(psi.size, psi.data, psio.data, cast(self.bi[s]))
-
-
