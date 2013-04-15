@@ -239,6 +239,16 @@ def _buildIntegrationCoefficients1D(pts):
 		((pts[2:] - pts[:-2]) / 2.0).tolist() +
 		[(pts[-1] - pts[-2]) / 2])
 
+def _buildIntegrationCoefficients1DPeriodic(pts):
+	"""
+	Returns integration coefficients for simple trapezoidal rule.
+	Works for non-uniform grids.
+	"""
+	N = pts.size
+	dx = pts[1] - pts[0]
+	L = N * dx
+	return numpy.ones(N) * dx
+
 def buildIntegrationCoefficients(constants, grid):
 	if grid.dim == 1:
 		dV = grid.dz
@@ -315,9 +325,12 @@ class UniformGrid(GridBase):
 		self.mshape = shape
 
 		# spatial step and grid for every component of shape
-		d_space = [box_size[i] / (shape[i] - 1) for i in xrange(self.dim)]
+		d_space = [box_size[i] / shape[i] for i in xrange(self.dim)]
 		grid_space = [
-			-box_size[i] / 2.0 + d_space[i] * numpy.arange(shape[i])
+			numpy.linspace(
+				-box_size[i] / 2 + d_space[i] / 2,
+				box_size[i] / 2 - d_space[i] / 2,
+				shape[i])
 			for i in xrange(self.dim)
 		]
 
@@ -350,9 +363,9 @@ class UniformGrid(GridBase):
 			self.kx_full, self.ky_full, self.kz_full = tile3D(self.kx, self.ky, self.kz)
 
 			# coefficients for integration
-			self.dx = _buildIntegrationCoefficients1D(self.x)
-			self.dy = _buildIntegrationCoefficients1D(self.y)
-			self.dz = _buildIntegrationCoefficients1D(self.z)
+			self.dx = _buildIntegrationCoefficients1DPeriodic(self.x)
+			self.dy = _buildIntegrationCoefficients1DPeriodic(self.y)
+			self.dz = _buildIntegrationCoefficients1DPeriodic(self.z)
 
 		elif self.dim == 2:
 
@@ -369,8 +382,8 @@ class UniformGrid(GridBase):
 			self.kx_full, self.ky_full = tile2D(self.kx, self.ky)
 
 			# coefficients for integration
-			self.dx = _buildIntegrationCoefficients1D(self.x)
-			self.dy = _buildIntegrationCoefficients1D(self.y)
+			self.dx = _buildIntegrationCoefficients1DPeriodic(self.x)
+			self.dy = _buildIntegrationCoefficients1DPeriodic(self.y)
 
 		else:
 			# using 'z' axis for 1D, because it seems more natural
@@ -380,7 +393,7 @@ class UniformGrid(GridBase):
 			self.kz = kvalues(d_space[0], self.shape[0])
 			self.kz_full = self.kz
 
-			self.dz = _buildIntegrationCoefficients1D(self.z)
+			self.dz = _buildIntegrationCoefficients1DPeriodic(self.z)
 
 	@classmethod
 	def forN(cls, env, constants, N, shape, border=1.2):
