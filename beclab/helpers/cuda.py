@@ -156,15 +156,19 @@ class CUDAEnvironment:
 			res = res.reshape(shape)
 		return res
 
-	def toDevice(self, buf, shape=None, async=False):
+	def toDevice(self, buf, shape=None, async=False, dest=None):
 		if shape is not None:
 			buf = buf.reshape(shape)
 
-		if async:
-		# FIXME: there must be a warning in docs that buf has to be pagelocked
-			return gpuarray.to_gpu_async(buf, stream=self.stream)
+		if dest is None:
+			if async:
+			# FIXME: there must be a warning in docs that buf has to be pagelocked
+				return gpuarray.to_gpu_async(buf, stream=self.stream)
+			else:
+				return gpuarray.to_gpu(buf)
 		else:
-			return gpuarray.to_gpu(buf)
+			cuda.memcpy_htod_async(dest.gpudata,
+				buf, stream=None)
 
 	def copyBuffer(self, buf, dest, src_offset=0, dest_offset=0, length=None):
 
