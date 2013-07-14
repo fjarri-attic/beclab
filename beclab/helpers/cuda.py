@@ -170,19 +170,24 @@ class CUDAEnvironment:
 			cuda.memcpy_htod_async(dest.gpudata,
 				buf, stream=None)
 
-	def copyBuffer(self, buf, dest, src_offset=0, dest_offset=0, length=None):
+	def copyBuffer(self, buf, dest=None, src_offset=0, dest_offset=0, length=None):
 
 		elem_size = buf.dtype.itemsize
 		size = buf.nbytes if length is None else elem_size * length
 		src_offset *= elem_size
 		dest_offset *= elem_size
 
-		cuda.memcpy_dtod_async(int(dest.gpudata) + dest_offset,
+		if dest is None:
+			ddest = self.allocate(buf.shape, buf.dtype)
+		else:
+			ddest = dest
+
+		cuda.memcpy_dtod_async(int(ddest.gpudata) + dest_offset,
 			int(buf.gpudata) + src_offset,
 			size, stream=self.stream)
 
 		if dest is None:
-			return buf_copy
+			return ddest
 
 	def __str__(self):
 		return "CUDA"
