@@ -23,7 +23,7 @@ evolution.run(psi, 0.119, callbacks=[a], callback_dt=0.005)
 env.release()
 
 # build plot
-times, xy, yz = a.getData()
+times, xy, yz, xz = a.getData()
 times = [str(int(x * 1000)) for x in times]
 
 # right after pulse second component has all the population,
