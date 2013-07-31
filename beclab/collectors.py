@@ -195,7 +195,7 @@ class SurfaceProjectionCollector(PairedCalculation):
 		shape = (len(self.times), self._p.components)
 		shape_xy = shape + (self._grid.shape[1:3])
 		shape_yz = shape + (self._grid.shape[:2])
-		shape_xz = shape + (self._grid.shape[1], self._grid.shape[3])
+		shape_xz = shape + (self._grid.shape[0], self._grid.shape[2])
 		return numpy.array(self.times), \
 			numpy.transpose(numpy.concatenate(self.xy).reshape(*shape_xy), axes=(1, 0, 2, 3)), \
 			numpy.transpose(numpy.concatenate(self.yz).reshape(*shape_yz), axes=(1, 0, 2, 3)), \
